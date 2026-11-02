@@ -155,6 +155,7 @@ def _report(markets, observations, strategy, variant, initial_cash):
         market["market_id"]: {"quantity": 0.0, "cash": 0.0, "side": None} for market in markets
     }
     marks = {}
+    mark_source_times = {}
     for market in markets:
         key = market["market_id"]
         events = [fill for fill in fills if fill["market_id"] == key]
@@ -221,6 +222,20 @@ def _report(markets, observations, strategy, variant, initial_cash):
             timeline.setdefault(fill["ts_ns"], []).append(("fill", key, fill))
         if settled:
             timeline.setdefault(int(market["settlement_ns"]), []).append(("settle", key, payout))
+    horizon = max(max(timeline), max(market["close_ns"] for market in markets))
+    for key, market_observations in observations.items():
+        for observation in market_observations:
+            for side, book in (("UP", observation.up), ("DOWN", observation.down)):
+                expiry = book.ts_ns + strategy.config.max_stale_ns + 1
+                if book.valid and observation.ts_ns < expiry <= horizon:
+                    timeline.setdefault(expiry, []).append(("expire", key, (side, book.ts_ns)))
+
+    def current_mark(key, side, timestamp):
+        source_ns = mark_source_times.get(key, {}).get(side)
+        if source_ns is None or not 0 <= timestamp - source_ns <= strategy.config.max_stale_ns:
+            return None
+        return marks.get(key, {}).get(side)
+
     equity = []
     market_equity = []
     settled_markets = set()
@@ -236,6 +251,7 @@ def _report(markets, observations, strategy, variant, initial_cash):
                     else None
                     for side, book in (("UP", value.up), ("DOWN", value.down))
                 }
+                mark_source_times[key] = {"UP": value.up.ts_ns, "DOWN": value.down.ts_ns}
                 changed.add(key)
             elif action == "fill":
                 sign = 1 if value["action"] == "buy" else -1
@@ -248,9 +264,19 @@ def _report(markets, observations, strategy, variant, initial_cash):
                 balance["quantity"] = 0.0
                 settled_markets.add(key)
                 changed.add(key)
+            elif action == "expire" and key not in settled_markets:
+                side, source_ns = value
+                if (
+                    balance["quantity"] > 0
+                    and balance["side"] == side
+                    and mark_source_times.get(key, {}).get(side) == source_ns
+                ):
+                    changed.add(key)
+        if not changed and all(action == "expire" for action, _, _ in events):
+            continue
         for key in sorted(changed):
             balance = balances[key]
-            mark = marks.get(key, {}).get(balance["side"])
+            mark = current_mark(key, balance["side"], timestamp)
             exposure = (
                 balance["quantity"] * mark
                 if balance["quantity"] > 0 and mark is not None
@@ -273,7 +299,7 @@ def _report(markets, observations, strategy, variant, initial_cash):
         for key, balance in balances.items():
             if balance["quantity"] <= 0:
                 continue
-            mark = marks.get(key, {}).get(balance["side"])
+            mark = current_mark(key, balance["side"], timestamp)
             if mark is None:
                 missing_mark = True
             else:

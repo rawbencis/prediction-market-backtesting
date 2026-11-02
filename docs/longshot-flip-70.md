@@ -180,6 +180,9 @@ their equity is cumulative net market PnL, not account NAV.
 The analysis boundary maps `entered` to `filled` and `pnl` to `net_pnl`, and
 calculates deployed capital from actual buy-fill notional plus buy commissions.
 An open remainder without valid settlement has null `pnl`, not zero profit.
+Reporting expires bid marks at the source-age limit. Expiry points propagate
+unavailable equity/exposure while held; they do not fabricate book events or
+fills. A known settlement can restore the final cash valuation.
 
 Executable MFE/MAE are quantity-specific observed bid-VWAP excursions relative
 to the actual observed ask VWAP, not guaranteed future fills or trading signals.

@@ -1,8 +1,8 @@
 from copy import deepcopy
 
 import pytest
-from nautilus_trader.model.data import OrderBookDeltas, TradeTick
-from nautilus_trader.model.enums import AggressorSide
+from nautilus_trader.model.data import BookOrder, OrderBookDelta, OrderBookDeltas, TradeTick
+from nautilus_trader.model.enums import AggressorSide, BookAction, OrderSide
 from nautilus_trader.model.identifiers import TradeId
 from nautilus_trader.model.instruments import BinaryOption
 from nautilus_trader.model.objects import Quantity
@@ -216,6 +216,29 @@ def test_target_requires_depth_for_actual_remaining_not_only_best_bid():
     assert not any(attempt["action"] == "sell" for attempt in target["attempts"])
 
 
+def test_target_rejects_vwap_above_floor_if_some_required_levels_are_below_floor():
+    markets, records, instruments = synthetic_fixture()
+    market = markets[2]
+    key = market["market_id"]
+    instrument = instruments[key]["DOWN"]
+    for index, record in enumerate(records[key]["DOWN"]):
+        if record.ts_init < market["start_ns"] + 2 * SECOND:
+            continue
+        base = snapshot(instrument, record.ts_init, 0.80, 0.82, bid_size=3)
+        below_floor = OrderBookDelta(
+            instrument.id, BookAction.ADD,
+            BookOrder(OrderSide.BUY, instrument.make_price(0.60), Quantity.from_int(2), 3),
+            0, 0, record.ts_event, record.ts_init,
+        )
+        records[key]["DOWN"][index] = OrderBookDeltas(
+            instrument.id, [*base.deltas[:-1], below_floor, base.deltas[-1]]
+        )
+    assert (3 * 0.80 + 2 * 0.60) / 5 > 0.70
+    target = row(replay_variants([market], records, instruments), key, "touch1_target")
+    assert target["entry_quantity"] == 5
+    assert not any(attempt["action"] == "sell" for attempt in target["attempts"])
+
+
 def test_valid_target_disappearing_before_decision_still_submits_floor_ioc():
     markets, records, instruments = synthetic_fixture()
     market = markets[2]
@@ -283,6 +306,39 @@ def test_old_source_event_is_not_freshened_by_receipt_normalization():
     )
     assert not trade["entered"]
     assert "UP:stale_book" in trade["censor_reasons"]
+
+
+@pytest.mark.parametrize("known_settlement", [False, True])
+def test_idle_marks_expire_while_held_and_known_settlement_restores_cash(known_settlement):
+    markets, records, instruments = synthetic_fixture()
+    market = deepcopy(markets[1])
+    key = market["market_id"]
+    if known_settlement:
+        market["settlement_ns"] = market["start_ns"] + 20 * SECOND
+    else:
+        market.update(
+            close_ns=market["start_ns"] + 20 * SECOND,
+            duration_seconds=20,
+            settlement_winner=None,
+            settlement_ns=None,
+        )
+    result = replay_variants([market], records, instruments, max_stale_ns=5 * SECOND)
+    expiry = max(record.ts_event for rows in records[key].values() for record in rows) + 5 * SECOND + 1
+    mark = next(
+        point
+        for point in result["market_equity"]
+        if point["variant"] == "touch1_hold" and point["ts_ns"] == expiry
+    )
+    assert mark["equity"] is None and mark["exposure"] is None
+    curve = [point for point in result["equity"] if point["variant"] == "touch1_hold"]
+    assert next(point for point in curve if point["ts_ns"] == expiry)["equity"] is None
+    trade = row(result, key, "touch1_hold")
+    if known_settlement:
+        assert curve[-1]["ts_ns"] == market["settlement_ns"]
+        assert curve[-1]["equity"] == pytest.approx(1000 + trade["pnl"])
+    else:
+        assert curve[-1]["equity"] is None
+        assert trade["pnl"] is None
 
 
 def test_entry_cap_uses_actual_cheap_side_ask_not_favorite_complement():
