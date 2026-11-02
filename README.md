@@ -68,6 +68,14 @@ Detailed guides have been filed away in the [docs index](https://evan-kolberg.gi
 
 ## Table of Contents
 
+- [70-Cent Longshot Research](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/)
+  - [Commands](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#commands)
+  - [Configuration And Server Inputs](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#configuration-and-server-inputs)
+  - [Causal Touches And Observation Quality](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#causal-touches-and-observation-quality)
+  - [Execution And Fees](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#execution-and-fees)
+  - [Output Schemas](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#output-schemas)
+  - [Analysis And Validation](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#analysis-and-validation)
+  - [Limitations And Verification](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#limitations-and-verification)
 - [Docs Index](https://evan-kolberg.github.io/prediction-market-backtesting/)
   - [Start Here](https://evan-kolberg.github.io/prediction-market-backtesting/#start-here)
   - [Core Framework](https://evan-kolberg.github.io/prediction-market-backtesting/#core-framework)

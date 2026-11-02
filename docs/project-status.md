@@ -25,6 +25,13 @@
 
 ## Known Issues
 
+- [70-cent longshot research draft PR #1](https://github.com/rawbencis/prediction-market-backtesting/pull/1)
+  adds network-free synthetic validation and explicit real-source inventory/fee
+  guards. Real server data, historical fee provenance, and exchange-complete
+  coverage have not been verified. Local strict MkDocs verification is blocked
+  by the theme's external Iconify request in the sandbox; upstream Nautilus
+  imports also emit NumPy timedelta deprecation warnings.
+
 - The archived `backtests/private/` and `strategies/private/` source is
   published for study, not as a current trading edge. These runners capture old
   Telonex BTC 5m, general-market, and resolved-sports research surfaces. They

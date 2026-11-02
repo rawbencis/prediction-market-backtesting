@@ -1,0 +1,47 @@
+{
+  "data": {
+    "vendor": "pmxt",
+    "sources": ["local:/replace/with/your/pmxt/raws"]
+  },
+  "seed": 70,
+  "partitions": {
+    "discovery_end": "2026-04-01T00:00:00Z",
+    "validation_end": "2026-04-15T00:00:00Z",
+    "final_end": "2026-05-01T00:00:00Z"
+  },
+  "filters": {
+    "assets": ["BTC"],
+    "durations_seconds": [300],
+    "start": "2026-03-01T00:00:00Z",
+    "end": "2026-05-01T00:00:00Z"
+  },
+  "markets": [
+    {
+      "market_id": "REPLACE_WITH_ACTUAL_SLUG",
+      "asset": "BTC",
+      "duration_seconds": 300,
+      "start": "2026-03-02T12:00:00Z",
+      "close": "2026-03-02T12:05:00Z",
+      "tokens": {
+        "UP": {"token_index": 0, "token_id": "REPLACE_UP_TOKEN"},
+        "DOWN": {"token_index": 1, "token_id": "REPLACE_DOWN_TOKEN"}
+      },
+      "settlement_winner": null,
+      "settlement": null,
+      "fee_schedule": "polymarket_p*(1-p)",
+      "fee_rate": null,
+      "fee_verified": false,
+      "fee_source": null,
+      "fee_valid_from_ns": null,
+      "fee_valid_to_ns": null
+    }
+  ],
+  "research": {"threshold": 0.70, "quantity": 5, "max_gap_seconds": 30, "max_stale_seconds": 5},
+  "execution": {
+    "decision_latency_ms": 25,
+    "order_latency_ms": 85,
+    "max_entry_price": 0.35,
+    "initial_cash": 1000,
+    "max_positions": 10
+  }
+}
