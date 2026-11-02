@@ -1,7 +1,45 @@
 {
   "data": {
-    "vendor": "pmxt",
-    "sources": ["local:/replace/with/your/pmxt/raws"]
+    "vendor": "sqlite_capture",
+    "sources": ["local:/home/ubuntu/books/smoke1.sqlite3"],
+    "session_ids": [null],
+    "session_limit": 20,
+    "record_limit": 100000,
+    "contract": {
+      "evidence": null,
+      "arrival_order": "session_sequence",
+      "sequence": null,
+      "snapshot_kind": null,
+      "delta_kind": null,
+      "delta_size": null,
+      "zero_size": null,
+      "buy_side": null,
+      "trade_side": null,
+      "timestamp_unit": null,
+      "start_column": null,
+      "end_column": null,
+      "price_precision": null,
+      "size_precision": null,
+      "segments": {
+        "evidence": null,
+        "status_column": null,
+        "valid_value": null
+      },
+      "coverage_intervals": {
+        "evidence": null,
+        "start_column": null,
+        "end_column": null,
+        "status_column": null,
+        "timestamp_unit": null
+      },
+      "gaps": {
+        "evidence": null,
+        "start_column": null,
+        "end_column": null,
+        "timestamp_unit": null
+      }
+    },
+    "resolutions": {}
   },
   "seed": 70,
   "partitions": {
@@ -17,17 +55,9 @@
   },
   "markets": [
     {
-      "market_id": "REPLACE_WITH_ACTUAL_SLUG",
+      "market_id": "REPLACE_WITH_SESSION_CONDITION_ID",
       "asset": "BTC",
       "duration_seconds": 300,
-      "start": "2026-03-02T12:00:00Z",
-      "close": "2026-03-02T12:05:00Z",
-      "tokens": {
-        "UP": {"token_index": 0, "token_id": "REPLACE_UP_TOKEN"},
-        "DOWN": {"token_index": 1, "token_id": "REPLACE_DOWN_TOKEN"}
-      },
-      "settlement_winner": null,
-      "settlement": null,
       "fee_schedule": "polymarket_p*(1-p)",
       "fee_rate": null,
       "fee_verified": false,

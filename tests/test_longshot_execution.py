@@ -29,6 +29,87 @@ def row(result, market, variant):
     )
 
 
+def test_native_causal_ingestion_keeps_trade_before_same_frame_book(monkeypatch):
+    markets, records, instruments = synthetic_fixture()
+    market = markets[0]
+    key = market["market_id"]
+    market.update(
+        source="sqlite_capture",
+        fee_verified=True,
+        fee_source="synthetic-test-contract",
+        fee_valid_from_ns=market["start_ns"],
+        fee_valid_to_ns=market["close_ns"],
+        capture_record_order={
+            side: [[index, event] for index in range(len(records[key][side]))]
+            for side, event in (("DOWN", 1), ("UP", 2))
+        },
+    )
+    instrument = instruments[key]["DOWN"]
+    timestamp = records[key]["DOWN"][1].ts_init
+    tick = TradeTick(
+        instrument.id,
+        instrument.make_price(0.30),
+        Quantity.from_int(1),
+        AggressorSide.BUYER,
+        TradeId("causal-fixture"),
+        timestamp,
+        timestamp,
+    )
+    records[key]["DOWN"].insert(1, tick)
+    market["capture_record_order"]["DOWN"].insert(1, [1, 0])
+    original_add = replay_module._add_causal_engine_data
+    observed = []
+
+    def check_order(engine, rows):
+        observed.append(rows)
+        assert rows[0].instrument_id == instrument.id
+        same_frame = [record for record in rows if record.ts_init == timestamp]
+        assert isinstance(same_frame[0], TradeTick)
+        assert same_frame[1].instrument_id == instrument.id
+        original_add(engine, rows)
+
+    monkeypatch.setattr(replay_module, "_add_causal_engine_data", check_order)
+    replay_variants([market], records, instruments)
+    assert len(observed) == 6
+    market["capture_record_order"]["DOWN"].pop()
+    with pytest.raises(ValueError, match="aligned sequence/event"):
+        replay_variants([market], records, instruments)
+
+
+def test_causal_engine_batches_preserve_interleaved_types():
+    class Engine:
+        def __init__(self):
+            self.rows = []
+            self.batches = []
+
+        def add_data(self, rows, *, sort):
+            assert sort is False
+            assert len({type(row) for row in rows}) == 1
+            self.rows.extend(rows)
+            self.batches.append(rows)
+
+        def sort_data(self):
+            self.rows.sort(key=lambda record: record.ts_init)
+
+    markets, records, instruments = synthetic_fixture()
+    key = markets[0]["market_id"]
+    book = records[key]["UP"][0]
+    instrument = instruments[key]["UP"]
+    tick = TradeTick(
+        instrument.id,
+        instrument.make_price(0.30),
+        Quantity.from_int(1),
+        AggressorSide.BUYER,
+        TradeId("interleaved"),
+        book.ts_init,
+        book.ts_init,
+    )
+    engine = Engine()
+    replay_module._add_causal_engine_data(engine, [tick, book, tick])
+    assert engine.rows == [tick, book, tick]
+    assert len(engine.batches) == 3
+
+
 def test_real_nautilus_types_and_all_six_independent_portfolios(replay):
     markets, records, instruments = synthetic_fixture()
     assert len({market["start_ns"] // (86_400 * SECOND) for market in markets}) == 3

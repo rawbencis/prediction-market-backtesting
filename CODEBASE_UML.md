@@ -1,8 +1,8 @@
 # Codebase UML Inventory
 
 This file is generated from Python AST metadata and excludes `tests/` plus cache, virtualenv, and dot directories.
-Generated: 2026-11-02T22:35:35+00:00
-Modules: 147 | Classes: 189 | Functions/methods: 1976
+Generated: 2026-11-02T23:48:23+00:00
+Modules: 149 | Classes: 190 | Functions/methods: 2008
 
 ## Backtesting Data Flow
 
@@ -1807,33 +1807,56 @@ flowchart TD
 
 ### `prediction_market_extensions/backtesting/longshot/analysis.py`
 - Imports: `__future__, collections, itertools, math, random`
-- Function L27: `synchronized_underlying_features(prices: Sequence[dict], *, ts_ns: int, strike: float, lookback_ns: int, max_staleness_ns: int, min_returns: int = 20) -> dict`
-- Function L146: `_underlying_summary(rows: list[dict]) -> dict`
-- Function L166: `_integer(value: object, name: str, *, minimum: int | None = None) -> int`
-- Function L174: `_number(value: object, name: str) -> float`
-- Function L183: `_ratio(numerator: float, denominator: float) -> float | None`
-- Function L187: `_quantile(values: list[float], fraction: float) -> float`
-- Function L195: `_estimate(numerator: float, denominator: float, blocks: list[tuple[float, float]], *, markets: int, min_days: int, min_markets: int, samples: int, rng: random.Random, informative_days: int | None = None, outcome_complete: bool = True) -> dict`
-- Function L242: `_partition(start: int, close: int, ends: tuple[int, int, int]) -> str | None`
-- Function L251: `_bucket(value: object, edges: tuple[float, ...]) -> str`
-- Function L261: `_transition(rows: list[dict], days: list[int], market_days: dict[str, int], options: dict, rng: random.Random) -> dict`
-- Function L304: `_time_summary(rows: list[dict], field: str, market_days: dict, options: dict) -> dict`
-- Function L321: `_portfolio(rows: list[dict], markets: list[dict], required_markets: set[str] | None = None) -> dict`
-- Function L368: `_variant(name: str, markets: list[dict], rows: list[dict], equity: list[dict], options: dict, rng: random.Random) -> dict`
-- Function L462: `analyze(audits: list[dict], events: list[dict], trades: list[dict] = (), equity: list[dict] = (), *, discovery_end_ns: int, validation_end_ns: int, final_end_ns: int, seed: int = 70, bootstrap_samples: int = 1000, min_days: int = 5, min_markets: int = 20) -> dict`
+- Function L36: `_underlying_summary(rows: list[dict]) -> dict`
+- Function L65: `_integer(value: object, name: str, *, minimum: int | None = None) -> int`
+- Function L73: `_number(value: object, name: str) -> float`
+- Function L82: `_ratio(numerator: float, denominator: float) -> float | None`
+- Function L86: `_quantile(values: list[float], fraction: float) -> float`
+- Function L94: `_estimate(numerator: float, denominator: float, blocks: list[tuple[float, float]], *, markets: int, min_days: int, min_markets: int, samples: int, rng: random.Random, informative_days: int | None = None, outcome_complete: bool = True) -> dict`
+- Function L141: `_partition(start: int, close: int, ends: tuple[int, int, int]) -> str | None`
+- Function L150: `_bucket(value: object, edges: tuple[float, ...]) -> str`
+- Function L160: `_transition(rows: list[dict], days: list[int], market_days: dict[str, int], options: dict, rng: random.Random) -> dict`
+- Function L203: `_time_summary(rows: list[dict], field: str, market_days: dict, options: dict) -> dict`
+- Function L220: `_portfolio(rows: list[dict], markets: list[dict], required_markets: set[str] | None = None) -> dict`
+- Function L267: `_variant(name: str, markets: list[dict], rows: list[dict], equity: list[dict], options: dict, rng: random.Random) -> dict`
+- Function L373: `analyze(audits: list[dict], events: list[dict], trades: list[dict] = (), equity: list[dict] = (), *, discovery_end_ns: int, validation_end_ns: int, final_end_ns: int, seed: int = 70, bootstrap_samples: int = 1000, min_days: int = 5, min_markets: int = 20) -> dict`
+
+### `prediction_market_extensions/backtesting/longshot/capture.py`
+- Imports: `__future__, asyncio, collections, contextlib, decimal, pathlib, sqlite3, typing`
+- Function L44: `_identifier(name: str) -> str`
+- Function L49: `_reader(path: Path) -> Any`
+- Function L76: `_schema(connection) -> Any`
+- Function L104: `_require(schema, table, columns) -> Any`
+- Function L109: `_bounded_rows(connection, query, parameters, limit, label) -> Any`
+- Function L117: `_limit(value, name, maximum = 1000000) -> Any`
+- Function L123: `audit_capture(path: Path, sample_limit: int = 20) -> dict[str, Any]`
+- Function L225: `_contract(data) -> Any`
+- Function L262: `_timestamp(value, unit) -> Any`
+- Function L278: `_number(value, precision, *, price = False) -> Any`
+- Function L295: `_source(data) -> Any`
+- Function L305: `_invalid_intervals(connection, schema, session_id, contract, limit) -> Any`
+- Function L362: `_projection(schema, table, required, optional = ()) -> Any`
+- Function L367: `_flags(row) -> Any`
+- Function L373: `_segments(connection, schema, session_id, contract, limit) -> Any`
+- Function L418: `_instrument(condition, token, side, start, close, contract) -> Any`
+- Function L446: `_session_records(connection, schema, session, pair, contract, limit) -> Any`
+- Function L799: `_load_capture_markets(config) -> Any`
+- Function L1034: `async load_capture_markets(config: Mapping[str, Any]) -> tuple[list[dict[str, Any]], dict[str, dict[str, list[Any]]], dict[str, dict[str, Any]]]`
+- Function L1045: `async load_capture_replay(config: Mapping[str, Any], replay, *, request = None) -> Any`
+- Class L40: `CaptureError(ValueError)`
 
 ### `prediction_market_extensions/backtesting/longshot/cli.py`
-- Imports: `__future__, argparse, asyncio, collections, csv, hashlib, json, pathlib, prediction_market_extensions, subprocess, typing`
-- Function L24: `write_dataset(path: Path, rows: Sequence[dict[str, Any]]) -> None`
-- Function L38: `read_dataset(path: Path) -> list[dict[str, Any]]`
-- Function L46: `write_json(path: Path, value) -> None`
-- Function L50: `manifest(config: dict[str, Any], markets: Sequence[dict[str, Any]], output: Path, stage: str) -> None`
-- Function L85: `load_inputs(config: dict[str, Any]) -> Any`
-- Function L104: `extract_inputs(config: dict[str, Any], markets, records) -> Any`
-- Function L157: `analyze_output(config: dict[str, Any], output: Path) -> dict[str, Any]`
-- Function L186: `replay_inputs(config, markets, records, instruments) -> Any`
-- Function L206: `run_stage(config: dict[str, Any], stage: str, output: Path) -> None`
-- Function L235: `main(argv: Sequence[str] | None = None) -> None`
+- Imports: `__future__, argparse, asyncio, collections, csv, hashlib, json, pathlib, subprocess, typing`
+- Function L16: `write_dataset(path: Path, rows: Sequence[dict[str, Any]]) -> None`
+- Function L30: `read_dataset(path: Path) -> list[dict[str, Any]]`
+- Function L38: `write_json(path: Path, value) -> None`
+- Function L42: `manifest(config: dict[str, Any], markets: Sequence[dict[str, Any]], output: Path, stage: str) -> None`
+- Function L77: `load_inputs(config: dict[str, Any]) -> Any`
+- Function L102: `extract_inputs(config: dict[str, Any], markets, records) -> Any`
+- Function L155: `analyze_output(config: dict[str, Any], output: Path) -> dict[str, Any]`
+- Function L218: `replay_inputs(config, markets, records, instruments) -> Any`
+- Function L238: `run_stage(config: dict[str, Any], stage: str, output: Path) -> None`
+- Function L280: `main(argv: Sequence[str] | None = None) -> None`
 
 ### `prediction_market_extensions/backtesting/longshot/dataset.py`
 - Imports: `collections, math, state`
@@ -1844,26 +1867,40 @@ flowchart TD
 - Imports: `__future__, bisect, collections, itertools, math, statistics, typing`
 - Function L11: `attach_underlying_features(events: Sequence[dict[str, Any]], markets: Sequence[dict[str, Any]], underlying: dict[str, list[dict[str, Any]]], *, max_age_ns: int = 1000000000, lookback_ns: int = 60000000000) -> None`
 
+### `prediction_market_extensions/backtesting/longshot/inspection.py`
+- Imports: `__future__, contextlib, json, math, pathlib, sqlite3, typing`
+- Function L11: `bounded_limit(value: int) -> int`
+- Function L18: `readonly_database(path: Path) -> Any`
+- Function L41: `schema_inventory(connection: sqlite3.Connection) -> dict[str, Any]`
+- Function L60: `resolve_index_path(value: str, index: Path, allowed_roots: list[Path]) -> Path`
+- Function L75: `audit_index(path: Path, *, sample_limit: int = 20, allowed_roots: list[Path]) -> dict[str, Any]`
+- Function L120: `_sample_value(value) -> Any`
+- Function L130: `inspect_parquet(path: Path, *, sample_limit: int = 5) -> dict[str, Any]`
+- Function L168: `inspect_manifest(path: Path, *, sample_limit: int = 20) -> dict[str, Any]`
+- Function L187: `audit_transactions(path: Path) -> dict[str, Any]`
+
 ### `prediction_market_extensions/backtesting/longshot/replay.py`
-- Imports: `__future__, decimal, json, math, nautilus_trader, pathlib, prediction_market_extensions, strategies`
-- Function L58: `_fee_rate(market) -> Any`
-- Function L80: `_engine(initial_cash, order_latency_ms) -> Any`
-- Function L118: `_report(markets, observations, strategy, variant, initial_cash) -> Any`
-- Function L226: `replay_variants(markets: list[dict], records_by_market: dict, instruments_by_market: dict, *, threshold = 0.7, quantity = 5, decision_latency_ms = 25, order_latency_ms = 85, max_entry_price = 0.35, initial_cash = 1000, max_positions = 10, max_gap_ns = DEFAULT_MAX_GAP_NS, max_stale_ns = DEFAULT_MAX_STALE_NS, output_dir = None) -> Any`
-- Class L45: `LongshotIOCFees(FeeModel)`
-  - Method L48: `get_commission(self, order, fill_qty, fill_px, instrument) -> Any`
+- Imports: `__future__, decimal, itertools, json, math, nautilus_trader, pathlib, prediction_market_extensions, strategies`
+- Function L62: `_observable_record(record) -> Any`
+- Function L91: `_add_causal_engine_data(engine, records) -> Any`
+- Function L99: `_fee_rate(market) -> Any`
+- Function L121: `_engine(initial_cash, order_latency_ms) -> Any`
+- Function L159: `_report(markets, observations, strategy, variant, initial_cash) -> Any`
+- Function L328: `replay_variants(markets: list[dict], records_by_market: dict, instruments_by_market: dict, *, threshold = 0.7, quantity = 5, decision_latency_ms = 25, order_latency_ms = 85, max_entry_price = 0.35, initial_cash = 1000, max_positions = 10, max_gap_ns = DEFAULT_MAX_GAP_NS, max_stale_ns = DEFAULT_MAX_STALE_NS, output_dir = None) -> Any`
+- Class L49: `LongshotIOCFees(FeeModel)`
+  - Method L52: `get_commission(self, order, fill_qty, fill_px, instrument) -> Any`
 
 ### `prediction_market_extensions/backtesting/longshot/sources.py`
 - Imports: `__future__, collections, dataclasses, hashlib, json, nautilus_trader, pandas, pathlib, prediction_market_extensions, typing`
 - Function L19: `timestamp_ns(value: str) -> int`
 - Function L26: `read_configuration(path: Path) -> dict[str, Any]`
-- Function L56: `select_markets(markets: list[dict[str, Any]], filters: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]`
-- Function L93: `record_digest(records: list[Any] | tuple[Any, ...]) -> str`
-- Function L102: `async load_vendor_markets(config: Mapping[str, Any]) -> tuple[list[dict[str, Any]], dict[str, dict[str, list[Any]]], dict[str, dict[str, Any]]]`
+- Function L61: `select_markets(markets: list[dict[str, Any]], filters: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]`
+- Function L98: `record_digest(records: list[Any] | tuple[Any, ...]) -> str`
+- Function L107: `async load_vendor_markets(config: Mapping[str, Any]) -> tuple[list[dict[str, Any]], dict[str, dict[str, list[Any]]], dict[str, dict[str, Any]]]`
 
 ### `prediction_market_extensions/backtesting/longshot/state.py`
 - Imports: `collections, dataclasses, itertools, math, nautilus_trader, typing`
-- Function L252: `observations_from_records(records_by_side: dict[str, Sequence[OrderBookDeltas]]) -> list[PairObservation]`
+- Function L253: `observations_from_records(records_by_side: dict[str, Sequence[OrderBookDeltas]]) -> list[PairObservation]`
 - Class L19: `BookState`
   - Method L24: `__post_init__(self) -> Any`
   - Method L32: `invalid_reasons(self) -> tuple[str, ...]`
@@ -1892,7 +1929,7 @@ flowchart TD
 ### `prediction_market_extensions/backtesting/longshot/synthetic.py`
 - Imports: `decimal, nautilus_trader`
 - Function L16: `snapshot(instrument, ts_ns, bid, ask, *, bid_size = 20, ask_size = 20, ts_event = None) -> Any`
-- Function L45: `synthetic_inputs() -> Any`
+- Function L45: `synthetic_fixture() -> Any`
 
 ### `prediction_market_extensions/backtesting/optimizers/__init__.py`
 - Imports: `prediction_market_extensions`
@@ -2390,26 +2427,28 @@ flowchart TD
   - Method L301: `on_reset(self) -> None`
 
 ### `strategies/longshot_flip.py`
-- Imports: `__future__, decimal, functools, math, nautilus_trader, prediction_market_extensions`
-- Class L22: `LongshotFlipConfig(StrategyConfig)`
-  - Method L41: `__post_init__(self) -> Any`
+- Imports: `__future__, collections, decimal, functools, math, nautilus_trader, prediction_market_extensions`
+- Class L24: `LongshotFlipConfig(StrategyConfig)`
+  - Method L42: `__post_init__(self) -> Any`
 - Class L69: `LongshotFlipStrategy(Strategy)`
-  - Method L72: `__init__(self, config: LongshotFlipConfig) -> Any`
-  - Method L94: `on_start(self) -> Any`
-  - Method L111: `on_order_book_deltas(self, deltas) -> Any`
-  - Method L134: `_observe(self, market_id, timestamp, event) -> Any`
-  - Method L143: `_evaluate_observation(self, market_id, observation) -> Any`
-  - Method L171: `_delay(self, market_id, action, callback) -> Any`
-  - Method L180: `_open(self, market_id) -> Any`
-  - Method L184: `_can_arrive(self, market_id) -> Any`
-  - Method L191: `_enter(self, market_id, event) -> Any`
-  - Method L230: `_exit(self, market_id, event) -> Any`
-  - Method L239: `_submit(self, market_id, side, quantity, price) -> Any`
-  - Method L266: `on_order_filled(self, event) -> Any`
-  - Method L291: `_finished(self, order_id) -> Any`
-  - Method L299: `on_order_canceled(self, event) -> Any`
-  - Method L302: `on_order_rejected(self, event) -> Any`
-  - Method L305: `on_order_denied(self, event) -> Any`
+  - Method L72: `__init__(self, config: LongshotFlipConfig, source_records = None) -> Any`
+  - Method L99: `on_start(self) -> Any`
+  - Method L116: `on_order_book_deltas(self, deltas) -> Any`
+  - Method L142: `_observe(self, market_id, timestamp, event) -> Any`
+  - Method L151: `_evaluate_observation(self, market_id, observation) -> Any`
+  - Method L183: `_delay(self, market_id, action, callback) -> Any`
+  - Method L192: `_open(self, market_id) -> Any`
+  - Method L196: `_can_arrive(self, market_id) -> Any`
+  - Method L203: `_decision_books_valid(self, market_id) -> Any`
+  - Method L219: `_enter(self, market_id, event) -> Any`
+  - Method L250: `_exit(self, market_id, event) -> Any`
+  - Method L265: `_submit(self, market_id, side, quantity, price) -> Any`
+  - Method L301: `_arrival_clock(self, event) -> Any`
+  - Method L304: `on_order_filled(self, event) -> Any`
+  - Method L329: `_finished(self, order_id) -> Any`
+  - Method L337: `on_order_canceled(self, event) -> Any`
+  - Method L340: `on_order_rejected(self, event) -> Any`
+  - Method L343: `on_order_denied(self, event) -> Any`
 
 ### `strategies/mean_reversion.py`
 - Imports: `__future__, collections, decimal, nautilus_trader, strategies, typing`

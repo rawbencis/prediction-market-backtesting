@@ -34,8 +34,8 @@ def read_configuration(path: Path) -> dict[str, Any]:
     if not times[0] < times[1] < times[2]:
         raise ValueError("Chronological partition boundaries must be strictly increasing")
     data = config.get("data", {})
-    if data.get("vendor") not in {"synthetic", "pmxt", "telonex"}:
-        raise ValueError("data.vendor must be synthetic, pmxt or telonex")
+    if data.get("vendor") not in {"synthetic", "pmxt", "telonex", "sqlite_capture"}:
+        raise ValueError("data.vendor must be synthetic, pmxt, telonex or sqlite_capture")
     sources = data.get("sources", [])
     if data["vendor"] != "synthetic" and not sources:
         raise ValueError("Explicit vendor sources are required; no server path is assumed")
@@ -46,6 +46,11 @@ def read_configuration(path: Path) -> dict[str, Any]:
             raise ValueError("Do not put credentials or signed URLs in configuration")
         if source.startswith("api:") and source != "api:TELONEX_API_KEY":
             raise ValueError("Use api:TELONEX_API_KEY, never a literal API credential")
+    if data["vendor"] == "sqlite_capture":
+        if len(sources) != 1 or not sources[0].startswith("local:"):
+            raise ValueError("SQLite capture requires exactly one local: source")
+        if not Path(sources[0][len("local:") :]).is_absolute():
+            raise ValueError("SQLite capture source must be an explicit absolute path")
     for market in config.get("markets", []):
         for field in ("start", "close", "settlement"):
             if market.get(field):
@@ -103,6 +108,10 @@ async def load_vendor_markets(
     config: Mapping[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, list[Any]]], dict[str, dict[str, Any]]]:
     data = config["data"]
+    if data["vendor"] == "sqlite_capture":
+        from prediction_market_extensions.backtesting.longshot.capture import load_capture_markets
+
+        return await load_capture_markets(config)
     selection = MarketDataConfig(
         platform="polymarket",
         data_type="book",

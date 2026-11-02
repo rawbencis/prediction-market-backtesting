@@ -71,6 +71,8 @@ Detailed guides have been filed away in the [docs index](https://evan-kolberg.gi
 - [70-Cent Longshot Research](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/)
   - [Commands](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#commands)
   - [Configuration And Server Inputs](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#configuration-and-server-inputs)
+  - [Native Server Source Audit](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#native-server-source-audit)
+  - [Native Replay Prerequisites](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#native-replay-prerequisites)
   - [Causal Touches And Observation Quality](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#causal-touches-and-observation-quality)
   - [Execution And Fees](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#execution-and-fees)
   - [Output Schemas](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#output-schemas)

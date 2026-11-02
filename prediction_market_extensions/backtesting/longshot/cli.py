@@ -10,14 +10,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from prediction_market_extensions.backtesting.longshot.sources import (
-    load_vendor_markets,
-    read_configuration,
-    record_digest,
-    select_markets,
-    timestamp_ns,
-)
-
 DATASET_NAMES = ("market_audit", "events", "trades", "equity", "market_equity")
 
 
@@ -83,6 +75,12 @@ def manifest(
 
 
 def load_inputs(config: dict[str, Any]):  # type: ignore[no-untyped-def]
+    from prediction_market_extensions.backtesting.longshot.sources import (
+        load_vendor_markets,
+        record_digest,
+        select_markets,
+    )
+
     if config["data"]["vendor"] != "synthetic":
         return asyncio.run(load_vendor_markets(config))
     from prediction_market_extensions.backtesting.longshot.synthetic import synthetic_fixture
@@ -156,6 +154,7 @@ def extract_inputs(config: dict[str, Any], markets, records):  # type: ignore[no
 
 def analyze_output(config: dict[str, Any], output: Path) -> dict[str, Any]:
     from prediction_market_extensions.backtesting.longshot.analysis import analyze
+    from prediction_market_extensions.backtesting.longshot.sources import timestamp_ns
 
     previous = json.loads((output / "manifest.json").read_text())
     if previous["configuration"] != config:
@@ -281,11 +280,55 @@ def run_stage(config: dict[str, Any], stage: str, output: Path) -> None:
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Causal 70-cent L2 longshot research")
     parser.add_argument(
-        "stage", choices=("audit", "extract", "analyze", "replay", "sensitivity", "all")
+        "stage",
+        choices=("source-audit", "audit", "extract", "analyze", "replay", "sensitivity", "all"),
     )
-    parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--config", type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--source", type=Path)
+    parser.add_argument(
+        "--source-kind", choices=("capture", "index", "parquet", "manifest", "transactions")
+    )
+    parser.add_argument("--sample-limit", type=int, default=20)
+    parser.add_argument("--allowed-root", type=Path, action="append", default=[])
     args = parser.parse_args(argv)
+    if args.stage == "source-audit":
+        if args.source is None or args.source_kind is None:
+            parser.error("source-audit requires --source and --source-kind")
+        from prediction_market_extensions.backtesting.longshot.inspection import (
+            audit_index,
+            audit_transactions,
+            bounded_limit,
+            inspect_manifest,
+            inspect_parquet,
+        )
+
+        bounded_limit(args.sample_limit)
+        if args.source_kind == "capture":
+            from prediction_market_extensions.backtesting.longshot.capture import audit_capture
+
+            report = audit_capture(args.source, sample_limit=args.sample_limit)
+        elif args.source_kind == "index":
+            report = audit_index(
+                args.source, sample_limit=args.sample_limit, allowed_roots=args.allowed_root
+            )
+        elif args.source_kind == "parquet":
+            report = inspect_parquet(args.source, sample_limit=args.sample_limit)
+        elif args.source_kind == "manifest":
+            report = inspect_manifest(args.source, sample_limit=args.sample_limit)
+        else:
+            report = audit_transactions(args.source)
+        args.output.mkdir(parents=True, exist_ok=True)
+        # Arrow samples can contain Decimal, bytes or datetime, not just JSON scalars.
+        (args.output / "source_audit.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True, allow_nan=False, default=str) + "\n"
+        )
+        print(f"Bounded {args.source_kind} source audit -> {args.output}")
+        return
+    if args.config is None:
+        parser.error(f"{args.stage} requires --config")
+    from prediction_market_extensions.backtesting.longshot.sources import read_configuration
+
     config = read_configuration(args.config)
     if args.stage != "sensitivity":
         run_stage(config, args.stage, args.output)

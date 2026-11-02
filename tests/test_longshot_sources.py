@@ -124,3 +124,26 @@ def test_vendor_reuses_book_replay_adapter_and_preserves_load_failures(monkeypat
     assert markets[0]["settlement_winner"] == "UP"
     assert set(records["m"]) == {"UP"}
     assert set(instruments["m"]) == {"UP"}
+
+
+def test_capture_configuration_requires_one_absolute_local_source(tmp_path):
+    config = {
+        "data": {"vendor": "sqlite_capture", "sources": ["local:/configured/capture.sqlite3"]},
+        "partitions": {
+            "discovery_end": "2026-01-02T00:00:00Z",
+            "validation_end": "2026-01-03T00:00:00Z",
+            "final_end": "2026-01-04T00:00:00Z",
+        },
+    }
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(config))
+    assert read_configuration(path)["data"]["vendor"] == "sqlite_capture"
+    for sources, message in [
+        (["local:relative.sqlite3"], "absolute path"),
+        (["archive:r2v2.pmxt.dev"], "exactly one local"),
+        (["local:/one.sqlite3", "local:/two.sqlite3"], "exactly one local"),
+    ]:
+        config["data"]["sources"] = sources
+        path.write_text(json.dumps(config))
+        with pytest.raises(ValueError, match=message):
+            read_configuration(path)

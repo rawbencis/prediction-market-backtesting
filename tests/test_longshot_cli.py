@@ -5,6 +5,7 @@ import json
 import pytest
 
 from prediction_market_extensions.backtesting.longshot.cli import (
+    main,
     manifest,
     read_dataset,
     run_stage,
@@ -37,3 +38,30 @@ def test_manifest_records_checksum_without_requiring_git(tmp_path) -> None:
 def test_primary_threshold_cannot_be_selected_on_holdout(tmp_path) -> None:
     with pytest.raises(ValueError, match="Primary threshold"):
         run_stage({"research": {"threshold": 0.65}}, "all", tmp_path)
+
+
+def test_source_audit_does_not_require_market_configuration(tmp_path):
+    source = tmp_path / "manifest.json"
+    source.write_text('[{"slug": "sample"}]')
+    output = tmp_path / "audit"
+    main(
+        [
+            "source-audit",
+            "--source-kind",
+            "manifest",
+            "--source",
+            str(source),
+            "--output",
+            str(output),
+        ]
+    )
+    report = json.loads((output / "source_audit.json").read_text())
+    assert report["manifest_entries"] == 1
+    assert not report["execution_replay_supported"]
+
+
+def test_source_audit_requires_explicit_source_kind(tmp_path):
+    with pytest.raises(SystemExit):
+        main(["source-audit", "--source", str(tmp_path), "--output", str(tmp_path)])
+    with pytest.raises(SystemExit):
+        main(["extract", "--output", str(tmp_path)])

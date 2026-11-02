@@ -43,18 +43,21 @@ generated.
 deterministic fixture, not real market results. Statistics with too few markets
 or days are explicitly unavailable.
 
-[Local-source template](examples/longshot-local.json) contains placeholders:
-replace its slug, dates, token identities, and local path with actual inventory.
-It does not claim access to any server. `data.vendor` is `pmxt` or `telonex`;
-`data.sources` uses the existing loader syntax, for example
+[Local-source template](examples/longshot-local.json) is an intentionally blocked
+native capture example: replace its session, timing, recorder contract and
+resolution placeholders only after verification. It does not claim access to
+any server. `data.vendor: "sqlite_capture"` uses exactly one absolute `local:`
+SQLite path and the existing Nautilus L2 research/execution pipeline.
+PMXT and Telonex remain separate supported vendors; their `data.sources`
+use the existing loader syntax, for example
 `local:/your/pmxt/raws`, `archive:r2v2.pmxt.dev`, or `api:TELONEX_API_KEY`.
 API credentials belong in the environment, never configuration or output
 manifests. Local book sources may still require the existing vendor loader's
 market-metadata lookup; they are not a promise of fully offline real-data loading.
 PMXT/Telonex adapter failures remain visible in the audit.
 
-`markets` is an explicit universe; there is no automatic discovery of unknown
-server directories. Each record requires:
+For PMXT/Telonex, `markets` is an explicit universe; there is no automatic
+discovery of unknown server directories. Each record requires:
 
 - `market_id` (optionally `market_slug`), `asset`, `duration_seconds`;
 - timezone-qualified `start`, `close` (or integer UTC `start_ns`, `close_ns`);
@@ -78,6 +81,125 @@ optimizer choosing a winner on the final test.
 Before real-data execution, supply the market universe, actual trading-close
 timestamps, token mapping, book coverage, resolution timestamps, and verified
 historical fees. A current API fee rate is not proof of a historical rate.
+
+## Native Server Source Audit
+
+The supplied evidence is **user-run read-only schema inspection**, not agent
+server access. These paths occur only in configurable examples and commands,
+never production defaults. Run in the repository environment from Setup; plain
+server `python3` without project dependencies is not a replay environment.
+Write reports to a separate output directory, not inside source stores.
+
+```bash
+uv run python scripts/longshot_flip_70.py source-audit --source-kind capture --source /home/ubuntu/books/smoke1.sqlite3 --sample-limit 20 --output /tmp/longshot-smoke1-audit
+uv run python scripts/longshot_flip_70.py source-audit --source-kind capture --source /home/ubuntu/books/smoke2.sqlite3 --sample-limit 20 --output /tmp/longshot-smoke2-audit
+uv run python scripts/longshot_flip_70.py source-audit --source-kind index --source /home/ubuntu/up_down_research/data/unified/quotes_unified.db --allowed-root /home/ubuntu/up_down_research/data --sample-limit 20 --output /tmp/longshot-index-audit
+uv run python scripts/longshot_flip_70.py source-audit --source-kind parquet --source /home/ubuntu/up_down_research/data/quotes_threshold_5m/btc-updown-5m-1781730900_UP.parquet --sample-limit 5 --output /tmp/longshot-parquet-audit
+uv run python scripts/longshot_flip_70.py source-audit --source-kind manifest --source /home/ubuntu/up_down_research/data/quotes_threshold_5m/manifest_btc.json --sample-limit 20 --output /tmp/longshot-manifest-audit
+uv run python scripts/longshot_flip_70.py source-audit --source-kind transactions --source /home/ubuntu/db/octopus.db --output /tmp/longshot-fills-schema
+```
+
+`source-audit` writes `source_audit.json` without a market configuration or
+partition boundaries. Samples are bounded (1–100); SQLite inspection is
+read-only `mode=ro`, without `immutable`, and uses a query-work budget and lock
+timeout. It does not copy databases, checkpoint, VACUUM, or count whole tables.
+An unavailable file, lock, or exhausted work budget fails visibly. A bounded
+sample is not exhaustive validation; rerun on explicitly chosen inputs after
+reviewing schemas and indexes rather than increasing to a global scan.
+This is important with the reported root disk at 94% utilization.
+
+The two capture stores have active frames/events/levels/trades and quality
+tables. The second schema also has `archive_levels_compact WITHOUT ROWID` and
+heartbeat diagnostics. Presence of a table does not establish that it contains
+records, reconstructs a complete history, or is safe to combine with active
+storage. Compressed `raw_blocks` (`zlib-framed-v1`), archives, REST snapshots and
+reconciliation reconstruction are not assumed interchangeable with active
+events. Unsupported reconstruction must remain a replay blocker.
+
+The unified database's supplied `windows` schema is **a file index only**.
+Discovery resolves relative paths from the index directory, checks existence
+and indexed sizes, and resolves symlinks against explicit `--allowed-root`
+directories. Path errors stay visible in the sample report. Indexed windows
+are not proof of coverage.
+
+Parquet schemas remain unknown until inspected. Missing PyArrow produces an
+explicit dependency message, not a fallback to PMXT. Inspection reports actual
+schema, metadata row count and bounded sample rows, with **no supported replay
+mapping** until column semantics and recorder evidence are supplied.
+Nonfinite sample floats are tagged as `{"nonfinite_float": "nan"}` (or `inf`/
+`-inf`), never normalized into valid prices.
+Full-depth snapshot/delta replay must be distinguished from top-of-book/event-study data.
+The threshold-selected filenames do not establish full L2 or an unbiased market
+universe. No execution-realism or unbiased transition-probability claims are
+permitted from such files. Manifest entries are not validated unique markets:
+the user reported 17,348 BTC and 17,563 ETH entries, not complete-market counts.
+`octopus.db` fills/state/wallet statistics are transactions, not historical quotes.
+
+## Native Replay Prerequisites
+
+The native adapter does not guess recorder semantics from column names.
+Before enabling extraction/replay, obtain:
+
+- recorder code or sample payload evidence establishing snapshot event
+  boundaries (including empty snapshots), zero-size deletions, and BUY/SELL
+  book-side and trade-aggressor meanings;
+- explicit selected session IDs, populated representations and coverage/quality
+  samples, including capture gaps, invalid segments and timestamp inversions;
+- verified market open/close semantics distinct from planned times and actual
+  collector connection times, plus session UP/DOWN token identity;
+- an independent verified resolution mapping with winner and availability
+  timestamp; the supplied session schema has **no settlement winner**;
+- historically applicable fees and instrument tick/size precision.
+
+The native template's null contract fields are deliberate blockers, not
+defaults. `data.session_ids` selects exact sessions; `session_limit` and
+`record_limit` cap loading rather than silently truncating replay. `markets`
+uses session `condition_id` as `market_id` for fee/universe metadata.
+Outcome identities come from `sessions.up_token_id`/`down_token_id`, not an
+assumed token index. The contract selects exact start/end columns and timestamp
+units separately from capture-connection timestamps.
+Populated quality tables need explicit column/unit mappings with evidence.
+If segments have a status column, `contract.segments` must identify it and
+the supported `valid_value: "complete"` with recorder evidence; other status
+semantics remain unsupported. Unknown/nonzero recorder flags fail closed.
+Book/trade exchange timestamps are mandatory: receipt time is not a substitute
+for unknown source freshness.
+Native settlement labels belong in `data.resolutions[condition_id]`, requiring
+`verified: true`, nonempty `evidence`, `winner: "UP"` or `"DOWN"`, and integer
+post-close `settlement_ns`, not in unverified session or strategy metadata.
+An empty resolution mapping leaves held positions unresolved; it does not
+infer a winner from the last book.
+
+Capture replay must preserve session sequence/event-index ordering and separate
+received/exchange timestamps. Inversions are diagnostics, not a reason to sort
+future exchange information into an earlier observable state. Invalid coverage
+requires reset/quarantine and a fresh snapshot, not deltas applied to an old
+book. Reconciliation observations cannot be applied before collector availability.
+Both outcome snapshot anchors must be available at or before exact market open;
+late initial snapshots cannot certify an unobserved opening prefix. Missing
+complete-window evidence or any invalid/reset coverage permanently quarantines
+that market for this pipeline, even if later snapshots reconstruct usable books.
+`capture_record_order` retains sequence/event keys alongside the original
+records, including same-receipt-time book/trade ordering through engine ingestion.
+Active/archive/compact overlap or missing spans require explicit reconstruction
+and precedence evidence; no blind concatenation or silent archive dropping.
+Resolution labels remain in postprocessing inventory, never strategy-visible
+instrument metadata. Outcomes are independent token books, not complements.
+
+After filling the evidence-backed template:
+
+```bash
+uv run python scripts/longshot_flip_70.py audit --config docs/examples/longshot-local.json --output /tmp/longshot-native
+uv run python scripts/longshot_flip_70.py extract --config docs/examples/longshot-local.json --output /tmp/longshot-native
+uv run python scripts/longshot_flip_70.py replay --config docs/examples/longshot-local.json --output /tmp/longshot-native
+uv run python scripts/longshot_flip_70.py analyze --config docs/examples/longshot-local.json --output /tmp/longshot-native
+```
+
+The unfilled template must fail closed. Synthetic fixtures validate adapter
+behavior, not recorder behavior, statistical sufficiency of the smoke stores,
+or real-server success. The server samples, population/coverage checks,
+reconstruction semantics, Parquet schemas and resolution metadata are still
+pending.
 
 ## Causal Touches And Observation Quality
 

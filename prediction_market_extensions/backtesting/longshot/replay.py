@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal
+from itertools import groupby
 from math import isfinite
 from pathlib import Path
 
@@ -85,6 +86,14 @@ def _observable_record(record):
             for delta in record.deltas
         ],
     )
+
+
+def _add_causal_engine_data(engine, records):
+    # Nautilus requires homogeneous batches; consecutive runs preserve capture
+    # order across types before its stable receipt-time sort.
+    for _, group in groupby(records, type):
+        engine.add_data(list(group), sort=False)
+    engine.sort_data()
 
 
 def _fee_rate(market):
@@ -360,6 +369,10 @@ def replay_variants(
         raise ValueError("Unique nonempty markets are required")
     rates = {m["market_id"]: _fee_rate(m) for m in markets}
     records = []
+    capture_keys = []
+    native_capture = any(m.get("source") == "sqlite_capture" for m in markets)
+    if native_capture and any(m.get("source") != "sqlite_capture" for m in markets):
+        raise ValueError("Mixed capture/vendor causal ordering is unsupported")
     source_records = {}
     observations = {}
     clean_instruments = []
@@ -379,6 +392,11 @@ def replay_variants(
                 "Book replay requires L2 deltas; standalone trade-tick replay is unsupported"
             )
         for side in ("UP", "DOWN"):
+            order = market.get("capture_record_order", {}).get(side)
+            if native_capture and (
+                not isinstance(order, list) or len(order) != len(pair_records[side])
+            ):
+                raise ValueError("Native capture requires aligned sequence/event ordering keys")
             instrument = instruments_by_market[key][side]
             if not isinstance(instrument, BinaryOption) or str(instrument.id.venue) != "POLYMARKET":
                 raise ValueError("Polymarket BinaryOption instruments are required")
@@ -386,7 +404,7 @@ def replay_variants(
             payload["info"] = {}
             payload["taker_fee"] = str(rates[key])
             clean_instruments.append(BinaryOption.from_dict(payload))
-            for record in pair_records[side]:
+            for index, record in enumerate(pair_records[side]):
                 if (
                     not isinstance(record, OrderBookDeltas | TradeTick)
                     or record.instrument_id != instrument.id
@@ -404,9 +422,30 @@ def replay_variants(
                 # exchange times precede availability. Raw inputs are unchanged
                 # and remain the source for extraction and provenance hashes.
                 records.append(_observable_record(record))
+                if native_capture:
+                    causal = order[index]
+                    if (
+                        not isinstance(causal, (list, tuple))
+                        or len(causal) != 2
+                        or any(
+                            isinstance(value, bool) or not isinstance(value, int)
+                            for value in causal
+                        )
+                        or causal[0] < 0
+                        or causal[1] < -1
+                    ):
+                        raise ValueError("Invalid native capture sequence/event ordering key")
+                    capture_keys.append((record.ts_init, key, *causal, side))
         observations[key] = list(observations_from_records(pair_books))
     if not records:
         raise ValueError("No replay data")
+    if native_capture:
+        records = [
+            record
+            for _, record in sorted(
+                zip(capture_keys, records, strict=True), key=lambda pair: pair[0]
+            )
+        ]
     result = {
         "trades": [],
         "equity": [],
@@ -458,7 +497,10 @@ def replay_variants(
                     source_records=source_records,
                 )
                 engine.add_strategy(strategy)
-                add_engine_data_by_type(engine, records)
+                if native_capture:
+                    _add_causal_engine_data(engine, records)
+                else:
+                    add_engine_data_by_type(engine, records)
                 engine.run()
                 trades, equity, market_equity = _report(
                     markets, observations, strategy, variant, initial_cash
