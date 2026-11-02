@@ -1,17 +1,18 @@
 from copy import deepcopy
 
 import pytest
-from nautilus_trader.model.data import OrderBookDeltas
+from nautilus_trader.model.data import OrderBookDeltas, TradeTick
+from nautilus_trader.model.enums import AggressorSide
+from nautilus_trader.model.identifiers import TradeId
 from nautilus_trader.model.instruments import BinaryOption
+from nautilus_trader.model.objects import Quantity
 
 import prediction_market_extensions.backtesting.longshot.replay as replay_module
 from prediction_market_extensions.backtesting.longshot.replay import VARIANTS, replay_variants
 from prediction_market_extensions.backtesting.longshot.synthetic import (
     SECOND,
     snapshot,
-)
-from prediction_market_extensions.backtesting.longshot.synthetic import (
-    synthetic_inputs as synthetic_fixture,
+    synthetic_fixture,
 )
 
 
@@ -67,6 +68,17 @@ def test_touch1_touch2_touch3_require_actual_alternation(replay):
             )
 
 
+def test_entry_touch_uses_shared_descriptive_midpoint_not_best_bid():
+    markets, records, instruments = synthetic_fixture()
+    market = markets[1]
+    key = market["market_id"]
+    timestamp = market["start_ns"] + SECOND
+    records[key]["UP"][1] = snapshot(instruments[key]["UP"], timestamp, 0.69, 0.73)
+    trade = row(replay_variants([market], records, instruments), key, "touch1_hold")
+    assert trade["entered"]
+    assert trade["signal_ts_ns"] == timestamp
+
+
 def test_market_attribution_reconciles_without_duplicating_portfolio_capital(replay):
     for variant in VARIANTS:
         points = {}
@@ -94,6 +106,67 @@ def test_orders_fill_after_decision_and_exchange_latency_at_actual_books(replay)
     assert repriced["entry_attempted"]
     assert repriced["attempts"][0]["status"] == "submitted"
     assert repriced["entry_quantity"] == 0
+
+
+def test_integrated_native_trade_ticks_are_accepted_without_entering_touch_state(monkeypatch):
+    markets, records, instruments = synthetic_fixture()
+    market = markets[1]
+    key = market["market_id"]
+    baseline = row(replay_variants([market], records, instruments), key, "touch1_hold")
+    for index, side in enumerate(("UP", "DOWN")):
+        instrument = instruments[key][side]
+        timestamp = market["start_ns"] + SECOND + 120_000_000 + index * 10_000_000
+        records[key][side].append(
+            TradeTick(
+                instrument.id,
+                instrument.make_price(0.74 if side == "UP" else 0.28),
+                Quantity.from_int(1),
+                AggressorSide.BUYER,
+                TradeId(f"integrated-{side}"),
+                timestamp - 10_000_000,
+                timestamp,
+            )
+        )
+        records[key][side].sort(key=lambda record: record.ts_init)
+    original_add = replay_module.add_engine_data_by_type
+    tick_batches = []
+
+    def add_mixed_native_data(engine, engine_records):
+        ticks = [record for record in engine_records if isinstance(record, TradeTick)]
+        assert len(ticks) == 2
+        assert all(tick.ts_event == tick.ts_init for tick in ticks)
+        tick_batches.append(len(ticks))
+        original_add(engine, engine_records)
+
+    monkeypatch.setattr(replay_module, "add_engine_data_by_type", add_mixed_native_data)
+    trade = row(replay_variants([market], records, instruments), key, "touch1_hold")
+    assert len(tick_batches) == 6
+    assert trade["signal_ts_ns"] == baseline["signal_ts_ns"]
+    assert trade["entry_quantity"] == 5
+    assert trade["entry_price"] == pytest.approx(0.28)
+    assert trade["pnl"] == pytest.approx(baseline["pnl"])
+
+
+def test_foreign_instrument_ticks_and_standalone_tick_replay_fail_closed():
+    markets, records, instruments = synthetic_fixture()
+    market = markets[1]
+    key = market["market_id"]
+    instrument = instruments[key]["UP"]
+    timestamp = market["start_ns"] + SECOND
+    tick = TradeTick(
+        instrument.id,
+        instrument.make_price(0.74),
+        Quantity.from_int(1),
+        AggressorSide.BUYER,
+        TradeId("wrong-side"),
+        timestamp,
+        timestamp,
+    )
+    records[key]["DOWN"].append(tick)
+    with pytest.raises(ValueError, match="instrument-matched"):
+        replay_variants([market], records, instruments)
+    with pytest.raises(ValueError, match="standalone trade-tick replay"):
+        replay_variants([market], {key: {"UP": [tick], "DOWN": []}}, instruments)
 
 
 def test_taker_ioc_limit_fees_and_losing_settlement_are_not_hidden(replay):
@@ -126,6 +199,90 @@ def test_transient_target_is_not_a_fictional_fill(replay):
     assert target["exit_quantity"] == 0
     assert target["remaining_quantity"] == 5
     assert target["pnl"] < 0
+
+
+def test_target_requires_depth_for_actual_remaining_not_only_best_bid():
+    markets, records, instruments = synthetic_fixture()
+    market = markets[2]
+    key = market["market_id"]
+    for index, record in enumerate(records[key]["DOWN"]):
+        if record.ts_init >= market["start_ns"] + 2 * SECOND:
+            records[key]["DOWN"][index] = snapshot(
+                instruments[key]["DOWN"], record.ts_init, 0.72, 0.74, bid_size=1
+            )
+    target = row(replay_variants([market], records, instruments), key, "touch1_target")
+    assert target["entry_quantity"] == 5
+    assert target["exit_quantity"] == 0
+    assert not any(attempt["action"] == "sell" for attempt in target["attempts"])
+
+
+def test_valid_target_disappearing_before_decision_still_submits_floor_ioc():
+    markets, records, instruments = synthetic_fixture()
+    market = markets[2]
+    key = market["market_id"]
+    disappear = market["start_ns"] + 2 * SECOND + 10_000_000
+    for index, record in enumerate(records[key]["DOWN"]):
+        if record.ts_init >= disappear:
+            records[key]["DOWN"][index] = snapshot(
+                instruments[key]["DOWN"], record.ts_init, 0.60, 0.62
+            )
+    records[key]["DOWN"].append(snapshot(instruments[key]["DOWN"], disappear, 0.60, 0.62))
+    records[key]["DOWN"].sort(key=lambda record: record.ts_init)
+    target = row(replay_variants([market], records, instruments), key, "touch1_target")
+    sales = [attempt for attempt in target["attempts"] if attempt["action"] == "sell"]
+    assert sales and sales[0]["status"] == "submitted"
+    assert sales[0]["limit_price"] == 0.70
+    assert target["exit_quantity"] == 0
+
+
+@pytest.mark.parametrize("invalidity", ["stale", "gap"])
+def test_target_decision_suppressed_after_source_staleness_or_gap(invalidity):
+    markets, records, instruments = synthetic_fixture()
+    market = markets[2]
+    key = market["market_id"]
+    timestamp = market["start_ns"] + 2 * SECOND + 10_000_000
+    for side, prices in (("UP", (0.26, 0.28)), ("DOWN", (0.72, 0.74))):
+        record = snapshot(
+            instruments[key][side],
+            timestamp,
+            *prices,
+            ts_event=timestamp - 6 * SECOND if invalidity == "stale" else timestamp,
+        )
+        records[key][side].append(record)
+        if invalidity == "gap" and side == "DOWN":
+            records[key][side].append(record)
+        records[key][side].sort(key=lambda record: record.ts_init)
+    result = replay_variants([market], records, instruments, max_stale_ns=5 * SECOND)
+    target = row(result, key, "touch1_target")
+    assert target["censored"]
+    assert target["exit_quantity"] == 0
+    assert any(
+        attempt["action"] == "sell" and attempt["status"] == "invalid_or_stale_book"
+        for attempt in target["attempts"]
+    )
+    mark = next(
+        point
+        for point in result["market_equity"]
+        if point["variant"] == "touch1_target" and point["ts_ns"] == timestamp
+    )
+    assert mark["equity"] is None and mark["exposure"] is None
+
+
+def test_old_source_event_is_not_freshened_by_receipt_normalization():
+    markets, records, instruments = synthetic_fixture()
+    market = markets[1]
+    key = market["market_id"]
+    timestamp = market["start_ns"] + SECOND
+    records[key]["UP"][1] = snapshot(
+        instruments[key]["UP"], timestamp, 0.72, 0.74, ts_event=timestamp - 6 * SECOND
+    )
+    trade = row(
+        replay_variants([market], records, instruments, max_stale_ns=5 * SECOND),
+        key,
+        "touch1_hold",
+    )
+    assert not trade["entered"]
+    assert "UP:stale_book" in trade["censor_reasons"]
 
 
 def test_entry_cap_uses_actual_cheap_side_ask_not_favorite_complement():
@@ -187,7 +344,7 @@ def test_shared_position_and_capital_limits_not_per_market():
     fixture = synthetic_fixture()
     result = replay_variants(*fixture, max_positions=1)
     entries = [t for t in result["trades"] if t["variant"] == "touch1_hold" and t["entered"]]
-    assert len(entries) == 3
+    assert len(entries) == 1
     assert (
         max(
             point["open_positions"]
@@ -201,11 +358,13 @@ def test_shared_position_and_capital_limits_not_per_market():
     assert any(a["status"] == "capital_limit" for t in constrained["trades"] for a in t["attempts"])
 
 
-def test_unresolved_position_keeps_portfolio_slot_after_market_close():
+@pytest.mark.parametrize("known_settlement", [False, True])
+def test_closed_held_position_keeps_portfolio_slot_even_after_offline_settlement(known_settlement):
     markets, records, instruments = synthetic_fixture()
-    unresolved, later = deepcopy(markets[7]), deepcopy(markets[1])
+    held = deepcopy(markets[1] if known_settlement else markets[7])
+    later = deepcopy(markets[2])
     key = later["market_id"]
-    offset = unresolved["start_ns"] - later["start_ns"] + 6 * SECOND
+    offset = held["start_ns"] - later["start_ns"] + 6 * SECOND
     for name in ("start_ns", "close_ns", "settlement_ns"):
         later[name] += offset
     for side in ("UP", "DOWN"):
@@ -218,8 +377,11 @@ def test_unresolved_position_keeps_portfolio_slot_after_market_close():
             )
             for record in records[key][side]
         ]
-    result = replay_variants([unresolved, later], records, instruments, max_positions=1)
-    assert row(result, unresolved["market_id"], "touch1_hold")["entered"]
+    result = replay_variants([held, later], records, instruments, max_positions=1)
+    assert row(result, held["market_id"], "touch1_hold")["entered"]
+    assert row(result, held["market_id"], "touch1_hold")["settlement_status"] == (
+        "settled" if known_settlement else "unresolved"
+    )
     blocked = row(result, key, "touch1_hold")
     assert not blocked["entered"]
     assert blocked["attempts"][0]["status"] == "position_limit"
@@ -278,7 +440,9 @@ def test_historical_fee_inputs_fail_closed_and_unsupported_schedule_rejected():
     with pytest.raises(ValueError, match="Unsupported historical fee"):
         replay_variants([market], records, instruments)
     market["fee_schedule"] = "polymarket_p*(1-p)"
+    original_metadata = deepcopy(market)
     assert replay_variants([market], records, instruments)["trades"]
+    assert market == original_metadata
 
 
 def test_output_json_persists_portfolios_in_project_path():

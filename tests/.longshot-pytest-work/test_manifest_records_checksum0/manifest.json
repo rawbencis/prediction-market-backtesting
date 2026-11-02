@@ -1,0 +1,29 @@
+{
+  "commit": "6236e2d4dc9cf4ab54c918e7afeb502e12f7f926",
+  "configuration": {
+    "data": {
+      "vendor": "synthetic"
+    },
+    "seed": 70
+  },
+  "dataset_sha256": {
+    "events.csv": "cb784696268764a5dc8f427b0c33d79fd6e45ab354f350021a009eef949cea51"
+  },
+  "dirty_worktree": true,
+  "schema_version": 1,
+  "seed": 70,
+  "source_coverage": {
+    "x": {
+      "UP": {
+        "count": 5
+      }
+    }
+  },
+  "stage": "extract",
+  "synthetic": true,
+  "warnings": [
+    "Observational research, not causal proof or a profitability claim.",
+    "Source coverage is loaded-record coverage, not proof of exchange completeness.",
+    "Missing underlying inputs produce unavailable features, not zero-valued features."
+  ]
+}

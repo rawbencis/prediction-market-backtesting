@@ -23,11 +23,11 @@ def obs(ts, up=0.5, down=0.5, gap=False):
     return PairObservation(ts, book(ts, up), book(ts, down), gap)
 
 
-def record(side, ts, bid, event_ts=1):
+def record(side, ts, bid, event_ts=1, ask=None):
     instrument = InstrumentId.from_str(f"{side}.POLYMARKET")
     deltas = [OrderBookDelta(instrument, BookAction.CLEAR, None, 0, 0, event_ts, ts)]
     for number, (order_side, price) in enumerate(
-        ((OrderSide.BUY, bid), (OrderSide.SELL, bid + 0.01)), 1
+        ((OrderSide.BUY, bid), (OrderSide.SELL, bid + 0.01 if ask is None else ask)), 1
     ):
         order = BookOrder(order_side, Price(price, 2), Quantity(10, 2), number)
         deltas.append(OrderBookDelta(instrument, BookAction.ADD, order, 128, 0, event_ts, ts))
@@ -221,3 +221,26 @@ def test_exact_close_crossing_is_not_a_touch(prior_touches):
         assert state.observe(obs(10, 0.2, 0.7)) is None
     assert state.number == prior_touches
     assert state.last_side == ("UP" if prior_touches == 1 else "DOWN")
+
+
+def test_incomplete_batch_censors_partial_midpoint_crossing():
+    instrument = InstrumentId.from_str("UP.POLYMARKET")
+    update = BookOrder(OrderSide.BUY, Price(0.7, 2), Quantity(10, 2), 1)
+    partial = OrderBookDeltas(
+        instrument,
+        [OrderBookDelta(instrument, BookAction.UPDATE, update, 0, 0, 2, 2)],
+    )
+    paired = observations_from_records(
+        {
+            "UP": [record("UP", 1, 0.5, ask=0.75), partial],
+            "DOWN": [record("DOWN", 1, 0.2)],
+        }
+    )
+    assert paired[0].up.valid and not paired[0].gap
+    assert paired[1].up.valid and paired[1].up.midpoint > 0.7
+    assert paired[1].gap
+    state = TouchState()
+    assert state.observe(paired[0]) is None
+    assert state.observe(paired[1]) is None
+    assert state.censored and "explicit_gap" in state.reasons
+    assert state.number == 0

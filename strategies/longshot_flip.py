@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from functools import partial
 from math import isfinite
@@ -14,6 +15,7 @@ from nautilus_trader.trading.strategy import Strategy, StrategyConfig
 from prediction_market_extensions.backtesting.longshot.state import (
     DEFAULT_MAX_GAP_NS,
     DEFAULT_MAX_STALE_NS,
+    BookState,
     PairedBookStream,
     TouchState,
 )
@@ -24,7 +26,6 @@ class LongshotFlipConfig(StrategyConfig, frozen=True):
     market_ids: tuple[str, ...]
     start_ns: tuple[int, ...]
     close_ns: tuple[int, ...]
-    settlement_ns: tuple[int, ...] = ()
     touch_number: int = 1
     target_exit: bool = False
     threshold: float = 0.70
@@ -47,7 +48,6 @@ class LongshotFlipConfig(StrategyConfig, frozen=True):
             or len(set(self.instrument_ids)) != count * 2
             or len(self.start_ns) != count
             or len(self.close_ns) != count
-            or (self.settlement_ns and len(self.settlement_ns) != count)
         ):
             raise ValueError("Distinct outcome pairs and matching market windows are required")
         if self.touch_number not in (1, 2, 3):
@@ -69,7 +69,7 @@ class LongshotFlipConfig(StrategyConfig, frozen=True):
 class LongshotFlipStrategy(Strategy):
     """One portfolio per variant, one entry attempt per market, no outcome metadata."""
 
-    def __init__(self, config: LongshotFlipConfig):
+    def __init__(self, config: LongshotFlipConfig, source_records=None):
         super().__init__(config)
         self.books = {}
         self.updated = {}
@@ -90,6 +90,11 @@ class LongshotFlipStrategy(Strategy):
         self.attempts = []
         self.cash = config.initial_cash
         self.reserved = {}
+        self.source_records = (
+            {key: deque(records) for key, records in source_records.items()}
+            if source_records is not None
+            else None
+        )
 
     def on_start(self):
         for index, market_id in enumerate(self.config.market_ids):
@@ -112,10 +117,13 @@ class LongshotFlipStrategy(Strategy):
         instrument_id = deltas.instrument_id
         self.books[instrument_id].apply_deltas(deltas)
         timestamp = int(deltas.ts_init)
-        self.updated[instrument_id] = timestamp
+        source = deltas
+        if self.source_records is not None:
+            source = self.source_records[(instrument_id, timestamp)].popleft()
+        self.updated[instrument_id] = int(source.ts_event)
         market_id = self.by_instrument[instrument_id]
         side = next(side for side, iid in self.pairs[market_id].items() if iid == instrument_id)
-        previous = self.streams[market_id].update(side, deltas)
+        previous = self.streams[market_id].update(side, source)
         self.group_ts[market_id] = timestamp
         if previous is not None:
             self.pending_groups.discard((market_id, previous.ts_ns))
@@ -159,10 +167,14 @@ class LongshotFlipStrategy(Strategy):
             and self.remaining.get(market_id, 0) > 0
         ):
             side = self.selected[market_id]
-            bid = observation.book(side).best_bid
+            book = observation.book(side)
+            quantity = self.remaining[market_id]
+            bid_vwap = book.vwap("bid", quantity)
+            target_depth = sum(size for price, size in book.bids if price >= self.config.threshold)
             if (
-                bid is not None
-                and float(bid) >= self.config.threshold
+                bid_vwap is not None
+                and bid_vwap >= self.config.threshold
+                and target_depth >= quantity
                 and market_id not in self.pending_exits
             ):
                 self.pending_exits.add(market_id)
@@ -188,6 +200,22 @@ class LongshotFlipStrategy(Strategy):
             < self.config.close_ns[index]
         )
 
+    def _decision_books_valid(self, market_id):
+        if self.states[market_id].censored:
+            return False
+        for instrument_id in self.pairs[market_id].values():
+            book = self.books[instrument_id]
+            snapshot = BookState(
+                self.updated.get(instrument_id, 0),
+                tuple((float(level.price), level.size()) for level in book.bids()),
+                tuple((float(level.price), level.size()) for level in book.asks()),
+            )
+            if not snapshot.valid or snapshot.is_stale(
+                self.clock.timestamp_ns(), self.config.max_stale_ns
+            ):
+                return False
+        return True
+
     def _enter(self, market_id, event):
         side = self.selected[market_id]
         instrument_id = self.pairs[market_id][side]
@@ -196,12 +224,7 @@ class LongshotFlipStrategy(Strategy):
         active = sum(
             1
             for key in self.config.market_ids
-            if (
-                not self.config.settlement_ns
-                or self.clock.timestamp_ns()
-                < self.config.settlement_ns[self.config.market_ids.index(key)]
-            )
-            and (self.remaining.get(key, 0) > 0 or key in self.pending_entries)
+            if self.remaining.get(key, 0) > 0 or key in self.pending_entries
         )
         reservation = self.config.quantity * (
             self.config.max_entry_price + self.config.fee_rate / 4
@@ -209,10 +232,7 @@ class LongshotFlipStrategy(Strategy):
         reason = None
         if not self._can_arrive(market_id):
             reason = "closed"
-        elif self.states[market_id].censored or any(
-            self.clock.timestamp_ns() - self.updated.get(iid, 0) > self.config.max_stale_ns
-            for iid in self.pairs[market_id].values()
-        ):
+        elif not self._decision_books_valid(market_id):
             reason = "invalid_or_stale_book"
         elif ask is None or float(ask) > self.config.max_entry_price:
             reason = "price_cap"
@@ -231,6 +251,12 @@ class LongshotFlipStrategy(Strategy):
         quantity = self.remaining.get(market_id, 0)
         if quantity <= 0 or not self._can_arrive(market_id):
             self.pending_exits.discard(market_id)
+            return
+        if not self._decision_books_valid(market_id):
+            self.pending_exits.discard(market_id)
+            self.attempts.append(
+                {"market_id": market_id, "action": "sell", "status": "invalid_or_stale_book"}
+            )
             return
         # Keep the target floor even when the bid disappeared during latency.
         # The exchange, not the decision-time quote, determines the actual fill.
@@ -262,6 +288,18 @@ class LongshotFlipStrategy(Strategy):
             }
         )
         self.submit_order(order)
+        latency_ns = round(self.config.order_latency_ms * 1_000_000)
+        if latency_ns > 0:
+            # Nautilus drains in-flight commands on clock/data events. Wake it
+            # at arrival, before a later book update can affect this order.
+            self.clock.set_time_alert_ns(
+                f"arrival-{order.client_order_id}",
+                self.clock.timestamp_ns() + latency_ns,
+                self._arrival_clock,
+            )
+
+    def _arrival_clock(self, event):
+        pass
 
     def on_order_filled(self, event):
         market_id, side = self.orders[event.client_order_id]

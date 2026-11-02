@@ -8,7 +8,7 @@ from typing import Literal
 
 from nautilus_trader.model.book import OrderBook
 from nautilus_trader.model.data import OrderBookDeltas
-from nautilus_trader.model.enums import BookType
+from nautilus_trader.model.enums import BookType, RecordFlag
 
 Side = Literal["UP", "DOWN"]
 DEFAULT_MAX_GAP_NS = 60_000_000_000
@@ -225,6 +225,7 @@ class PairedBookStream:
         gap = False
         for side, record in self._pending:
             gap |= side in seen
+            gap |= not bool(record.deltas[-1].flags & RecordFlag.F_LAST)
             seen.add(side)
             book = self._books.get(side)
             if book is None:

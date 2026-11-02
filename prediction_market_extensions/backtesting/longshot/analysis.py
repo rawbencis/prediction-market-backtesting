@@ -484,7 +484,7 @@ def analyze(
             raise ValueError("duplicate touch_number for market")
         event_keys.add(key)
         timestamp = _integer(row["ts_ns"], "event ts_ns")
-        if not market["start_ns"] <= timestamp <= market["close_ns"]:
+        if not market["start_ns"] <= timestamp < market["close_ns"]:
             raise ValueError("event timestamp lies outside market lifetime")
         if row.get("next_touch") is not None and type(row["next_touch"]) is not bool:
             raise ValueError("next_touch must be true, false, or null")

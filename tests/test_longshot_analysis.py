@@ -254,6 +254,7 @@ def test_invalid_configuration_rejected(config):
         ([market("a")], [event("a", entry_vwap=math.nan)]),
         ([market("a")], [event("a", next_touch="no")]),
         ([market("a")], [event("a", ts_ns=-1)]),
+        ([market("a")], [event("a", ts_ns=300_000_000_000)]),
         ([market("a")], [event("a", touch=2), event("a", touch=1, ts_ns=30_000_000_000)]),
     ],
 )

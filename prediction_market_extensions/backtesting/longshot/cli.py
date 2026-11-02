@@ -85,9 +85,9 @@ def manifest(
 def load_inputs(config: dict[str, Any]):  # type: ignore[no-untyped-def]
     if config["data"]["vendor"] != "synthetic":
         return asyncio.run(load_vendor_markets(config))
-    from prediction_market_extensions.backtesting.longshot.synthetic import synthetic_inputs
+    from prediction_market_extensions.backtesting.longshot.synthetic import synthetic_fixture
 
-    markets, records, instruments = synthetic_inputs()
+    markets, records, instruments = synthetic_fixture()
     selected, excluded = select_markets(markets, config.get("filters", {}))
     for market in selected:
         market["source_coverage"] = {

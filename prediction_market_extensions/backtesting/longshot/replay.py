@@ -18,7 +18,7 @@ from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.backtest.models import FeeModel
 from nautilus_trader.config import LoggingConfig
 from nautilus_trader.model.currencies import USDC
-from nautilus_trader.model.data import OrderBookDelta, OrderBookDeltas
+from nautilus_trader.model.data import OrderBookDelta, OrderBookDeltas, TradeTick
 from nautilus_trader.model.enums import AccountType, BookType, LiquiditySide, OmsType
 from nautilus_trader.model.identifiers import TraderId, Venue
 from nautilus_trader.model.instruments import BinaryOption
@@ -60,6 +60,16 @@ class LongshotIOCFees(FeeModel):
 
 def _observable_record(record):
     timestamp = int(record.ts_init)
+    if isinstance(record, TradeTick):
+        return TradeTick(
+            record.instrument_id,
+            record.price,
+            record.size,
+            record.aggressor_side,
+            record.trade_id,
+            timestamp,
+            timestamp,
+        )
     return OrderBookDeltas(
         record.instrument_id,
         [
@@ -127,7 +137,7 @@ def _engine(initial_cash, order_latency_ms):
         liquidity_consumption=True,
         queue_position=False,
         bar_execution=False,
-        trade_execution=False,
+        trade_execution=True,
     )
     # Nautilus logging is process-global; retain its guard across independent
     # engine lifetimes (including repeated public replay calls).
@@ -220,7 +230,10 @@ def _report(markets, observations, strategy, variant, initial_cash):
             balance = balances[key]
             if action == "mark" and key not in settled_markets:
                 marks[key] = {
-                    side: book.bids[0][0] if book.bids else None
+                    side: book.best_bid
+                    if not value.gap
+                    and not book.is_stale(value.ts_ns, strategy.config.max_stale_ns)
+                    else None
                     for side, book in (("UP", value.up), ("DOWN", value.down))
                 }
                 changed.add(key)
@@ -321,6 +334,7 @@ def replay_variants(
         raise ValueError("Unique nonempty markets are required")
     rates = {m["market_id"]: _fee_rate(m) for m in markets}
     records = []
+    source_records = {}
     observations = {}
     clean_instruments = []
     for market in markets:
@@ -330,6 +344,14 @@ def replay_variants(
         pair_records = records_by_market[key]
         if set(pair_records) != {"UP", "DOWN"}:
             raise ValueError("Both executable outcome books are required")
+        pair_books = {
+            side: [record for record in rows if isinstance(record, OrderBookDeltas)]
+            for side, rows in pair_records.items()
+        }
+        if not any(pair_books.values()):
+            raise ValueError(
+                "Book replay requires L2 deltas; standalone trade-tick replay is unsupported"
+            )
         for side in ("UP", "DOWN"):
             instrument = instruments_by_market[key][side]
             if not isinstance(instrument, BinaryOption) or str(instrument.id.venue) != "POLYMARKET":
@@ -339,15 +361,24 @@ def replay_variants(
             payload["taker_fee"] = str(rates[key])
             clean_instruments.append(BinaryOption.from_dict(payload))
             for record in pair_records[side]:
-                if not isinstance(record, OrderBookDeltas) or record.instrument_id != instrument.id:
-                    raise ValueError("Replay requires genuine instrument-matched OrderBookDeltas")
+                if (
+                    not isinstance(record, OrderBookDeltas | TradeTick)
+                    or record.instrument_id != instrument.id
+                ):
+                    raise ValueError(
+                        "Replay requires instrument-matched OrderBookDeltas or integrated TradeTick"
+                    )
                 if record.ts_init < record.ts_event:
                     raise ValueError("Observable timestamps cannot precede exchange events")
+                if isinstance(record, OrderBookDeltas):
+                    source_records.setdefault(
+                        (record.instrument_id, int(record.ts_init)), []
+                    ).append(record)
                 # Match and dispatch on one causal clock, even when vendor
                 # exchange times precede availability. Raw inputs are unchanged
                 # and remain the source for extraction and provenance hashes.
                 records.append(_observable_record(record))
-        observations[key] = list(observations_from_records(pair_records))
+        observations[key] = list(observations_from_records(pair_books))
     if not records:
         raise ValueError("No replay data")
     result = {
@@ -359,10 +390,14 @@ def replay_variants(
             "Independent variants; each combines all markets with equal initial capital and limits.",
             "market_equity is zero-initial-capital PnL attribution, not independent funded accounts.",
             "IOC limits consume actual arrival-time L2 liquidity; no passive fills or complement quotes.",
+            "Same-instrument integrated TradeTick records use native book/trade matching; signals remain L2-only.",
+            "Target signals require remaining-quantity bid VWAP and sufficient depth at the sell floor.",
+            "Freshness uses original source event times, not normalized receipt times.",
             "Engine book events use normalized observable ts_init; original source timestamps are retained in input records.",
             "Pending engine arrivals are processed on replay events; sparse cadence can increase effective latency.",
             "Settlement is postprocessed from actual fills and never visible before close.",
             "Settlement proceeds are not recycled into intrarun buying power (conservative constraint).",
+            "Held positions retain execution position-limit slots after close and offline settlement until actually sold.",
             "Equity marks longs at observed bid; marks are not depth-sized liquidation guarantees.",
             "Only verified constant p*(1-p) quote-currency fees are supported; no share withholding.",
             "Final timestamp groups need a later replay event; timers never invent data beyond exhaustion.",
@@ -381,14 +416,6 @@ def replay_variants(
                         market_ids=tuple(m["market_id"] for m in markets),
                         start_ns=tuple(m["start_ns"] for m in markets),
                         close_ns=tuple(m["close_ns"] for m in markets),
-                        settlement_ns=tuple(
-                            int(m["settlement_ns"])
-                            if m.get("settlement_winner") in ("UP", "DOWN")
-                            and m.get("settlement_ns") is not None
-                            and int(m["settlement_ns"]) >= m["close_ns"]
-                            else 2**63 - 1
-                            for m in markets
-                        ),
                         touch_number=number,
                         target_exit=target,
                         threshold=threshold,
@@ -401,7 +428,8 @@ def replay_variants(
                         fee_rate=max(rates.values()),
                         max_gap_ns=max_gap_ns,
                         max_stale_ns=max_stale_ns,
-                    )
+                    ),
+                    source_records=source_records,
                 )
                 engine.add_strategy(strategy)
                 add_engine_data_by_type(engine, records)

@@ -5,7 +5,11 @@ profitability. It shares one settlement-free alternating-touch state machine
 between dataset extraction and NautilusTrader strategies. Execution uses genuine
 `OrderBookDeltas`, `L2_MBP`, and the existing framework's data-loading and execution
 APIs, not a separate price-path simulator. Each of the six variants has its own
-account and capital/position limits.
+account and capital/position limits. Within each variant, all markets share that
+account; variants are never combined into one funded portfolio.
+Same-instrument `TradeTick` records integrated into a book replay use native
+Nautilus book/trade matching. Touch signals consume only L2 deltas; standalone
+trade-tick replay is unsupported.
 
 ## Commands
 
@@ -14,12 +18,12 @@ The bundled synthetic configuration requires no network, credentials, or server
 files. Keep research outputs outside the repository or under ignored `output/`.
 
 ```bash
-uv run python scripts/longshot_flip_70.py audit --config docs/examples/longshot-synthetic.json --output /tmp/longshot-primary
-uv run python scripts/longshot_flip_70.py extract --config docs/examples/longshot-synthetic.json --output /tmp/longshot-primary
-uv run python scripts/longshot_flip_70.py replay --config docs/examples/longshot-synthetic.json --output /tmp/longshot-primary
-uv run python scripts/longshot_flip_70.py analyze --config docs/examples/longshot-synthetic.json --output /tmp/longshot-primary
-uv run python scripts/longshot_flip_70.py all --config docs/examples/longshot-synthetic.json --output /tmp/longshot-all
-uv run python scripts/longshot_flip_70.py sensitivity --config docs/examples/longshot-synthetic.json --output /tmp/longshot-sensitivity
+uv run python scripts/longshot_flip_70.py audit --config docs/examples/longshot-synthetic.json --output output/longshot-primary
+uv run python scripts/longshot_flip_70.py extract --config docs/examples/longshot-synthetic.json --output output/longshot-primary
+uv run python scripts/longshot_flip_70.py replay --config docs/examples/longshot-synthetic.json --output output/longshot-primary
+uv run python scripts/longshot_flip_70.py analyze --config docs/examples/longshot-synthetic.json --output output/longshot-primary
+uv run python scripts/longshot_flip_70.py all --config docs/examples/longshot-synthetic.json --output output/longshot-all
+uv run python scripts/longshot_flip_70.py sensitivity --config docs/examples/longshot-synthetic.json --output output/longshot-sensitivity
 ```
 
 `audit` and `extract` both inventory every configured market and materialize the
@@ -88,9 +92,16 @@ Complete book events are applied atomically and grouped by observable
 a timestamp. Ambiguous simultaneous states are censored. An initially
 above-threshold book is left-truncated, not a newly observed touch.
 Both outcome books must be independently valid and sufficiently fresh.
+Freshness uses source-event timestamps, not receipt timestamps; delayed data does
+not become fresh merely by arriving.
+Engine deltas are normalized to observable `ts_init` for both dispatch and book
+matching; original input records retain their vendor timestamps for auditing.
 Empty, locked/crossed, invalid-price/size books and recording gaps cannot create
 crossings. Interrupted histories are censored; the primary alternating count is
 not restarted and relabeled as a fresh touch 1 after a gap.
+Censorship is a permanent strategy kill switch for that market: fresh later
+snapshots do not restore entry or target decisions, and existing positions are
+not optimistically flattened.
 
 The midpoint touch label is **not** an executable price. Entry and target
 diagnostics use the actual cheap-outcome ask and bid ladders at the configured
@@ -108,11 +119,20 @@ is a delayed aggressive, marketable IOC limit bounded by the price cap.
 Actual ask-side arrival-book fills determine entry VWAP and deployed capital;
 visible signal-time depth does not guarantee a fill.
 
-Target variants sell using a delayed aggressive IOC limit at **0.70**, only
-when observed bid depth supports the held quantity at the target.
+Target variants require bid VWAP at least **0.70** for the actually filled
+remaining quantity, plus sufficient bid depth at or above that sell floor.
+They then submit a delayed aggressive IOC sell; depth disappearing before arrival
+may produce partial or zero execution. Prespecified threshold trials use their
+configured threshold, with the sell floor rounded upward to a valid tick.
 Order latency is applied by Nautilus, after decision latency. A transient target
 can disappear before arrival, causing partial or zero execution. Unsold shares
 remain for settlement. There are no optimistic passive queue assumptions.
+Pending arrivals are processed on replay events, so sparse cadence can increase
+effective latency. Fills at or after trading close raise rather than being
+silently accepted.
+At decision time, censored, invalid, gapped, or stale paired books suppress the
+exit. A vanished target price in otherwise valid books still submits the floor
+IOC, allowing the engine to record a genuine miss rather than a fictional fill.
 Partial fills, missed orders, commissions, and remaining quantities are retained
 in the trade table.
 
@@ -122,7 +142,9 @@ Replay requires `fee_rate`, `fee_schedule: "polymarket_p*(1-p)"`,
 fixture explicitly declares its known fee; this is not a real historical fee
 assertion. Only the supported constant quote-currency schedule is replayable.
 Unknown fee inputs and other schedules error rather than silently becoming zero.
-The IOC fee model uses the existing commission calculation, explicitly treating
+Synthetic exemption requires `source: "synthetic"` and `fixture_fee_known: true`,
+plus the explicit supported rate and schedule. The IOC fee model uses the existing
+commission calculation, explicitly treating
 marketable IOC limits as takers.
 
 ## Output Schemas
@@ -137,12 +159,27 @@ without lossy flattening.
 | --- | --- |
 | `market_audit.csv` | One row per inventory market, asset/duration/window, mapping, coverage endpoints/counts, exclusions, invalid/gap/censor reasons, touch count, settlement availability, source coverage |
 | `events.csv` | One row per observed alternating touch, side/initial favorite/cheap side, timestamp, configured quantity, midpoint label, ask VWAP/spread/depth, remaining lifetime, next-touch label/time, executable excursion diagnostics, postprocessing settlement and optional underlying features |
-| `trades.csv` | One row per market per independent variant, including zero entries; attempts and actual fill records, quantity, fees, deployed capital, net PnL and unresolved remainder status |
+| `trades.csv` | One row per replay-eligible market per independent variant, including zero entries; `entered`, entry/exit/remaining quantities, fees, `cash_pnl`, `pnl`, settlement status, attempts and actual fill records; excluded markets remain in the audit |
 | `equity.csv` | Combined account NAV/cash per variant and timestamp, with initial capital included exactly once; never sum independent variants |
 | `market_equity.csv` | Zero-initial-capital per-market net mark-to-market attribution and current marked exposure, for synchronous asset/duration/partition aggregation; never add these contributions to account NAV again |
 | `execution.json` | Variant identities and execution assumptions/disclosures |
 | `analysis.json` | Partitioned transition denominators/censor counts, sample warnings, state buckets, independent-variant metrics, day-block confidence intervals, drawdown/exposure and unavailable features |
 | `manifest.json` | Schema version, full configuration, seed, Git commit/dirty status when available, loaded source coverage and record hashes, CSV checksums, synthetic flag and warnings |
+
+Trade columns include `market_id`, `variant`, `entered`, `entry_attempted`,
+`entry_quantity`, `exit_quantity`, `remaining_quantity`, `entry_price`,
+`entry_ts_ns`, `exit_ts_ns`, `fees`, `pnl` (null for unresolved holdings),
+`settlement_status`, `fills`, and `attempts`. Fill records include `action`,
+`side`, `quantity`, `price`, `commission`, `ts_ns`, and `client_order_id`.
+Analysis derives deployed capital from actual buy notional plus commissions,
+and joins `next_touch` by market and selected touch number.
+Account rows use `variant`, `ts_ns`, `cash`, `equity`, and `open_positions`.
+Attribution rows use `market_id`, `variant`, `ts_ns`, `equity`, and `exposure`;
+their equity is cumulative net market PnL, not account NAV.
+
+The analysis boundary maps `entered` to `filled` and `pnl` to `net_pnl`, and
+calculates deployed capital from actual buy-fill notional plus buy commissions.
+An open remainder without valid settlement has null `pnl`, not zero profit.
 
 Executable MFE/MAE are quantity-specific observed bid-VWAP excursions relative
 to the actual observed ask VWAP, not guaranteed future fills or trading signals.
@@ -198,6 +235,10 @@ share-withheld commissions, hidden liquidity, and venue-specific matching
 behavior require additional verified integration before claims of realism.
 The pipeline does not optimize thresholds or combine six independent PnLs
 into an imaginary portfolio.
+Execution position-limit slots remain occupied by every held or pending entry,
+including closed markets and positions settled only in offline reporting. Slots
+are released only by actual sells; this conservative restriction can prevent
+later entries even when reporting has credited a settlement payout.
 
 ```bash
 uv run ruff check .

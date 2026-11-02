@@ -42,7 +42,7 @@ def snapshot(instrument, ts_ns, bid, ask, *, bid_size=20, ask_size=20, ts_event=
     return OrderBookDeltas(instrument.id, deltas)
 
 
-def synthetic_inputs():
+def synthetic_fixture():
     """Return (markets, records_by_market, instruments_by_market).
 
     Cases: no touch, one touch/loss, one reversal, two reversals, partial entry
@@ -145,9 +145,13 @@ def synthetic_inputs():
                 ask_size = 2 if key == "partial" and side == "DOWN" and offset < 2 * SECOND else 20
                 bid_size = (
                     1
-                    if key == "partial" and side == "DOWN" and 2 * SECOND <= offset < 3 * SECOND
+                    if key == "partial"
+                    and side == "DOWN"
+                    and 2 * SECOND + 50_000_000 <= offset < 3 * SECOND
                     else 20
                 )
+                if key == "partial" and side == "DOWN" and offset == 2 * SECOND:
+                    bid_size = 2
                 records[key][side].append(
                     snapshot(
                         pair[side], start + offset, bid, ask, bid_size=bid_size, ask_size=ask_size
