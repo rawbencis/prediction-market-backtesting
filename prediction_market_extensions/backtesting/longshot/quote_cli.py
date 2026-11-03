@@ -284,7 +284,12 @@ def run(stage: str, config_path: Path, output: Path) -> None:
             "policy": POLICY,
             "warning": WARNING,
             "execution_replay_supported": False,
-            "input_sha256": {str(path): digest(path) for path in inputs},
+            "input_sha256": {
+                str(path): (
+                    "unavailable" if path == study.index and not path.exists() else digest(path)
+                )
+                for path in inputs
+            },
             "source_sha256": {
                 row["slug"]: {
                     side: diagnostic["sha256"]

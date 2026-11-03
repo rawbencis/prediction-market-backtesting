@@ -468,6 +468,11 @@ quote is never proof of a complete prefix. Invalid rows, excess gaps, stale
 pairs, and simultaneous opposing crossings permanently censor numbering:
 later recoveries do not restart it. Pre-break observed successes remain known;
 unfinished interrupted paths remain unknown, not false.
+A numbered touch requires both outcomes to be valid and within `gap_us` of the
+decision timestamp, independently of `pair_age_us`. A wider pairing tolerance
+cannot keep a non-updating outcome eligible after its coverage-gap limit; that
+gap censors numbering immediately instead of waiting for the stale outcome to
+update.
 
 Both outcomes at each common exchange timestamp are applied before evaluating
 signals. Pairing uses only backward quotes with explicit maximum age; no
@@ -502,6 +507,9 @@ diagnostic midpoint crossings and bid-target episode starts.
 `audit` validates/analyses files but omits event and terminal-row exports.
 `manifest.json` records config, resolved roots, commit/dirty state, source and
 input/output SHA256 hashes, policy, and census exclusions.
+A missing index is recorded as input hash `unavailable` rather than aborting
+the supported census. If a selected file cannot be hashed after a read error,
+that source hash is `unavailable` and later scheduled windows still continue.
 
 With prespecified `partitions.discovery_end,validation_end,final_end`,
 `report.json` separates asset/duration/partition, scheduled/eligible/complete/

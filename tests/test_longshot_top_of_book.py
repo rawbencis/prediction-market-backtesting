@@ -540,6 +540,92 @@ def test_summary_unknown_denominators_and_day_block_guards(store):
     assert summary(rows, config) == summary(rows, config)
 
 
+def test_coverage_gap_blocks_numbered_touch_before_stale_update(store):
+    study, add = store
+    study = replace(study, gap_us=1_000, pair_age_us=1_000_000, terminal_age_us=60_000_000)
+    up = [
+        row("UP", -100),
+        row("UP", 100, "0.69", "0.71"),
+        row("UP", 2500),
+        row("UP", 299_900_000),
+    ]
+    down = [
+        row("DOWN", -100),
+        row("DOWN", 100),
+        row("DOWN", 200),
+        row("DOWN", 1100),
+        row("DOWN", 2000, "0.69", "0.71"),
+        row("DOWN", 2500),
+        row("DOWN", 299_900_000),
+    ]
+    streams = load_streams(study, add, up, down)
+    result = extract(window(study), streams, study, independently_verified=True)
+    assert [touch["side"] for touch in result["touches"]] == ["UP"]
+    assert result["transitions"]["p12"]["at_risk"]
+    assert result["transitions"]["p12"]["success"] is None
+    assert result["censored"]
+    assert any(
+        item["reason"] == "coverage_gap" and item["timestamp_us"] == OPEN + 2000
+        for item in result["coverage_breaks"]
+    )
+    assert any(
+        item["side"] == "DOWN" and not item["prefix_intact"]
+        for item in result["diagnostic_crossings"]
+    )
+
+
+def test_null_index_path_remains_an_excluded_window(store):
+    study, add = store
+    add("DOWN", [row("DOWN", 1)])
+    with sqlite3.connect(study.index) as connection:
+        connection.execute(
+            "INSERT INTO windows VALUES (?,?,?,?,?,?,?,?)",
+            (START, "BTC", "5m", "UP", "test", None, 1, "fixture"),
+        )
+    with pytest.raises(ValueError, match="file_path"):
+        index_file_path(None, 1, study)
+    item = window(study)
+    assert "UP" not in item["files"]
+    assert any("file_path must be text" in reason for reason in item["exclusions"])
+    assert "DOWN" in item["files"]
+
+
+def test_missing_index_hash_is_explicit(store, tmp_path):
+    study, _add = store
+    study = replace(study, index=study.data_root / "absent.db")
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps(config_for(study)))
+    output = tmp_path / "audit-missing-index"
+    run("audit", config, output)
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["status"] == "completed"
+    assert manifest["input_sha256"][str(study.index)] == "unavailable"
+    assert any("index_unavailable" in reason for reason in manifest["census_exclusions"][SLUG])
+
+
+def test_unreadable_source_hash_does_not_abort_later_windows(store, monkeypatch):
+    study, add = store
+    add("UP", [row("UP", 1)])
+    add("DOWN", [row("DOWN", 1)])
+
+    def boom(*_args, **_kwargs):
+        raise OSError("disappeared")
+
+    monkeypatch.setattr(
+        "prediction_market_extensions.backtesting.longshot.top_of_book.observations",
+        boom,
+    )
+    monkeypatch.setattr(
+        "prediction_market_extensions.backtesting.longshot.top_of_book.digest",
+        boom,
+    )
+    rows = list(study_windows(replace(study, end=START + 600)))
+    assert len(rows) == 2
+    assert rows[0]["source_diagnostics"]["UP"]["sha256"] == "unavailable"
+    assert "disappeared" in rows[0]["source_diagnostics"]["UP"]["read_error"]
+    assert rows[1]["slug"] != rows[0]["slug"]
+
+
 def test_quote_vendor_cannot_be_used_as_execution_replay(tmp_path):
     from prediction_market_extensions.backtesting.longshot.sources import read_configuration
 

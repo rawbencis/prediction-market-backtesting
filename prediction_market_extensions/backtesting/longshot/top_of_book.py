@@ -134,6 +134,8 @@ def allowed_path(path: Path, study: Study) -> Path:
 
 
 def index_file_path(relative: str, size: int, study: Study) -> Path:
+    if not isinstance(relative, str):
+        raise ValueError("Index file_path must be text")
     path = Path(relative)
     if path.is_absolute() or ".." in path.parts:
         raise ValueError("Index file_path must be relative to DATA ROOT without traversal")
@@ -525,9 +527,20 @@ def extract(
             and 0 <= ts - latest[side]["timestamp_us"] <= study.pair_age_us
             for side in SIDES
         )
+        # Pairing tolerance must not outlive either outcome's coverage-gap limit.
+        within_gap = all(
+            side in latest
+            and latest[side]["valid"]
+            and 0 <= ts - latest[side]["timestamp_us"] <= study.gap_us
+            for side in SIDES
+        )
         if not paired:
             prefix = False
             breaks.append({"timestamp_us": ts, "reason": "stale_or_invalid_pair"})
+        if not within_gap:
+            if prefix:
+                breaks.append({"timestamp_us": ts, "reason": "coverage_gap"})
+            prefix = False
         ambiguous = len(crossing_sides) > 1
         if ambiguous:
             prefix = False
@@ -630,9 +643,13 @@ def study_windows(study: Study) -> Iterator[dict]:
                 )
             except (OSError, ValueError) as exc:
                 window["exclusions"].append(f"{side}:{exc}")
+                try:
+                    source_hash = digest(Path(source["path"]))
+                except OSError:
+                    source_hash = "unavailable"
                 diagnostics[side] = {
                     "read_error": str(exc),
-                    "sha256": digest(Path(source["path"])),
+                    "sha256": source_hash,
                     "raw_anomalies": [],
                 }
         if set(streams) == set(SIDES):
