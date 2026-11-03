@@ -25,6 +25,16 @@
 
 ## Known Issues
 
+- [70-cent longshot research draft PR #1](https://github.com/rawbencis/prediction-market-backtesting/pull/1)
+  adds network-free synthetic validation, a bounded native SQLite capture audit,
+  evidence-gated capture replay, and file-index/Parquet inspection. Recorder
+  reconstruction semantics, server population/coverage samples, Parquet schemas,
+  independent resolution mapping, and historical fees remain prerequisites.
+  The supplied schema evidence does not establish statistical coverage or a
+  successful real-server replay. Local strict MkDocs verification is blocked
+  by the theme's external Iconify request in the sandbox; upstream Nautilus
+  imports also emit NumPy timedelta deprecation warnings.
+
 - The archived `backtests/private/` and `strategies/private/` source is
   published for study, not as a current trading edge. These runners capture old
   Telonex BTC 5m, general-market, and resolved-sports research surfaces. They

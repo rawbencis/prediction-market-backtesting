@@ -1,0 +1,77 @@
+{
+  "data": {
+    "vendor": "sqlite_capture",
+    "sources": ["local:/home/ubuntu/books/smoke1.sqlite3"],
+    "session_ids": [null],
+    "session_limit": 20,
+    "record_limit": 100000,
+    "contract": {
+      "evidence": null,
+      "arrival_order": "session_sequence",
+      "sequence": null,
+      "snapshot_kind": null,
+      "delta_kind": null,
+      "delta_size": null,
+      "zero_size": null,
+      "buy_side": null,
+      "trade_side": null,
+      "timestamp_unit": null,
+      "start_column": null,
+      "end_column": null,
+      "price_precision": null,
+      "size_precision": null,
+      "segments": {
+        "evidence": null,
+        "status_column": null,
+        "valid_value": null
+      },
+      "coverage_intervals": {
+        "evidence": null,
+        "start_column": null,
+        "end_column": null,
+        "status_column": null,
+        "timestamp_unit": null
+      },
+      "gaps": {
+        "evidence": null,
+        "start_column": null,
+        "end_column": null,
+        "timestamp_unit": null
+      }
+    },
+    "resolutions": {}
+  },
+  "seed": 70,
+  "partitions": {
+    "discovery_end": "2026-04-01T00:00:00Z",
+    "validation_end": "2026-04-15T00:00:00Z",
+    "final_end": "2026-05-01T00:00:00Z"
+  },
+  "filters": {
+    "assets": ["BTC"],
+    "durations_seconds": [300],
+    "start": "2026-03-01T00:00:00Z",
+    "end": "2026-05-01T00:00:00Z"
+  },
+  "markets": [
+    {
+      "market_id": "REPLACE_WITH_SESSION_CONDITION_ID",
+      "asset": "BTC",
+      "duration_seconds": 300,
+      "fee_schedule": "polymarket_p*(1-p)",
+      "fee_rate": null,
+      "fee_verified": false,
+      "fee_source": null,
+      "fee_valid_from_ns": null,
+      "fee_valid_to_ns": null
+    }
+  ],
+  "research": {"threshold": 0.70, "quantity": 5, "max_gap_seconds": 30, "max_stale_seconds": 5},
+  "execution": {
+    "decision_latency_ms": 25,
+    "order_latency_ms": 85,
+    "max_entry_price": 0.35,
+    "initial_cash": 1000,
+    "max_positions": 10
+  }
+}
