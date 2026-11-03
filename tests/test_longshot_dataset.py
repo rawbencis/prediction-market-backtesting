@@ -54,7 +54,7 @@ def test_complete_labels_quantity_excursions_and_metadata():
     assert first["cheap_spread"] == pytest.approx(0.01)
     assert first["cheap_ask_depth"] == 10
     assert first["executable_bid_mfe"] == pytest.approx(0.49)
-    assert first["executable_bid_mae"] == pytest.approx(0.29)
+    assert first["executable_bid_mae"] == pytest.approx(0.49)
     assert first["lifetime_remaining_ns"] == 9
     assert not first["excursion_incomplete"]
     assert first["executable_target"] is True
@@ -211,6 +211,56 @@ def test_target_noncomplementary_books_and_missing_settlement():
     assert events[0]["entry_vwap"] == pytest.approx(0.61)
     assert events[0]["executable_target"] is True
     assert events[0]["target_price_floor"] == 0.7
+
+
+def test_exact_close_cannot_hide_a_gap_or_invalid_terminal_book():
+    audit, events = extract_market(
+        market(),
+        [obs(0), obs(1, 0.7, 0.2), obs(10, 0.2, 0.7)],
+        max_gap_ns=5,
+    )
+    assert audit["censored"] and not audit["complete"]
+    assert "missing_end_coverage" in audit["censor_reasons"]
+    assert events[0]["next_touch"] is None
+
+    invalid_close = [
+        obs(0),
+        obs(1, 0.7, 0.2),
+        PairObservation(10, BookState(10), BookState(10)),
+    ]
+    audit, events = extract_market(market(), invalid_close, max_gap_ns=20)
+    assert not audit["complete"]
+    assert "invalid_terminal_books" in audit["censor_reasons"]
+    assert events[0]["next_touch"] is None
+
+
+def test_preclose_book_expiring_before_close_is_not_a_completed_non_reversal():
+    audit, events = extract_market(
+        market(),
+        [obs(0), obs(1, 0.7, 0.2)],
+        max_gap_ns=20,
+        max_stale_ns=5,
+    )
+    assert not audit["complete"]
+    assert "invalid_terminal_books" in audit["censor_reasons"]
+    assert events[0]["next_touch"] is None
+    fresh, fresh_events = extract_market(
+        market(),
+        [obs(0), obs(1, 0.7, 0.2)],
+        max_gap_ns=20,
+        max_stale_ns=20,
+    )
+    assert fresh["complete"]
+    assert fresh_events[0]["next_touch"] is False
+
+
+def test_close_only_suffix_is_not_an_executable_excursion():
+    audit, events = extract_market(market(), [obs(0), obs(1, 0.7, 0.2), obs(10, 0.9, 0.1)])
+    assert audit["complete"] and events[0]["next_touch"] is False
+    assert events[0]["excursion_incomplete"]
+    assert events[0]["executable_bid_mfe"] is None
+    assert events[0]["executable_bid_mae"] is None
+    assert events[0]["observed_future_bid_vwap_max"] is None
 
 
 def test_exact_close_reversal_counts_as_coverage_not_a_next_touch():

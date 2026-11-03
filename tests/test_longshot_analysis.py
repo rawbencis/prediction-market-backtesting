@@ -497,6 +497,7 @@ def test_actual_synthetic_cli_all_and_analyze_pipeline():
         variants = [variant for group in analysis["groups"] for variant in group["variants"]]
         assert len({variant["variant"] for variant in variants}) == 6
         assert sum(variant["filled_trade_count"] for variant in variants) > 0
+        assert any(variant["partial_fill_count"] for variant in variants)
         assert sum(variant["unresolved_pnl_count"] for variant in variants) > 0
         assert all(variant["net_pnl_per_eligible"]["estimate"] is None for variant in variants)
         assert all(

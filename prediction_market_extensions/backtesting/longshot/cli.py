@@ -27,7 +27,25 @@ def write_dataset(path: Path, rows: Sequence[dict[str, Any]]) -> None:
             )
 
 
+def _ensure_csv_field_limit(minimum: int) -> None:
+    """Allow generated cells such as capture_record_order to be reread."""
+    if minimum <= csv.field_size_limit():
+        return
+    limit = minimum
+    while True:
+        try:
+            csv.field_size_limit(limit)
+            return
+        except OverflowError:
+            limit //= 2
+            if limit <= csv.field_size_limit():
+                raise
+
+
 def read_dataset(path: Path) -> list[dict[str, Any]]:
+    # One ordering field can exceed the 131072-byte default after a few tens of
+    # thousands of capture sequence/event keys. The file size bounds any cell.
+    _ensure_csv_field_limit(path.stat().st_size)
     with path.open(newline="") as stream:
         return [
             {key: json.loads(value) if value else None for key, value in row.items()}
@@ -181,6 +199,7 @@ def analyze_output(config: dict[str, Any], output: Path) -> dict[str, Any]:
                 if fill["action"] == "buy"
             ),
             "next_touch": event_labels.get((trade["market_id"], trade.get("touch_number"))),
+            "requested_quantity": trade.get("requested_quantity"),
         }
         for trade in rows["trades"]
     ]
@@ -198,6 +217,8 @@ def analyze_output(config: dict[str, Any], output: Path) -> dict[str, Any]:
         point
         for point in rows["market_equity"]
         if point["ts_ns"] <= accounting_ends[point["market_id"]]
+        or point.get("equity") is None
+        or point.get("exposure") is None
     ]
     partitions = config["partitions"]
     return analyze(
@@ -242,6 +263,11 @@ def run_stage(config: dict[str, Any], stage: str, output: Path) -> None:
     if stage == "analyze":
         write_json(output / "analysis.json", analyze_output(config, output))
         return
+    # audit/extract/replay replace the inputs of any previous analysis, and
+    # audit/extract also replace execution results. Drop both before rewriting
+    # so a failed or partial stage cannot leave stale statistics beside new CSVs.
+    for stale in ("analysis.json", "execution.json"):
+        (output / stale).unlink(missing_ok=True)
     markets, records, instruments = load_inputs(config)
     audits, events = extract_inputs(config, markets, records)
     write_dataset(output / "market_audit.csv", audits)

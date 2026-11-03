@@ -7,6 +7,16 @@ from math import isclose, isfinite
 from .state import DEFAULT_MAX_GAP_NS, DEFAULT_MAX_STALE_NS, PairObservation, TouchState
 
 
+def _covers_timestamp(obs: PairObservation, ts_ns: int, max_stale_ns: int) -> bool:
+    return (
+        not obs.gap
+        and obs.up.valid
+        and obs.down.valid
+        and not obs.up.is_stale(ts_ns, max_stale_ns)
+        and not obs.down.is_stale(ts_ns, max_stale_ns)
+    )
+
+
 def _observed_target(
     event: dict,
     future: Sequence[PairObservation],
@@ -194,7 +204,19 @@ def extract_market(
                 "_index": index,
             }
         )
-    end_covered = bool(selected) and market["close_ns"] - selected[-1].ts_ns <= max_gap_ns
+    # observe() skips the close timestamp, so an exact-close row cannot certify
+    # the preceding gap or the terminal book. Coverage is measured from the last
+    # pre-close observation, and those books must still be valid through close
+    # when no later observation replaces them.
+    close_ns = market["close_ns"] if window_valid else None
+    preclose = [obs for obs in selected if obs.ts_ns < close_ns] if window_valid else []
+    closing = [obs for obs in selected if obs.ts_ns == close_ns] if window_valid else []
+    end_gap_covered = bool(preclose) and close_ns - preclose[-1].ts_ns <= max_gap_ns
+    terminal_rows = closing or preclose[-1:]
+    terminal_valid = end_gap_covered and all(
+        _covers_timestamp(obs, close_ns, max_stale_ns) for obs in terminal_rows
+    )
+    end_covered = end_gap_covered and terminal_valid
     complete = bool(state) and not state.censored and end_covered
     if not selected:
         exclusions.append("no_observations")
@@ -206,7 +228,8 @@ def extract_market(
         censored=not complete,
         left_truncated=bool(state and state.left_truncated),
         censor_reasons=(state.reasons if state else [])
-        + ([] if end_covered else ["missing_end_coverage"]),
+        + ([] if end_gap_covered else ["missing_end_coverage"])
+        + ([] if not end_gap_covered or terminal_valid else ["invalid_terminal_books"]),
         exclusion_flags=exclusions,
         invalid_reasons=dict(invalid),
         invalid_observation_count=sum(
@@ -228,7 +251,9 @@ def extract_market(
         event["time_to_next_touch"] = (
             event["time_to_next_touch_ns"] / 1_000_000_000 if following else None
         )
-        future = selected[event.pop("_index") + 1 :]
+        future = [
+            obs for obs in selected[event.pop("_index") + 1 :] if obs.ts_ns < market["close_ns"]
+        ]
         event.update(
             _observed_target(
                 event,

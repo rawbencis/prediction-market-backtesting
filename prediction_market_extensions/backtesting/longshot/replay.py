@@ -205,6 +205,17 @@ def _report(markets, observations, strategy, variant, initial_cash):
                 "censored": strategy.states[key].censored,
                 "censor_reasons": list(strategy.states[key].reasons),
                 "entry_quantity": sum(fill["quantity"] for fill in buys),
+                "requested_quantity": next(
+                    (
+                        attempt["quantity"]
+                        for attempt in reversed(strategy.attempts)
+                        if attempt["market_id"] == key
+                        and attempt.get("action") == "buy"
+                        and attempt.get("status") == "submitted"
+                        and attempt.get("quantity") is not None
+                    ),
+                    None,
+                ),
                 "exit_quantity": sum(fill["quantity"] for fill in sells),
                 "remaining_quantity": remaining,
                 "entry_price": (
@@ -225,8 +236,17 @@ def _report(markets, observations, strategy, variant, initial_cash):
                 "attempts": [a for a in strategy.attempts if a["market_id"] == key],
             }
         )
+        # Pre-open snapshot anchors stay available for book reconstruction, but
+        # their reporting valuation is seeded at start_ns. Emitting the anchor
+        # timestamp makes otherwise valid captures fail analysis.
+        anchor = None
         for observation in observations[key]:
+            if observation.ts_ns < market["start_ns"]:
+                anchor = observation
+                continue
             timeline.setdefault(observation.ts_ns, []).append(("mark", key, observation))
+        if anchor is not None:
+            timeline.setdefault(market["start_ns"], []).insert(0, ("mark", key, anchor))
         for fill in events:
             timeline.setdefault(fill["ts_ns"], []).append(("fill", key, fill))
         if settled:

@@ -29,6 +29,20 @@ def row(result, market, variant):
     )
 
 
+def test_preopen_anchor_is_reported_at_market_open_not_before_it():
+    markets, records, instruments = synthetic_fixture()
+    market = markets[0]
+    key = market["market_id"]
+    anchor_ns = market["start_ns"] - SECOND
+    for side in ("UP", "DOWN"):
+        records[key][side].insert(0, snapshot(instruments[key][side], anchor_ns, 0.40, 0.42))
+    result = replay_variants([market], records, instruments)
+    points = [point for point in result["market_equity"] if point["market_id"] == key]
+    assert points
+    assert all(point["ts_ns"] >= market["start_ns"] for point in points)
+    assert any(point["ts_ns"] == market["start_ns"] for point in points)
+
+
 def test_native_causal_ingestion_keeps_trade_before_same_frame_book(monkeypatch):
     markets, records, instruments = synthetic_fixture()
     market = markets[0]
@@ -265,7 +279,9 @@ def test_partial_entry_target_uses_actual_remaining_and_settles_remainder(replay
     hold = row(replay, "partial", "touch1_hold")
     target = row(replay, "partial", "touch1_target")
     assert hold["entry_quantity"] == 2
+    assert hold["requested_quantity"] == 5
     assert target["entry_quantity"] == 2
+    assert target["requested_quantity"] == 5
     assert target["exit_quantity"] == 1
     assert target["remaining_quantity"] == 1
     sales = [a for a in target["attempts"] if a["action"] == "sell"]

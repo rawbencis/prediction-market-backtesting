@@ -268,10 +268,11 @@ class LongshotFlipStrategy(Strategy):
         tick = Decimal(str(instrument.price_increment))
         rounding = ROUND_FLOOR if side == OrderSide.BUY else ROUND_CEILING
         protected_price = (Decimal(str(price)) / tick).to_integral_value(rounding=rounding) * tick
+        submitted_quantity = instrument.make_qty(quantity, round_down=True)
         order = self.order_factory.limit(
             instrument_id=instrument_id,
             order_side=side,
-            quantity=instrument.make_qty(quantity, round_down=True),
+            quantity=submitted_quantity,
             price=instrument.make_price(float(protected_price)),
             time_in_force=TimeInForce.IOC,
         )
@@ -284,7 +285,7 @@ class LongshotFlipStrategy(Strategy):
                 "submit_ts_ns": self.clock.timestamp_ns(),
                 "client_order_id": str(order.client_order_id),
                 "limit_price": float(order.price),
-                "quantity": quantity,
+                "quantity": float(submitted_quantity),
             }
         )
         self.submit_order(order)

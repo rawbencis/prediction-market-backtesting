@@ -273,7 +273,9 @@ marketable IOC limits as takers.
 
 Outputs are CSV plus JSON. **Every CSV cell is JSON-encoded**, including strings,
 numbers, booleans, lists, and null; use the supplied `read_dataset` API or
-`json.loads` per cell. Nanosecond timestamps are UTC integers, not floating-point
+`json.loads` per cell. `read_dataset` raises the CSV field limit to the file
+size so generated ordering metadata, including large `capture_record_order`
+cells, can be reread. Nanosecond timestamps are UTC integers, not floating-point
 epoch seconds. Empty datasets have no rows. Nested columns remain auditable
 without lossy flattening.
 
@@ -281,7 +283,7 @@ without lossy flattening.
 | --- | --- |
 | `market_audit.csv` | One row per inventory market, asset/duration/window, mapping, coverage endpoints/counts, exclusions, invalid/gap/censor reasons, touch count, settlement availability, source coverage |
 | `events.csv` | One row per observed alternating touch, side/initial favorite/cheap side, timestamp, configured quantity, midpoint label, ask VWAP/spread/depth, remaining lifetime, next-touch label/time, executable excursion diagnostics, postprocessing settlement and optional underlying features |
-| `trades.csv` | One row per replay-eligible market per independent variant, including zero entries; `entered`, entry/exit/remaining quantities, fees, `cash_pnl`, `pnl`, settlement status, attempts and actual fill records; excluded markets remain in the audit |
+| `trades.csv` | One row per replay-eligible market per independent variant, including zero entries; `entered`, entry/exit/remaining and lot-rounded requested quantities, fees, `cash_pnl`, `pnl`, settlement status, attempts and actual fill records; excluded markets remain in the audit |
 | `equity.csv` | Combined account NAV/cash per variant and timestamp, with initial capital included exactly once; never sum independent variants |
 | `market_equity.csv` | Zero-initial-capital per-market net mark-to-market attribution and current marked exposure, for synchronous asset/duration/partition aggregation; never add these contributions to account NAV again |
 | `execution.json` | Variant identities and execution assumptions/disclosures |
@@ -289,7 +291,7 @@ without lossy flattening.
 | `manifest.json` | Schema version, full configuration, seed, Git commit/dirty status when available, loaded source coverage and record hashes, CSV checksums, synthetic flag and warnings |
 
 Trade columns include `market_id`, `variant`, `entered`, `entry_attempted`,
-`entry_quantity`, `exit_quantity`, `remaining_quantity`, `entry_price`,
+`entry_quantity`, `requested_quantity`, `exit_quantity`, `remaining_quantity`, `entry_price`,
 `entry_ts_ns`, `exit_ts_ns`, `fees`, `pnl` (null for unresolved holdings),
 `settlement_status`, `fills`, and `attempts`. Fill records include `action`,
 `side`, `quantity`, `price`, `commission`, `ts_ns`, and `client_order_id`.
@@ -304,10 +306,14 @@ calculates deployed capital from actual buy-fill notional plus buy commissions.
 An open remainder without valid settlement has null `pnl`, not zero profit.
 Reporting expires bid marks at the source-age limit. Expiry points propagate
 unavailable equity/exposure while held; they do not fabricate book events or
-fills. A known settlement can restore the final cash valuation.
+fills. A known settlement can restore the final cash valuation. Post-close
+null marks are retained so a missing valuation invalidates portfolio statistics
+instead of being dropped and forward-filled.
 
-Executable MFE/MAE are quantity-specific observed bid-VWAP excursions relative
+Executable MFE/MAE are quantity-specific pre-close bid-VWAP excursions relative
 to the actual observed ask VWAP, not guaranteed future fills or trading signals.
+A price first observed at close is not executable, and a close-only suffix is
+unavailable.
 Incomplete future paths/depth are flagged and complete excursion statistics
 remain unavailable. Successful reversals, non-reversals, no-touch markets, and
 censored paths all remain visible in their appropriate denominators.
