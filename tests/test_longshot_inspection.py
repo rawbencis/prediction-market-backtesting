@@ -58,9 +58,8 @@ def test_readonly_store_rejects_writes_and_locks(tmp_path):
     path = tmp_path / "capture.db"
     with sqlite3.connect(path) as connection:
         connection.execute("CREATE TABLE fills(price TEXT)")
-    with pytest.raises(ValueError, match="readonly"):
-        with readonly_database(path) as connection:
-            connection.execute("INSERT INTO fills VALUES ('0.70')")
+    with pytest.raises(ValueError, match="readonly"), readonly_database(path) as connection:
+        connection.execute("INSERT INTO fills VALUES ('0.70')")
     with sqlite3.connect(path) as writer:
         writer.execute("BEGIN EXCLUSIVE")
         with pytest.raises(ValueError, match="locked"):
@@ -77,7 +76,7 @@ def test_parquet_missing_dependency_is_explicit(tmp_path, monkeypatch):
     original = builtins.__import__
 
     def missing(name, *args, **kwargs):
-        if name == "pyarrow.parquet":
+        if name == "pyarrow" or name.startswith("pyarrow."):
             raise ImportError("missing")
         return original(name, *args, **kwargs)
 

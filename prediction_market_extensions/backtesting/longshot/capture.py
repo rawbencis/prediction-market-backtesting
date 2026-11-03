@@ -9,6 +9,7 @@ are inventoried, not silently spliced into the live stream.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import sqlite3
 from collections.abc import Mapping
 from contextlib import contextmanager
@@ -186,11 +187,11 @@ def audit_capture(path: Path, sample_limit: int = 20) -> dict[str, Any]:
                             "sampled_ranges": ordered,
                             "overlap_observed": any(
                                 following[0] <= previous[1]
-                                for previous, following in zip(ordered, ordered[1:])
+                                for previous, following in itertools.pairwise(ordered)
                             ),
                             "noncontiguous_sample_ranges": any(
                                 following[0] > previous[1] + 1
-                                for previous, following in zip(ordered, ordered[1:])
+                                for previous, following in itertools.pairwise(ordered)
                             ),
                             "full_span_verification": False,
                         }
@@ -388,14 +389,13 @@ def _segments(connection, schema, session_id, contract, limit):
     status_column = mapping.get("status_column") if isinstance(mapping, Mapping) else None
     if "status" in columns and not status_column:
         raise CaptureError("Segment status requires an evidence-backed validity contract")
-    if status_column:
-        if (
-            status_column not in columns
-            or not isinstance(mapping.get("evidence"), str)
-            or not mapping["evidence"].strip()
-            or mapping.get("valid_value") != "complete"
-        ):
-            raise CaptureError("Unsupported segment validity contract")
+    if status_column and (
+        status_column not in columns
+        or not isinstance(mapping.get("evidence"), str)
+        or not mapping["evidence"].strip()
+        or mapping.get("valid_value") != "complete"
+    ):
+        raise CaptureError("Unsupported segment validity contract")
     projection = ["id", "flags"] + ([status_column] if status_column else [])
     ids = set()
     for row in _bounded_rows(
@@ -543,11 +543,14 @@ def _session_records(connection, schema, session, pair, contract, limit):
             raise CaptureError("Invalid recorder sequence")
         if previous_sequence is not None and sequence <= previous_sequence:
             raise CaptureError("Nonunique/nonincreasing session sequence; resets unsupported")
-        if previous_frame_id is not None and frame["id"] <= previous_frame_id:
-            if len(diagnostics["frame_id_inversions"]) < MAX_SAMPLE:
-                diagnostics["frame_id_inversions"].append(
-                    {"frame_id": frame["id"], "sequence": sequence}
-                )
+        if (
+            previous_frame_id is not None
+            and frame["id"] <= previous_frame_id
+            and len(diagnostics["frame_id_inversions"]) < MAX_SAMPLE
+        ):
+            diagnostics["frame_id_inversions"].append(
+                {"frame_id": frame["id"], "sequence": sequence}
+            )
         segment_changed = previous_arrival is not None and frame["segment_id"] != previous_segment
         sequence_gap = (
             previous_sequence is not None
@@ -624,11 +627,14 @@ def _session_records(connection, schema, session, pair, contract, limit):
             event_ns = _timestamp(exchange_ms, "ms")
             if event_ns > arrival:
                 raise CaptureError("Exchange timestamp is ahead of arrival; clock contract invalid")
-            if token in previous_exchange and event_ns < previous_exchange[token]:
-                if len(diagnostics["exchange_timestamp_inversions"]) < MAX_SAMPLE:
-                    diagnostics["exchange_timestamp_inversions"].append(
-                        {"frame_id": frame["id"], "event_index": event["event_index"]}
-                    )
+            if (
+                token in previous_exchange
+                and event_ns < previous_exchange[token]
+                and len(diagnostics["exchange_timestamp_inversions"]) < MAX_SAMPLE
+            ):
+                diagnostics["exchange_timestamp_inversions"].append(
+                    {"frame_id": frame["id"], "event_index": event["event_index"]}
+                )
             previous_exchange[token] = event_ns
             kind = event["kind"]
             if kind == "trade":

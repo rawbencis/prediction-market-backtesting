@@ -323,9 +323,13 @@ def test_target_rejects_vwap_above_floor_if_some_required_levels_are_below_floor
             continue
         base = snapshot(instrument, record.ts_init, 0.80, 0.82, bid_size=3)
         below_floor = OrderBookDelta(
-            instrument.id, BookAction.ADD,
+            instrument.id,
+            BookAction.ADD,
             BookOrder(OrderSide.BUY, instrument.make_price(0.60), Quantity.from_int(2), 3),
-            0, 0, record.ts_event, record.ts_init,
+            0,
+            0,
+            record.ts_event,
+            record.ts_init,
         )
         records[key]["DOWN"][index] = OrderBookDeltas(
             instrument.id, [*base.deltas[:-1], below_floor, base.deltas[-1]]
@@ -420,7 +424,9 @@ def test_idle_marks_expire_while_held_and_known_settlement_restores_cash(known_s
             settlement_ns=None,
         )
     result = replay_variants([market], records, instruments, max_stale_ns=5 * SECOND)
-    expiry = max(record.ts_event for rows in records[key].values() for record in rows) + 5 * SECOND + 1
+    expiry = (
+        max(record.ts_event for rows in records[key].values() for record in rows) + 5 * SECOND + 1
+    )
     mark = next(
         point
         for point in result["market_equity"]

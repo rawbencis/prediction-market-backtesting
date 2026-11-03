@@ -644,9 +644,8 @@ def test_explicit_ids_use_per_primary_key_lookups_in_large_inventory(database, c
 
 
 def test_read_only_uri_reader_rejects_accidental_write(database):
-    with pytest.raises(CaptureError, match="readonly"):
-        with capture._reader(database) as connection:
-            connection.execute("DELETE FROM sessions")
+    with pytest.raises(CaptureError, match="readonly"), capture._reader(database) as connection:
+        connection.execute("DELETE FROM sessions")
 
 
 def test_populated_reconciliation_never_retroactively_repairs(database, config):
@@ -764,8 +763,10 @@ def test_replay_subwindow_is_not_fabricated(database, config):
             "Arrival timestamp inversion",
         ),
         (
-            "UPDATE book_events SET exchange_timestamp_ms=(received_at+1)*1000 "
-            "FROM raw_frames WHERE frame_id=raw_frames.id",
+            (
+                "UPDATE book_events SET exchange_timestamp_ms=(received_at+1)*1000 "
+                "FROM raw_frames WHERE frame_id=raw_frames.id"
+            ),
             "ahead of arrival",
         ),
         ("UPDATE book_events SET asset_id='alien'", "contradicts session mapping"),

@@ -131,7 +131,7 @@ def inspect_parquet(path: Path, *, sample_limit: int = 5) -> dict[str, Any]:
     bounded_limit(sample_limit)
     path = path.resolve(strict=True)
     try:
-        import pyarrow.parquet as parquet
+        from pyarrow import parquet
     except ImportError as exc:
         raise ValueError(
             "Parquet inspection requires PyArrow in the inspection environment; "
@@ -173,7 +173,8 @@ def inspect_manifest(path: Path, *, sample_limit: int = 20) -> dict[str, Any]:
         raise ValueError("Manifest exceeds bounded 8 MiB inspection limit")
     entries = json.loads(payload)
     if not isinstance(entries, list):
-        raise ValueError("Expected a manifest list")
+        # Invalid decoded file structure is reported as a validation error.
+        raise ValueError("Expected a manifest list")  # noqa: TRY004
     return {
         "source_kind": "market_manifest",
         "manifest_entries": len(entries),
