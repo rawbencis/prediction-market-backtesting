@@ -25,6 +25,13 @@
 
 ## Known Issues
 
+- [Descriptive top-of-book study draft PR #2](https://github.com/rawbencis/prediction-market-backtesting/pull/2)
+  adds a separate bounded Parquet census/extraction/report path, not L2 execution.
+  User-reported June 17 quotes are diagnostics only. Independent identity and
+  preopen-anchor evidence, unbiased listing coverage, and server reproduction
+  remain unverified; manifest agreement alone does not certify completeness.
+  The exposed Telonex credential needs rotation and must not be reused in configs.
+
 - [70-cent longshot research draft PR #1](https://github.com/rawbencis/prediction-market-backtesting/pull/1)
   adds network-free synthetic validation, a bounded native SQLite capture audit,
   evidence-gated capture replay, and file-index/Parquet inspection. Recorder

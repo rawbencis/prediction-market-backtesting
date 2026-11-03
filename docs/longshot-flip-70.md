@@ -382,3 +382,230 @@ uv run python scripts/generate_codebase_uml.py
 
 See [Project Status](project-status.md) for the implementation PR and recorded
 verification limitations.
+
+## Separate Top-Of-Book Parquet Study
+
+This **descriptive, offline quote study** is separate from the L2 research and
+execution pipeline above. Run
+`python -m prediction_market_extensions.backtesting.longshot.quote_cli` with
+`audit`, `extract`, or `report`; there is deliberately no replay command.
+`top_of_book` is not an execution vendor. Real `BookReplay` APIs are unchanged.
+No synthetic depth, complement prices, PnL, settlement labels, fees, guaranteed
+fills, or live-trading conclusions are produced.
+
+The supplied server evidence describes `windows(window_start_ts INTEGER,
+symbol,timeframe,side,data_source,file_path,file_size,indexed_at)` in
+`/home/ubuntu/up_down_research/data/unified/quotes_unified.db`. Relative paths
+resolve against **DATA ROOT**, not the index parent. Explicit absolute
+`data_root`, `index`, and `allowed_roots` are required; traversal, symlink
+escape, filename mismatch, and indexed-size mismatch are rejected. SQLite is
+opened read-only, with bounded query work, no rebuild or downloader invocation.
+Missing index/query results remain scheduled audit rows. Files with duplicate
+sources require an explicit `study.source`; duplicate rows within that source
+are excluded. UP from one source and DOWN from another are never spliced.
+
+The assumed market schedule is every duration-aligned start in `[start,end)`,
+specified in UTC, for one explicit asset/duration per invocation. This defines
+an audit denominator independently of downloads, manifests, or index counts.
+It is **not independent evidence that every scheduled market was listed**.
+Missing, one-sided, invalid, ambiguous, and partition-straddling windows remain
+visible. There is no threshold-selected universe or final-test optimization.
+
+Parquet must contain integer `timestamp_us`/`local_timestamp_us` and string
+`exchange,market_id,slug,asset_id,outcome,bid_price,bid_size,ask_price,ask_size`.
+The expected filename is `<asset>-updown-<duration>-<start>_<UP|DOWN>.parquet`.
+Every row, including premarket and post-close rows in a token/day file, must
+agree on full identity; the two tokens must differ and share a market ID.
+Economic observations are clipped to `[open,close)`, with only the configured
+backward preopen anchor interval retained. No close-boundary quote is a touch.
+Exchange spelling is an explicit, case-sensitive `study.exchange` setting;
+inspect it locally rather than guessing if the default does not match.
+
+Optional `study.manifest` names a JSON list of `ts,slug,up_id,down_id`.
+Duplicate windows, contradictory tokens/slugs, and conflicts with verified
+identities are rejected. **Internally consistent manifests are not independent
+verification.** Optional `study.verified_identities` uses the same list fields
+plus `market_id` and `evidence`: a user attestation of genuinely independent
+identity evidence, not an automatically certified label. Do not copy an
+unverified manifest into this file and call it verified.
+Without that evidence, numbered paths remain ineligible/censored, while
+diagnostic crossings are still emitted.
+
+The user-reviewed downloader requests each `asset_id` separately and writes
+response bytes, with no local complementary-price transform. However, one old
+batch downloader has a stale `token_ids[key]` assignment: filenames alone are
+not reliable identity evidence. This implementation does not execute or change
+downloaders, access credentials, or retrieve server data. Rotate the exposed
+Telonex credential; never put any key into a config or report.
+
+### Observation And Censoring Convention
+
+The experimental **terminal whole-row per exchange timestamp in original file
+order** policy selects the last row, including its nulls. It does not select the
+last non-null value separately for each column. Same-time transient locked or
+crossed rows can resolve to a valid terminal row; invalid terminal rows remain
+coverage breaks. No invalid/null quote is forward-filled.
+Integer microseconds and exact decimal threshold comparisons are retained.
+Decimal strings are bounded to 256 characters/exponent magnitude 256; oversized
+or unsupported encodings are invalid, not rounded into valid observations.
+
+Terminal rows retain source path/row index, first group row index, group count,
+exchange and receipt times, receipt min/max/span, and invalid-group counts.
+Raw invalid/locked/crossed rows retain their original values and indices in
+`raw_anomalies.jsonl`. Diagnostics report exchange/receipt inversions, raw
+file-order crossing counts, coalesced counts, gaps, and boundary coverage.
+Raw/coalesced sensitivity describes different observation conventions; neither
+recovers certified ground truth. Receipt inversions are not repaired.
+Exchange-time grouping/sorting is not a proven atomic venue event or executable
+arrival ordering.
+
+`gap_us`, `pair_age_us`, `anchor_age_us`, and `terminal_age_us` are explicit
+positive microsecond tolerances (defaults 1,000,000). They are assumptions, not
+proof of collector outages or complete histories. An opening anchor must be
+valid, independently identity-verified, strictly preopen, and within the anchor
+age. An above-threshold opening anchor is left-truncated. The first post-open
+quote is never proof of a complete prefix. Invalid rows, excess gaps, stale
+pairs, and simultaneous opposing crossings permanently censor numbering:
+later recoveries do not restart it. Pre-break observed successes remain known;
+unfinished interrupted paths remain unknown, not false.
+
+Both outcomes at each common exchange timestamp are applied before evaluating
+signals. Pairing uses only backward quotes with explicit maximum age; no
+opposite quote is inferred from a complement or a future observation.
+Touches alternate: crossing from below to midpoint >=0.70 on the first side,
+then the opposite side, then the initial side. Same-side recrossings do not
+advance numbering. Diagnostic crossings preserve ambiguity and censored history.
+Touches retain actual opposite-side bid/ask/sizes, age, remaining lifetime, and
+transition microseconds. This opposite token is labeled the cheap-side quote,
+not inferred to have any guaranteed price or liquidity.
+Separately observed bid>=0.70 episode starts are quote diagnostics, **not fills**.
+
+### Outputs And Bounded Resources
+
+Processing is sequential (one market, two bounded streams; no worker pool).
+Defaults: 4,096-row Parquet batches with Arrow threading disabled, 512 MiB
+compressed and metadata-decoded bytes per file, 2 million rows per file,
+500,000 retained timestamps per outcome, 10,000 raw anomalies per file,
+10,000 scheduled windows, 256 MiB total streaming output. Configurable limits
+have hard ceilings; split ranges rather than bypassing guards. Metadata bounds
+are not an OS memory sandbox for hostile Parquet. No large-store copies or
+unbounded background jobs are created. Reports must be outside allowed roots
+and use a new destination. Output-limit failures leave partial files **without
+a completed manifest**; these cannot be reported as completed studies.
+
+`audit.json` and `windows.jsonl` retain census and coverage exclusions;
+`touches.csv` contains numbered quote touches; `crossings.jsonl` contains
+diagnostic midpoint crossings and bid-target episode starts.
+`raw_anomalies.jsonl` preserves invalid raw rows. Optional
+`emit_observations: true` writes every retained terminal row to
+`observations.jsonl`; keep it false for batch runs to avoid large output stores.
+`audit` validates/analyses files but omits event and terminal-row exports.
+`manifest.json` records config, resolved roots, commit/dirty state, source and
+input/output SHA256 hashes, policy, and census exclusions.
+
+With prespecified `partitions.discovery_end,validation_end,final_end`,
+`report.json` separates asset/duration/partition, scheduled/eligible/complete/
+missing windows, p12/p23 eligible at-risk paths, completed at-risk outcomes,
+observed successes, completed non-successes, and censored unknowns.
+Known success before a later interruption counts as observed; known absence
+requires continuous acceptable coverage through close.
+Complete-case ratios can be selection-biased. Guarded estimates require no
+unknown at-risk paths, `analysis.min_days` (default 3), and `min_markets`
+(default 20). Optional seeded UTC day-block bootstrap (`bootstrap_samples`,
+default 0; `seed`, default 70) reuses existing sufficiency/quantile primitives.
+All market lifetimes must fit their partition; boundaries are validated before
+reading data. A separately run `report` verifies the extraction's window hash
+and uses its recorded configuration, not new favorable test boundaries.
+
+### User-Reported Single-Market Diagnostic
+
+These are **user-reported observations, not agent server tests, fixture truth,
+complete-market certification, or profitability**:
+`btc-updown-5m-1781730900`, 2026-06-17 21:15–21:20 UTC.
+UP 38,871 in-window rows became 35,787 terminal timestamps; DOWN 38,869 became
+35,785. Both files internally matched manifests and the same market ID.
+There were zero invalid terminal rows, maximum exchange gap 0.354 seconds,
+and transient crossed/locked raw rows resolved within timestamp groups.
+First quotes were open+0.014 seconds, final quotes close−0.012 seconds;
+receipt times had 5/7 inversions. Candidate alternating midpoint crossings
+were UP +31.782s, DOWN +126.871s, UP +286.255s, each bid 0.69/ask 0.71.
+These boundary offsets do not establish a verified preopen anchor or complete
+prefix. The study therefore does not turn these observations into certified
+numbered labels without the additional evidence above.
+
+### Exact Offline Server Reproduction
+
+Run in an existing repository checkout with its Python dependencies installed
+(including a patched PyArrow, >=23.0.1). No command below downloads market data.
+Replace only the explicit source/exchange setting if local inspection shows
+multiple sources or different exchange spelling; record that decision before
+extracting. Optional manifest/verified-identity paths must be under allowed
+roots. The following commands are supplied for the user to run, **not claimed
+as executed on the server**.
+
+```bash
+cd /absolute/path/to/prediction-market-backtesting
+cat > /tmp/longshot-single.json <<'JSON'
+{
+  "study": {
+    "data_root": "/home/ubuntu/up_down_research/data",
+    "allowed_roots": ["/home/ubuntu/up_down_research/data"],
+    "index": "/home/ubuntu/up_down_research/data/unified/quotes_unified.db",
+    "start": "2026-06-17T21:15:00Z",
+    "end": "2026-06-17T21:20:00Z",
+    "symbol": "BTC", "timeframe": "5m", "exchange": "POLYMARKET",
+    "source": null, "gap_us": 1000000, "pair_age_us": 1000000,
+    "anchor_age_us": 1000000, "terminal_age_us": 1000000
+  },
+  "emit_observations": true,
+  "max_output_bytes": 268435456
+}
+JSON
+uv run python -m prediction_market_extensions.backtesting.longshot.quote_cli audit --config /tmp/longshot-single.json --output /tmp/longshot-single-audit
+uv run python -m prediction_market_extensions.backtesting.longshot.quote_cli extract --config /tmp/longshot-single.json --output /tmp/longshot-single-extract
+cat /tmp/longshot-single-extract/audit.json
+```
+
+Then run this **fixed chronological BTC5m example** (June 1–10 discovery,
+June 11–20 validation, June 21–30 final). These dates are an example
+prespecification, not selected for performance or known coverage; establish your
+own schedule before analysis. Do not alter final dates after seeing results.
+No touch probabilities are certified merely because the index contains files.
+
+```bash
+cat > /tmp/longshot-btc5m-june.json <<'JSON'
+{
+  "study": {
+    "data_root": "/home/ubuntu/up_down_research/data",
+    "allowed_roots": ["/home/ubuntu/up_down_research/data"],
+    "index": "/home/ubuntu/up_down_research/data/unified/quotes_unified.db",
+    "start": "2026-06-01T00:00:00Z", "end": "2026-07-01T00:00:00Z",
+    "symbol": "BTC", "timeframe": "5m", "exchange": "POLYMARKET",
+    "source": null, "gap_us": 1000000, "pair_age_us": 1000000,
+    "anchor_age_us": 1000000, "terminal_age_us": 1000000
+  },
+  "emit_observations": false,
+  "max_output_bytes": 268435456,
+  "partitions": {
+    "discovery_end": "2026-06-11T00:00:00Z",
+    "validation_end": "2026-06-21T00:00:00Z",
+    "final_end": "2026-07-01T00:00:00Z"
+  },
+  "analysis": {"bootstrap_samples": 1000, "seed": 70, "min_days": 3, "min_markets": 20}
+}
+JSON
+uv run python -m prediction_market_extensions.backtesting.longshot.quote_cli audit --config /tmp/longshot-btc5m-june.json --output /tmp/longshot-btc5m-june-audit
+uv run python -m prediction_market_extensions.backtesting.longshot.quote_cli extract --config /tmp/longshot-btc5m-june.json --output /tmp/longshot-btc5m-june-extract
+uv run python -m prediction_market_extensions.backtesting.longshot.quote_cli report --input /tmp/longshot-btc5m-june-extract --output /tmp/longshot-btc5m-june-report.json
+```
+
+If a resource guard rejects a range, keep that failure visible, use smaller
+prespecified ranges with the same partition boundaries, and do not count partial
+output as complete coverage. Each report describes its own explicit census.
+Offline fixture verification:
+
+```bash
+uv run ruff check prediction_market_extensions/backtesting/longshot/top_of_book.py prediction_market_extensions/backtesting/longshot/quote_cli.py tests/test_longshot_top_of_book.py
+uv run ruff format --check prediction_market_extensions/backtesting/longshot/top_of_book.py prediction_market_extensions/backtesting/longshot/quote_cli.py tests/test_longshot_top_of_book.py
+uv run pytest tests/test_longshot_top_of_book.py -q
+```
