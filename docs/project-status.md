@@ -31,6 +31,17 @@
   preopen-anchor evidence, unbiased listing coverage, and server reproduction
   remain unverified; manifest agreement alone does not certify completeness.
   The exposed Telonex credential needs rotation and must not be reused in configs.
+  Sandbox verification: 247 focused longshot tests passed, including synthetic
+  offline CLI tests; separate synthetic `audit`, `extract`, and `report` commands
+  passed. Scoped Ruff lint/format, global formatting, secret scanning, and CodeQL
+  passed. Global lint reports three existing E402 errors in the untouched
+  `scripts/longshot_flip_70.py`. The full suite completed with 805 passed,
+  56 failed, and 1 skipped: the sandbox lacks the required Rust native extension,
+  one runtime test assumes installation under `.venv`, and two loader warning
+  expectations failed. The first full-suite attempt stopped on missing existing
+  Bokeh/py-clob-client dependencies; those were installed before the completed
+  run. These are not a green full-test gate. Real-server commands, live-data
+  runners, `make backtest`, and strict MkDocs were not run for this isolated study.
 
 - [70-cent longshot research draft PR #1](https://github.com/rawbencis/prediction-market-backtesting/pull/1)
   adds network-free synthetic validation, a bounded native SQLite capture audit,
