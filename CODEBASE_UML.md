@@ -1,7 +1,7 @@
 # Codebase UML Inventory
 
 This file is generated from Python AST metadata and excludes `tests/` plus cache, virtualenv, and dot directories.
-Generated: 2026-11-03T22:34:04+00:00
+Generated: 2026-11-04T00:16:49+00:00
 Modules: 151 | Classes: 192 | Functions/methods: 2035
 
 ## Backtesting Data Flow
@@ -1888,8 +1888,8 @@ flowchart TD
 - Function L131: `_compact(window: dict) -> dict`
 - Function L157: `_write_json(path: Path, payload: object) -> None`
 - Function L185: `run(stage: str, config_path: Path, output: Path) -> None`
-- Function L303: `report(input_dir: Path, output: Path) -> None`
-- Function L339: `main() -> None`
+- Function L308: `report(input_dir: Path, output: Path) -> None`
+- Function L344: `main() -> None`
 - Class L161: `BoundedOutputs`
   - Method L162: `__init__(self, limit: int) -> None`
   - Method L167: `line(self, stream, payload: dict) -> None`
@@ -1949,22 +1949,22 @@ flowchart TD
 - Function L45: `synthetic_fixture() -> Any`
 
 ### `prediction_market_extensions/backtesting/longshot/top_of_book.py`
-- Imports: `__future__, collections, dataclasses, datetime, decimal, hashlib, json, pathlib, re, sqlite3`
-- Function L38: `utc_seconds(value: str) -> int`
-- Function L48: `digest(path: Path) -> str`
-- Function L126: `allowed_path(path: Path, study: Study) -> Path`
-- Function L136: `index_file_path(relative: str, size: int, study: Study) -> Path`
-- Function L150: `_mapping(path: Path | None, study: Study, *, verified: bool = False) -> dict[int, dict]`
-- Function L183: `census(study: Study) -> Iterator[dict]`
-- Function L274: `quote_values(row: dict) -> tuple[Decimal, Decimal, Decimal, Decimal] | None`
-- Function L297: `midpoint(values: tuple[Decimal, Decimal, Decimal, Decimal]) -> Decimal`
-- Function L303: `observations(path: Path, side: str, window: dict, study: Study, mapping: dict | None = None) -> tuple[list[dict], dict]`
-- Function L462: `extract(window: dict, streams: dict[str, list[dict]], study: Study, *, independently_verified: bool) -> dict`
-- Function L610: `study_windows(study: Study) -> Iterator[dict]`
-- Class L57: `Study`
-  - Method L82: `__post_init__(self) -> None`
-  - Method L119: `duration(self) -> int`
-  - Method L122: `configuration(self) -> dict`
+- Imports: `__future__, collections, dataclasses, datetime, decimal, hashlib, itertools, json, pathlib, re, sqlite3`
+- Function L39: `utc_seconds(value: str) -> int`
+- Function L49: `digest(path: Path) -> str`
+- Function L127: `allowed_path(path: Path, study: Study) -> Path`
+- Function L137: `index_file_path(relative: str, size: int, study: Study) -> Path`
+- Function L154: `_mapping(path: Path | None, study: Study, *, verified: bool = False) -> dict[int, dict]`
+- Function L188: `census(study: Study) -> Iterator[dict]`
+- Function L279: `quote_values(row: dict) -> tuple[Decimal, Decimal, Decimal, Decimal] | None`
+- Function L302: `midpoint(values: tuple[Decimal, Decimal, Decimal, Decimal]) -> Decimal`
+- Function L308: `observations(path: Path, side: str, window: dict, study: Study, mapping: dict | None = None) -> tuple[list[dict], dict]`
+- Function L467: `extract(window: dict, streams: dict[str, list[dict]], study: Study, *, independently_verified: bool) -> dict`
+- Function L626: `study_windows(study: Study) -> Iterator[dict]`
+- Class L58: `Study`
+  - Method L83: `__post_init__(self) -> None`
+  - Method L120: `duration(self) -> int`
+  - Method L123: `configuration(self) -> dict`
 
 ### `prediction_market_extensions/backtesting/optimizers/__init__.py`
 - Imports: `prediction_market_extensions`

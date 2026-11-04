@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import re
 import sqlite3
@@ -36,7 +37,7 @@ COLUMNS = (
 
 
 def utc_seconds(value: str) -> int:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(value)
     if parsed.utcoffset() is None or parsed.utcoffset().total_seconds() != 0:
         raise ValueError("Explicit UTC timestamps required")
     if parsed.microsecond:
@@ -135,7 +136,8 @@ def allowed_path(path: Path, study: Study) -> Path:
 
 def index_file_path(relative: str, size: int, study: Study) -> Path:
     if not isinstance(relative, str):
-        raise ValueError("Index file_path must be text")
+        # Census handles invalid index entries as validation exclusions.
+        raise ValueError("Index file_path must be text")  # noqa: TRY004
     path = Path(relative)
     if path.is_absolute() or ".." in path.parts:
         raise ValueError("Index file_path must be relative to DATA ROOT without traversal")
@@ -157,7 +159,8 @@ def _mapping(path: Path | None, study: Study, *, verified: bool = False) -> dict
         raise ValueError("Identity manifest exceeds 8 MiB")
     entries = json.loads(path.read_text())
     if not isinstance(entries, list):
-        raise ValueError("Identity manifest must be a list")
+        # Preserve the decoded-file validation error contract.
+        raise ValueError("Identity manifest must be a list")  # noqa: TRY004
     result = {}
     for entry in entries:
         ts = entry["ts"]
@@ -439,7 +442,7 @@ def observations(
     diagnostics["resolved_invalid_groups"] = sum(
         row["valid"] and row["group_invalid_rows"] > 0 for row in in_window
     )
-    gaps = [b["timestamp_us"] - a["timestamp_us"] for a, b in zip(ordered, ordered[1:])]
+    gaps = [b["timestamp_us"] - a["timestamp_us"] for a, b in itertools.pairwise(ordered)]
     report = dict(diagnostics)
     report.update(
         identity=identity,
@@ -626,12 +629,15 @@ def study_windows(study: Study) -> Iterator[dict]:
     for window in census(study):
         streams, diagnostics = {}, {}
         mapping = verified.get(window["start"]) or manifests.get(window["start"])
-        if window["start"] in manifests and window["start"] in verified:
-            if any(
+        if (
+            window["start"] in manifests
+            and window["start"] in verified
+            and any(
                 manifests[window["start"]][key] != verified[window["start"]][key]
                 for key in ("slug", "up_id", "down_id")
-            ):
-                window["exclusions"].append("manifest_verification_conflict")
+            )
+        ):
+            window["exclusions"].append("manifest_verification_conflict")
         for side, source in window["files"].items():
             try:
                 streams[side], diagnostics[side] = observations(
