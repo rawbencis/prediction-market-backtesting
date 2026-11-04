@@ -1,8 +1,8 @@
 # Codebase UML Inventory
 
 This file is generated from Python AST metadata and excludes `tests/` plus cache, virtualenv, and dot directories.
-Generated: 2026-11-03T15:24:52+00:00
-Modules: 149 | Classes: 190 | Functions/methods: 2010
+Generated: 2026-11-04T00:16:49+00:00
+Modules: 151 | Classes: 192 | Functions/methods: 2035
 
 ## Backtesting Data Flow
 
@@ -1881,6 +1881,21 @@ flowchart TD
 - Function L168: `inspect_manifest(path: Path, *, sample_limit: int = 20) -> dict[str, Any]`
 - Function L188: `audit_transactions(path: Path) -> dict[str, Any]`
 
+### `prediction_market_extensions/backtesting/longshot/quote_cli.py`
+- Imports: `__future__, analysis, argparse, collections, csv, io, json, pathlib, random, subprocess, top_of_book`
+- Function L21: `read_config(path: Path) -> tuple[Study, dict]`
+- Function L34: `summary(rows: list[dict], config: dict) -> dict`
+- Function L131: `_compact(window: dict) -> dict`
+- Function L157: `_write_json(path: Path, payload: object) -> None`
+- Function L185: `run(stage: str, config_path: Path, output: Path) -> None`
+- Function L308: `report(input_dir: Path, output: Path) -> None`
+- Function L344: `main() -> None`
+- Class L161: `BoundedOutputs`
+  - Method L162: `__init__(self, limit: int) -> None`
+  - Method L167: `line(self, stream, payload: dict) -> None`
+  - Method L171: `text(self, stream, line: str) -> None`
+  - Method L177: `json(self, path: Path, payload: object) -> None`
+
 ### `prediction_market_extensions/backtesting/longshot/replay.py`
 - Imports: `__future__, decimal, itertools, json, math, nautilus_trader, pathlib, prediction_market_extensions, strategies`
 - Function L62: `_observable_record(record) -> Any`
@@ -1932,6 +1947,24 @@ flowchart TD
 - Imports: `decimal, nautilus_trader`
 - Function L16: `snapshot(instrument, ts_ns, bid, ask, *, bid_size = 20, ask_size = 20, ts_event = None) -> Any`
 - Function L45: `synthetic_fixture() -> Any`
+
+### `prediction_market_extensions/backtesting/longshot/top_of_book.py`
+- Imports: `__future__, collections, dataclasses, datetime, decimal, hashlib, itertools, json, pathlib, re, sqlite3`
+- Function L39: `utc_seconds(value: str) -> int`
+- Function L49: `digest(path: Path) -> str`
+- Function L127: `allowed_path(path: Path, study: Study) -> Path`
+- Function L137: `index_file_path(relative: str, size: int, study: Study) -> Path`
+- Function L154: `_mapping(path: Path | None, study: Study, *, verified: bool = False) -> dict[int, dict]`
+- Function L188: `census(study: Study) -> Iterator[dict]`
+- Function L279: `quote_values(row: dict) -> tuple[Decimal, Decimal, Decimal, Decimal] | None`
+- Function L302: `midpoint(values: tuple[Decimal, Decimal, Decimal, Decimal]) -> Decimal`
+- Function L308: `observations(path: Path, side: str, window: dict, study: Study, mapping: dict | None = None) -> tuple[list[dict], dict]`
+- Function L467: `extract(window: dict, streams: dict[str, list[dict]], study: Study, *, independently_verified: bool) -> dict`
+- Function L626: `study_windows(study: Study) -> Iterator[dict]`
+- Class L58: `Study`
+  - Method L83: `__post_init__(self) -> None`
+  - Method L120: `duration(self) -> int`
+  - Method L123: `configuration(self) -> dict`
 
 ### `prediction_market_extensions/backtesting/optimizers/__init__.py`
 - Imports: `prediction_market_extensions`

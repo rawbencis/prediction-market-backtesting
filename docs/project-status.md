@@ -25,6 +25,50 @@
 
 ## Known Issues
 
+- [Descriptive top-of-book study PR #2](https://github.com/rawbencis/prediction-market-backtesting/pull/2)
+  adds a separate bounded Parquet census/extraction/report path, not L2 execution.
+  The code default `study.exchange` remains case-sensitive `POLYMARKET`. Server
+  examples document the inspected lowercase `polymarket` spelling without
+  relaxing identity, gap, anchor, or resource guards.
+  Agent-environment results, distinct from the later server run: 247 focused
+  longshot tests passed, including synthetic offline CLI tests; separate
+  synthetic `audit`, `extract`, and `report` commands passed. Scoped Ruff
+  lint/format, global formatting, secret scanning, and CodeQL passed. Global
+  lint reported three existing E402 errors in the untouched
+  `scripts/longshot_flip_70.py`. That sandbox full suite was 805 passed,
+  56 failed, and 1 skipped: it lacked the required Rust native extension, one
+  runtime test assumed installation under `.venv`, and two loader warning
+  expectations failed. The first full-suite attempt stopped on missing existing
+  Bokeh/py-clob-client dependencies; those were installed before the completed
+  run. Those sandbox failures are not a green full-test gate and are not the
+  user-run server result. `make backtest` and strict MkDocs were not run there.
+  User-run server verification at
+  `967a06213bcbdd9f4265092af6660aec675b3c4a` used terminal output supplied by the
+  user; this agent did not access the server. The full suite was 865 passed,
+  1 skipped, and 407 warnings. One-market offline audit/extract for
+  `btc-updown-5m-1781730900` completed only after `study.exchange` was set to
+  `polymarket`. Original failed output was preserved and a fresh destination was
+  used. Both files had no census exclusions. UP was 38,871 in-window rows to
+  35,787 terminal timestamps; DOWN was 38,869 to 35,785. Both had zero invalid
+  terminal rows and a 354 ms maximum exchange gap. Receipt inversions were UP 5
+  and DOWN 7. Fourteen diagnostic midpoint crossings were exported. The first
+  alternating sequence reproduced UP +31.782 s, DOWN +126.871 s, and UP +286.255 s,
+  each 0.69 bid / 0.71 ask. All midpoint crossings had `prefix_intact=false`.
+  The window remains censored/ineligible, with UP/DOWN
+  `unverified_or_missing_backward_open_anchor` exclusions. p12/p23 are not at
+  risk and success remains null. This does not certify independent token
+  identities, opening anchors, complete history, executable fills, PnL, or
+  profitability. The June batch was not run. The exposed Telonex credential
+  still needs rotation and must not be reused in configs.
+  Review fixes in `5fa35e3` were rechecked in that revision: both outcomes must
+  be within `gap_us` before a numbered touch; a missing index hash is
+  `unavailable`; a non-text index `file_path` stays an excluded window; a source
+  hash after a read error is best-effort. Evidence is the current code and
+  `test_coverage_gap_blocks_numbered_touch_before_stale_update`,
+  `test_missing_index_hash_is_explicit`,
+  `test_null_index_path_remains_an_excluded_window`, and
+  `test_unreadable_source_hash_does_not_abort_later_windows`.
+
 - [70-cent longshot research draft PR #1](https://github.com/rawbencis/prediction-market-backtesting/pull/1)
   adds network-free synthetic validation, a bounded native SQLite capture audit,
   evidence-gated capture replay, and file-index/Parquet inspection. Recorder
