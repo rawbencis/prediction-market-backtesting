@@ -83,6 +83,7 @@ Detailed guides have been filed away in the [docs index](https://evan-kolberg.gi
     - [Outputs And Bounded Resources](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#outputs-and-bounded-resources)
     - [User-Reported Single-Market Diagnostic](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#user-reported-single-market-diagnostic)
     - [Exact Offline Server Reproduction](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#exact-offline-server-reproduction)
+    - [Review-Fix Verification](https://evan-kolberg.github.io/prediction-market-backtesting/longshot-flip-70/#review-fix-verification)
 - [Docs Index](https://evan-kolberg.github.io/prediction-market-backtesting/)
   - [Start Here](https://evan-kolberg.github.io/prediction-market-backtesting/#start-here)
   - [Core Framework](https://evan-kolberg.github.io/prediction-market-backtesting/#core-framework)

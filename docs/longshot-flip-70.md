@@ -418,8 +418,12 @@ Every row, including premarket and post-close rows in a token/day file, must
 agree on full identity; the two tokens must differ and share a market ID.
 Economic observations are clipped to `[open,close)`, with only the configured
 backward preopen anchor interval retained. No close-boundary quote is a touch.
-Exchange spelling is an explicit, case-sensitive `study.exchange` setting;
-inspect it locally rather than guessing if the default does not match.
+Exchange spelling is an explicit, case-sensitive `study.exchange` setting
+(`row["exchange"] != study.exchange`). The code default remains `POLYMARKET`.
+The server examples below use `polymarket` only because user inspection of these
+quote files observed that lowercase spelling. Do not change the default to fit
+one sample, and do not treat a case mismatch as a reason to relax identity,
+gap, anchor, or resource guards.
 
 Optional `study.manifest` names a JSON list of `ts,slug,up_id,down_id`.
 Duplicate windows, contradictory tokens/slugs, and conflicts with verified
@@ -527,29 +531,47 @@ and uses its recorded configuration, not new favorable test boundaries.
 
 ### User-Reported Single-Market Diagnostic
 
-These are **user-reported observations, not agent server tests, fixture truth,
-complete-market certification, or profitability**:
-`btc-updown-5m-1781730900`, 2026-06-17 21:15–21:20 UTC.
-UP 38,871 in-window rows became 35,787 terminal timestamps; DOWN 38,869 became
-35,785. Both files internally matched manifests and the same market ID.
-There were zero invalid terminal rows, maximum exchange gap 0.354 seconds,
-and transient crossed/locked raw rows resolved within timestamp groups.
-First quotes were open+0.014 seconds, final quotes close−0.012 seconds;
-receipt times had 5/7 inversions. Candidate alternating midpoint crossings
-were UP +31.782s, DOWN +126.871s, UP +286.255s, each bid 0.69/ask 0.71.
-These boundary offsets do not establish a verified preopen anchor or complete
-prefix. The study therefore does not turn these observations into certified
-numbered labels without the additional evidence above.
+These are **user-supplied observations, not agent server access, fixture truth,
+complete-market certification, executable fills, PnL, or profitability**.
+
+Earlier inspection, before the offline CLI was run, reported
+`btc-updown-5m-1781730900` (2026-06-17 21:15–21:20 UTC): both files internally
+matched manifests and the same market ID; first in-window quotes at open+0.014
+seconds and final quotes at close−0.012 seconds; transient crossed/locked raw
+rows resolved within timestamp groups. Those boundary offsets were not restated
+by the later CLI closeout and still do not prove a verified preopen anchor.
+
+User-run server verification at commit
+`967a06213bcbdd9f4265092af6660aec675b3c4a` (terminal output supplied by the user):
+the full suite was 865 passed, 1 skipped, and 407 warnings. One-market offline
+`audit` and `extract` completed only after `study.exchange` was changed from the
+default `POLYMARKET` to the observed lowercase `polymarket`. The original failed
+output was preserved and a fresh destination was used. Both files loaded with no
+census exclusions. UP had 38,871 in-window rows and 35,787 terminal timestamps;
+DOWN had 38,869 and 35,785. Both had zero invalid terminal rows and a maximum
+exchange gap of 354 ms. Receipt inversions were UP 5 and DOWN 7. Fourteen
+diagnostic midpoint crossings were exported. The first alternating sequence
+reproduced UP +31.782 s, DOWN +126.871 s, and UP +286.255 s, each with bid 0.69
+and ask 0.71. Every midpoint crossing had `prefix_intact=false`. The window
+remains censored and ineligible, with UP and DOWN
+`unverified_or_missing_backward_open_anchor` exclusions. p12 and p23 are not at
+risk and success remains null. This does not certify independent token
+identities, opening anchors, complete history, fills, or profitability.
+The June chronological batch was not run.
 
 ### Exact Offline Server Reproduction
 
 Run in an existing repository checkout with its Python dependencies installed
 (including a patched PyArrow, >=23.0.1). No command below downloads market data.
-Replace only the explicit source/exchange setting if local inspection shows
-multiple sources or different exchange spelling; record that decision before
-extracting. Optional manifest/verified-identity paths must be under allowed
-roots. The following commands are supplied for the user to run, **not claimed
-as executed on the server**.
+The examples set `exchange` to the inspected lowercase `polymarket`; the code
+default remains `POLYMARKET`, and identity comparison stays case-sensitive.
+Replace `source` only when inspection shows more than one source, and record
+that choice before extracting. Optional manifest/verified-identity paths must be
+under allowed roots. Do not invent `verified_identities` or widen gap/anchor
+tolerances to make this window eligible.
+The single-market `audit`/`extract` below is the command shape the user ran at
+`967a06213bcbdd9f4265092af6660aec675b3c4a`. This agent did not access the server
+or rerun it. The fixed June batch is an example only and was **not** run.
 
 ```bash
 cd /absolute/path/to/prediction-market-backtesting
@@ -561,7 +583,7 @@ cat > /tmp/longshot-single.json <<'JSON'
     "index": "/home/ubuntu/up_down_research/data/unified/quotes_unified.db",
     "start": "2026-06-17T21:15:00Z",
     "end": "2026-06-17T21:20:00Z",
-    "symbol": "BTC", "timeframe": "5m", "exchange": "POLYMARKET",
+    "symbol": "BTC", "timeframe": "5m", "exchange": "polymarket",
     "source": null, "gap_us": 1000000, "pair_age_us": 1000000,
     "anchor_age_us": 1000000, "terminal_age_us": 1000000
   },
@@ -588,7 +610,7 @@ cat > /tmp/longshot-btc5m-june.json <<'JSON'
     "allowed_roots": ["/home/ubuntu/up_down_research/data"],
     "index": "/home/ubuntu/up_down_research/data/unified/quotes_unified.db",
     "start": "2026-06-01T00:00:00Z", "end": "2026-07-01T00:00:00Z",
-    "symbol": "BTC", "timeframe": "5m", "exchange": "POLYMARKET",
+    "symbol": "BTC", "timeframe": "5m", "exchange": "polymarket",
     "source": null, "gap_us": 1000000, "pair_age_us": 1000000,
     "anchor_age_us": 1000000, "terminal_age_us": 1000000
   },
@@ -617,3 +639,33 @@ uv run ruff check prediction_market_extensions/backtesting/longshot/top_of_book.
 uv run ruff format --check prediction_market_extensions/backtesting/longshot/top_of_book.py prediction_market_extensions/backtesting/longshot/quote_cli.py tests/test_longshot_top_of_book.py
 uv run pytest tests/test_longshot_top_of_book.py -q
 ```
+
+### Review-Fix Verification
+
+The four review fixes from `5fa35e3` were rechecked against the code at the
+user-run revision `967a06213bcbdd9f4265092af6660aec675b3c4a`. This documentation
+closeout does not change those guards, so the server results above remain
+results for that revision.
+
+- Coverage gaps are independent of pairing. `extract` accepts a numbered touch
+  only while `prefix` is intact, and it clears `prefix` when either outcome is
+  outside `gap_us`, even if `pair_age_us` is wider
+  (`top_of_book.py`, `within_gap`).
+  `test_coverage_gap_blocks_numbered_touch_before_stale_update` uses
+  `gap_us=1000` and `pair_age_us=1000000`: the later opposite crossing stays
+  diagnostic, p12 remains at risk with null success, and the window is censored.
+- A missing index is an explicit unavailable hash. `quote_cli.py` writes
+  `input_sha256` `unavailable` when `study.index` does not exist, without
+  opening it. `test_missing_index_hash_is_explicit` completes `audit` and keeps
+  the `index_unavailable` census exclusion.
+- A non-text index path is an excluded window. `index_file_path` raises
+  `ValueError` before constructing `Path`. Census catches that error.
+  `test_null_index_path_remains_an_excluded_window` retains the scheduled window
+  and the valid opposite file.
+- Source hashing after a read error is best-effort. The `OSError` handler stores
+  the read error and `sha256: unavailable`, then later windows still yield.
+  `test_unreadable_source_hash_does_not_abort_later_windows` covers a disappeared
+  file across two scheduled windows.
+
+The review threads were rechecked and left unresolved for the reviewer. This
+closeout has no permission to resolve them.
