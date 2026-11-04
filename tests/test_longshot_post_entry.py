@@ -156,6 +156,16 @@ def test_simultaneous_opposing_crossings_are_ambiguous_not_ordered(store, after_
     assert result["anomaly_counts"]["simultaneous_opposing_crossings"] == 1
 
 
+def test_terminal_ambiguity_does_not_count_later_breaks_as_pre_entry_resets(store):
+    study, _ = store
+    up = stream("UP", [(0, False), (1, True), (2, True)])
+    up[-1]["ask_price"] = None
+    result = evaluate(study, up, stream("DOWN", [(0, False), (1, True)]))
+    assert result["status"] == "ambiguous"
+    assert result["anomaly_counts"].get("pre_entry_baseline_resets", 0) == 0
+    assert result["anomaly_counts"]["invalid_paired_states"] == 1
+
+
 def test_opposite_already_above_is_not_new_upcrossing(store):
     study, _ = store
     result = evaluate(
@@ -329,7 +339,7 @@ def test_fixed_server_example_is_only_twelve_windows_without_verified_identity()
     assert config["max_output_bytes"] == 1024**2
 
 
-@pytest.mark.parametrize("option", ["gap_us", "pair_age_us", "terminal_age_us"])
+@pytest.mark.parametrize("option", ["gap_us", "pair_age_us", "anchor_age_us", "terminal_age_us"])
 def test_one_second_limits_cannot_be_widened(store, tmp_path, option):
     study, _ = store
     config = config_file(replace(study, **{option: 1_000_001}), tmp_path)

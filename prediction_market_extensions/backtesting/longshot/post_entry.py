@@ -98,7 +98,7 @@ def diagnose(window: dict, streams: dict[str, list[dict]], study: Study) -> dict
             baseline = None
             if result["status"] == "unknown" and result["break_us"] is None:
                 result.update(reason="invalid_gap_or_stale_pair", break_us=ts)
-            elif result["entry_us"] is None:
+            elif result["status"] == "no_entry":
                 counts["pre_entry_baseline_resets"] += 1
         if not paired:
             continue
@@ -213,6 +213,7 @@ def run(config_path: Path, output: Path) -> None:
     if (
         study.gap_us > 1_000_000
         or study.pair_age_us > 1_000_000
+        or study.anchor_age_us > 1_000_000
         or study.terminal_age_us > 1_000_000
         or Decimal(study.threshold) != Decimal("0.70")
     ):
