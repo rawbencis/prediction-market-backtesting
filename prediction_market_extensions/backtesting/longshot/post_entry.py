@@ -168,8 +168,8 @@ def windows(study: Study):
         identities = {}
         for side, source in window["files"].items():
             path = Path(source["path"])
-            hashes[str(path)] = digest(path)
             try:
+                hashes[str(path)] = digest(path)
                 streams[side], report = observations(path, side, window, study, mapping)
                 if hashes[str(path)] != report["sha256"]:
                     raise ValueError("Source changed during diagnostic")
@@ -183,6 +183,7 @@ def windows(study: Study):
                 )
             except (OSError, ValueError) as exc:
                 window["exclusions"].append(f"{side}:{exc}")
+                hashes.setdefault(str(path), "unavailable")
         if len(identities) == 2:
             up, down = identities["UP"], identities["DOWN"]
             if up is None or down is None or up[1] != down[1] or up[3] == down[3]:

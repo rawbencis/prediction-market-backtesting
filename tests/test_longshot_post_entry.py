@@ -241,6 +241,29 @@ def test_missing_indexed_file_and_scheduled_windows_are_preserved(store):
     assert "UP:" in results[0][0]["reason"]
 
 
+def test_unreadable_selected_file_records_unavailable_hash_and_continues(store, monkeypatch):
+    study, add = store
+    up = add("UP", [row("UP", 0)])
+    down = add("DOWN", [row("DOWN", 0)])
+
+    def fail_selected(path):
+        if path == up:
+            raise OSError("unreadable")
+        return digest(path)
+
+    monkeypatch.setattr(
+        "prediction_market_extensions.backtesting.longshot.post_entry.digest", fail_selected
+    )
+    results = list(windows(replace(study, end=START + 600)))
+    assert len(results) == 2
+    invalid, hashes = results[0]
+    assert invalid["status"] == "invalid"
+    assert "UP:unreadable" in invalid["reason"]
+    assert hashes[str(up)] == "unavailable"
+    assert hashes[str(down)] == digest(down)
+    assert results[1][0]["status"] == "missing"
+
+
 def test_manifest_agreement_remains_unverified_and_identity_conflict_invalid(store):
     study, add = store
     add("UP", stream("UP", [(0, False), (1, True)]))
