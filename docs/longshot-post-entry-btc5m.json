@@ -1,0 +1,18 @@
+{
+  "study": {
+    "data_root": "/home/ubuntu/up_down_research/data",
+    "allowed_roots": ["/home/ubuntu/up_down_research/data"],
+    "index": "/home/ubuntu/up_down_research/data/unified/quotes_unified.db",
+    "start": "2026-06-01T00:00:00Z",
+    "end": "2026-06-01T01:00:00Z",
+    "symbol": "BTC",
+    "timeframe": "5m",
+    "exchange": "polymarket",
+    "source": null,
+    "max_windows": 12,
+    "gap_us": 1000000,
+    "pair_age_us": 1000000,
+    "terminal_age_us": 1000000
+  },
+  "max_output_bytes": 1048576
+}
