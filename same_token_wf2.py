@@ -168,20 +168,29 @@ def load_market(args):
     return epoch, m, dict(diag)
 
 
-def pack(markets):
-    keys = ("t", "bid", "ask", "bsz", "asz", "upd", "seen")
-    off = np.cumsum([0] + [len(m["t"]) for _, m in markets])
-    out = {k: np.concatenate([m[k] for _, m in markets]) for k in keys}
-    return dict(epochs=np.array([e for e, _ in markets], np.int64), off=off, **out)
+KEYS = ("t", "bid", "ask", "bsz", "asz", "upd", "seen")
 
 
-def unpack(z):
-    off = z["off"]
-    keys = ("t", "bid", "ask", "bsz", "asz", "upd", "seen")
-    arr = {k: z[k] for k in keys}
-    for i, e in enumerate(z["epochs"]):
-        a, b = off[i], off[i + 1]
-        yield int(e), {k: v[a:b] for k, v in arr.items()}
+def prep_market(args):
+    """Worker: load one market and write it straight to disk; only diagnostics go back."""
+    data, epoch, ddir = args
+    _, m, diag = load_market((data, epoch))
+    if m is not None:
+        tmp = ddir / f".{epoch}.tmp"
+        with tmp.open("wb") as fh:
+            np.savez_compressed(fh, **m)
+        tmp.replace(ddir / f"{epoch}.npz")
+    return diag
+
+
+def markets(ddir):
+    for f in sorted(ddir.glob("[0-9]*.npz")):
+        with np.load(f) as z:
+            yield int(f.stem), {k: z[k] for k in KEYS}
+
+
+def done_days(cache):
+    return sorted(p.parent for p in cache.glob("????-??-??/_done.json"))
 
 
 def cmd_prep(a):
@@ -191,25 +200,21 @@ def cmd_prep(a):
     )
     if not epochs:
         sys.exit("no UP Parquet files")
-    a.cache.mkdir(parents=True, exist_ok=True)
     days = {}
     for e in epochs:
         days.setdefault(day_of(e), []).append(e)
-    with Pool(a.workers) as pool:
+    with Pool(a.workers, maxtasksperchild=200) as pool:
         for d, es in sorted(days.items()):
-            f = a.cache / f"{d}.npz"
-            if f.exists() and not a.force:
+            ddir = a.cache / d
+            if (ddir / "_done.json").exists() and not a.force:
                 continue
-            got, diag, errors = [], Counter(), []
-            for e, m, dg in pool.imap(load_market, [(a.data, e) for e in es], chunksize=4):
+            ddir.mkdir(parents=True, exist_ok=True)
+            diag, errors = Counter(), []
+            for dg in pool.imap(prep_market, [(a.data, e, ddir) for e in es], chunksize=8):
                 errors += [dg.pop("msg")] if "msg" in dg else []
                 diag.update(dg)
-                if m is not None:
-                    got.append((e, m))
-            if got:
-                np.savez_compressed(f, **pack(got))
-            diag.update(markets=len(got), scheduled=288)
-            (a.cache / f"{d}.json").write_text(
+            diag.update(markets=len(list(ddir.glob("[0-9]*.npz"))), scheduled=288)
+            (ddir / "_done.json").write_text(
                 json.dumps({"diag": diag, "errors": errors[:50]}, indent=1)
             )
             print(d, dict(diag), flush=True)
@@ -224,8 +229,8 @@ def cmd_settle(a):
     if out.exists():
         have = {r["slug"]: r["winner"] for r in csv.DictReader(out.open())}
     slugs = []
-    for f in sorted(a.cache.glob("*.npz")):
-        slugs += [f"btc-updown-5m-{e}" for e in np.load(f)["epochs"]]
+    for ddir in done_days(a.cache):
+        slugs += [f"btc-updown-5m-{f.stem}" for f in sorted(ddir.glob("[0-9]*.npz"))]
     todo = [s for s in slugs if s not in have]
     print(f"{len(slugs)} markets, {len(todo)} to fetch", flush=True)
 
@@ -384,22 +389,23 @@ def evaluate(m, grid, winner=None, lat=LAT_US, gap=GAP_US, age=AGE_US, size=SIZE
 
 
 def _grid_day(args):
-    f, out, sett = args
+    ddir, out, sett = args
     grid = candidates()
     rows = []
-    for e, m in unpack(np.load(f)):
-        rows.append((e,) + evaluate(m, grid, sett.get(e)))
+    for e, m in markets(ddir):
+        st, lo, hi, entry = evaluate(m, grid, sett.get(e))
+        rows.append((e, st, lo, hi, entry))
     if not rows:
-        return f.stem, 0
+        return ddir.name, 0
     np.savez_compressed(
-        out / f"{f.stem}.npz",
+        out / f"{ddir.name}.npz",
         epochs=np.array([r[0] for r in rows]),
         status=np.stack([r[1] for r in rows]),
         lo=np.stack([r[2] for r in rows]).astype(np.float32),
         hi=np.stack([r[3] for r in rows]).astype(np.float32),
         entered=np.stack([r[4] >= 0 for r in rows]),
     )
-    return f.stem, len(rows)
+    return ddir.name, len(rows)
 
 
 def cmd_grid(a):
@@ -422,7 +428,7 @@ def cmd_grid(a):
             indent=0,
         )
     )
-    jobs = [(f, a.out, sett) for f in sorted(a.cache.glob("*.npz"))]
+    jobs = [(d, a.out, sett) for d in done_days(a.cache)]
     with Pool(a.workers) as pool:
         for d, k in pool.imap_unordered(_grid_day, jobs):
             print(d, k, flush=True)

@@ -191,9 +191,29 @@ class TestWF2(unittest.TestCase):
         self.assertEqual(wf.choose(S, N, [0, 1], [2, 3], 1, 2), 0)
         self.assertIsNone(wf.choose(-np.abs(S), N, [0, 1], [2, 3], 1, 2))
 
+    def test_cache_to_grid(self):
+        import tempfile
+        from pathlib import Path
 
-if __name__ == "__main__":
-    unittest.main()
+        rng = np.random.default_rng(5)
+        with tempfile.TemporaryDirectory() as d:
+            cache, out = Path(d) / "c", Path(d) / "o"
+            ddir = cache / "2026-06-24"
+            ddir.mkdir(parents=True)
+            ms = {1782259200 + 300 * k: random_market(rng) for k in range(3)}
+            for e, m in ms.items():
+                np.savez_compressed(ddir / f"{e}.npz", **m)
+            (ddir / "_done.json").write_text("{}")
+            (cache / "2026-06-25").mkdir()  # unfinished day is ignored
+            out.mkdir()
+            self.assertEqual(wf.done_days(cache), [ddir])
+            name, n = wf._grid_day((ddir, out, {}))
+            z = np.load(out / f"{name}.npz")
+            grid = wf.candidates()
+            self.assertEqual((n, z["lo"].shape), (3, (3, len(grid))))
+            for i, e in enumerate(z["epochs"]):
+                _, lo, _, _ = wf.evaluate(ms[int(e)], grid)
+                np.testing.assert_allclose(z["lo"][i], lo, atol=1e-6)
 
 
 class TestPrepParquet(unittest.TestCase):
@@ -223,7 +243,14 @@ class TestPrepParquet(unittest.TestCase):
                 )
                 pq.write_table(tb, Path(d) / f"btc-updown-5m-{e}_{side}.parquet")
             got, m, diag = wf.load_market((Path(d), e))
+            (Path(d) / "day").mkdir()
+            wf.prep_market((Path(d), e, Path(d) / "day"))
+            self.assertEqual([x for x, _ in wf.markets(Path(d) / "day")], [e])
         self.assertEqual(got, e)
         self.assertEqual(m["t"].tolist(), [1_000_000])
         self.assertEqual(diag["conflicts"], 2)  # same receipt+exchange time, different quote
         self.assertTrue((m["bid"] == -1).all())
+
+
+if __name__ == "__main__":
+    unittest.main()
