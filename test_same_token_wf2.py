@@ -5,7 +5,9 @@ import numpy as np
 import same_token_wf2 as wf
 
 
-def reference(m, c, winner, lat=wf.LAT_US, gap=wf.GAP_US, age=wf.AGE_US, size=wf.SIZE):
+def reference(
+    m, c, winner, lat=wf.LAT_US, gap=wf.GAP_US, age=wf.AGE_US, size=wf.SIZE, resume=False
+):
     """Independent event-loop statement of the replay semantics."""
     x, b, s, ttl = c
     B, S = b / 1000, s / 1000
@@ -34,12 +36,12 @@ def reference(m, c, winner, lat=wf.LAT_US, gap=wf.GAP_US, age=wf.AGE_US, size=wf
                     st, side, T = "pend", cr[0], t[i]
                     W = None if winner is None else float(winner == side)
             continue
-        if g or (not gs[i][side] and t[i] - last_good[side] > age and t[i] > age):
+        if not resume and (g or (not gs[i][side] and t[i] - last_good[side] > age and t[i] > age)):
             st = "cpend" if st == "pend" else "cpos"
             break
         if st == "pend" and t[i] >= T + ttl * 1_000_000:
             return wf.EXPIRED, 0.0, 0.0
-        if not gs[i][side] or not m["upd"][i, side]:
+        if g or not gs[i][side] or not m["upd"][i, side]:
             continue
         if st == "pend" and t[i] >= T + lat and m["ask"][i, side] < b and m["asz"][i, side] >= size:
             st, te = "pos", t[i]
@@ -48,6 +50,17 @@ def reference(m, c, winner, lat=wf.LAT_US, gap=wf.GAP_US, age=wf.AGE_US, size=wf
         ):
             return wf.EXITED, (S - B) * size, (S - B) * size
     tail = wf.MKT_US - t[-1] > gap
+    if resume and st in ("pend", "pos"):
+        use = [
+            i for i in range(n) if gs[i][side] and not (t[i] - t[i - 1] > gap if i else t[0] > gap)
+        ]
+        dark = tail or not use or wf.MKT_US - t[use[-1]] > age
+        if dark and st == "pend":
+            o = [-B if W == 0 else 0.0] if W is not None else [-B, 0.0]
+            return wf.CENS_PEND, min(o) * size, max(o) * size
+        if dark:
+            o = ([S - B] if W == 1 else [-B]) if W is not None else [-B, 1 - B]
+            return wf.CENS_POS, min(o) * size, max(o) * size
     held = [W - B] if W is not None else [-B, 1 - B]
     if st == "wait":
         return wf.FLAT, 0.0, 0.0
@@ -108,9 +121,10 @@ class TestWF2(unittest.TestCase):
         for _ in range(120):
             m = random_market(rng)
             winner = rng.choice([None, 0, 1])
-            st, lo, hi, _ = wf.evaluate(m, grid, winner)
+            resume = bool(rng.integers(2))
+            st, lo, hi, _ = wf.evaluate(m, grid, winner, resume=resume)
             for ci in rng.choice(len(grid), 150, replace=False):
-                r = reference(m, grid[ci], winner)
+                r = reference(m, grid[ci], winner, resume=resume)
                 self.assertEqual(
                     (st[ci], round(lo[ci], 9), round(hi[ci], 9)),
                     (r[0], round(r[1], 9), round(r[2], 9)),
@@ -220,7 +234,7 @@ class TestWF2(unittest.TestCase):
             (cache / "2026-06-25").mkdir()  # unfinished day is ignored
             out.mkdir()
             self.assertEqual(wf.done_days(cache), [ddir])
-            name, n = wf._grid_day((ddir, out, {}))
+            name, n = wf._grid_day((ddir, out, {}, False))
             z = np.load(out / f"{name}.npz")
             grid = wf.candidates()
             self.assertEqual((n, z["lo"].shape), (3, (3, len(grid))))

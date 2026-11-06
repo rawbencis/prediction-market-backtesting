@@ -294,8 +294,14 @@ def _first(idx, lo):
     return int(idx[k]) if k < len(idx) else 1 << 60
 
 
-def evaluate(m, grid, winner=None, lat=LAT_US, gap=GAP_US, age=AGE_US, size=SIZE):
-    """-> status int8[n], lo/hi float per share*size, entry_us (-1 none)."""
+def evaluate(m, grid, winner=None, lat=LAT_US, gap=GAP_US, age=AGE_US, size=SIZE, resume=False):
+    """-> status int8[n], lo/hi float per share*size, entry_us (-1 none).
+
+    resume=False: an unobserved stretch censors the trade (bounds).
+    resume=True: carry through stretches using the next good quote; a stretch running to the
+    close is resolved by the winner (losing side: bid assumed filled, no exit; winning side:
+    resting buy not filled, position exits at s).
+    """
     t = m["t"]
     n, nc = len(t), len(grid)
     status = np.zeros(nc, np.int8)
@@ -314,9 +320,15 @@ def evaluate(m, grid, winner=None, lat=LAT_US, gap=GAP_US, age=AGE_US, size=SIZE
     badm = gapi[:, None] | (~gs & (t[:, None] - lastg > age) & (t[:, None] > age))
     bad = [np.flatnonzero(badm[:, k]) for k in (0, 1)]
     tail_bad = MKT_US - t[-1] > gap
+    end_dark = [True, True]  # traded side unobserved into the close
+    if resume:
+        bad = [np.zeros(0, np.int64)] * 2
     msum = bid + ask  # 2*mid in milli
     okc = np.r_[False, good[1:] & good[:-1] & ~gapi[1:] & (t[1:] <= TRIG_MAX_US)]
     usable = gs & ~gapi[:, None]
+    for k in (0, 1):
+        u = np.flatnonzero(usable[:, k])
+        end_dark[k] = tail_bad or not len(u) or MKT_US - t[u[-1]] > age
     ent = {}
     ext = {}
     trig = {}
@@ -368,7 +380,11 @@ def evaluate(m, grid, winner=None, lat=LAT_US, gap=GAP_US, age=AGE_US, size=SIZE
             status[ci] = EXPIRED
             continue
         if j == BIG:
-            if tail_bad:
+            if resume and end_dark[sd]:
+                status[ci] = CENS_PEND
+                outs = [-B if W == 0 else 0.0] if W is not None else [-B, 0.0]
+                lo[ci], hi[ci] = min(outs), max(outs)
+            elif tail_bad:
                 status[ci] = CENS_PEND
                 outs = [0.0, S - B] + ([W - B] if W is not None else [-B, 1 - B])
                 lo[ci], hi[ci] = min(outs), max(outs)
@@ -380,7 +396,10 @@ def evaluate(m, grid, winner=None, lat=LAT_US, gap=GAP_US, age=AGE_US, size=SIZE
         fb2 = _first(bad[sd], j + 1)
         k = k if k < n else BIG
         held = [W - B] if W is not None else [-B, 1 - B]
-        if (fb2 <= k and fb2 < BIG) or (k == BIG and tail_bad):
+        if resume and k == BIG and end_dark[sd]:
+            status[ci] = CENS_POS
+            outs = ([S - B] if W == 1 else [-B]) if W is not None else [-B, 1 - B]
+        elif (fb2 <= k and fb2 < BIG) or (k == BIG and tail_bad):
             status[ci], outs = CENS_POS, [S - B] + held  # unobserved path: exit or hold
         elif k < BIG:
             status[ci], outs = EXITED, [S - B]
@@ -391,11 +410,11 @@ def evaluate(m, grid, winner=None, lat=LAT_US, gap=GAP_US, age=AGE_US, size=SIZE
 
 
 def _grid_day(args):
-    ddir, out, sett = args
+    ddir, out, sett, resume = args
     grid = candidates()
     rows = []
     for e, m in markets(ddir):
-        st, lo, hi, entry = evaluate(m, grid, sett.get(e))
+        st, lo, hi, entry = evaluate(m, grid, sett.get(e), resume=resume)
         rows.append((e, st, lo, hi, entry))
     if not rows:
         return ddir.name, 0
@@ -426,11 +445,12 @@ def cmd_grid(a):
                 "settlements": len(sett),
                 "fill": "trade-through quote proxy",
                 "maker_fee": 0,
+                "resume": a.resume,
             },
             indent=0,
         )
     )
-    jobs = [(d, a.out, sett) for d in done_days(a.cache)]
+    jobs = [(d, a.out, sett, a.resume) for d in done_days(a.cache)]
     with Pool(a.workers) as pool:
         for d, k in pool.imap_unordered(_grid_day, jobs):
             print(d, k, flush=True)
@@ -691,6 +711,7 @@ def main():
     p.add_argument("--cache", type=Path, required=True)
     p.add_argument("--days", type=int, default=3)
     p = sp.add_parser("grid")
+    p.add_argument("--resume", action="store_true", help="carry trades through stretches")
     p.add_argument("--cache", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--workers", type=int, default=2)
