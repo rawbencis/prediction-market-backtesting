@@ -305,18 +305,18 @@ def evaluate(m, grid, winner=None, lat=LAT_US, gap=GAP_US, age=AGE_US, size=SIZE
     if n == 0:
         return status, lo, hi, entry
     bid, ask, bsz, asz, upd = m["bid"], m["ask"], m["bsz"], m["asz"], m["upd"]
-    valid = (bid >= 0).all(1)
-    fresh = ((t[:, None] - m["seen"]) <= age).all(1)
-    good = valid & fresh
+    gs = (bid >= 0) & ((t[:, None] - m["seen"]) <= age)  # per-side good quote
+    good = gs.all(1)  # trigger needs both books
     gapi = np.diff(t, prepend=t[0]) > gap
     gapi[0] = t[0] > gap
-    # a transient invalid/stale tick is skipped; censor only when no good quote for > age
-    lastg = np.maximum.accumulate(np.where(good, t, np.iinfo(np.int64).min // 2))
-    bad = np.flatnonzero(gapi | (~good & (t - lastg > age) & (t > age)))
+    # censoring looks only at the traded side; a transient invalid tick is skipped
+    lastg = np.maximum.accumulate(np.where(gs, t[:, None], np.iinfo(np.int64).min // 2), 0)
+    badm = gapi[:, None] | (~gs & (t[:, None] - lastg > age) & (t[:, None] > age))
+    bad = [np.flatnonzero(badm[:, k]) for k in (0, 1)]
     tail_bad = MKT_US - t[-1] > gap
     msum = bid + ask  # 2*mid in milli
     okc = np.r_[False, good[1:] & good[:-1] & ~gapi[1:] & (t[1:] <= TRIG_MAX_US)]
-    usable = good & ~gapi
+    usable = gs & ~gapi[:, None]
     ent = {}
     ext = {}
     trig = {}
@@ -333,14 +333,14 @@ def evaluate(m, grid, winner=None, lat=LAT_US, gap=GAP_US, age=AGE_US, size=SIZE
     def eidx(sd, b):
         if (sd, b) not in ent:
             ent[sd, b] = np.flatnonzero(
-                upd[:, sd] & usable & (ask[:, sd] < b) & (asz[:, sd] >= size)
+                upd[:, sd] & usable[:, sd] & (ask[:, sd] < b) & (asz[:, sd] >= size)
             )
         return ent[sd, b]
 
     def xidx(sd, s):
         if (sd, s) not in ext:
             ext[sd, s] = np.flatnonzero(
-                upd[:, sd] & usable & (bid[:, sd] > s) & (bsz[:, sd] >= size)
+                upd[:, sd] & usable[:, sd] & (bid[:, sd] > s) & (bsz[:, sd] >= size)
             )
         return ext[sd, s]
 
@@ -353,7 +353,7 @@ def evaluate(m, grid, winner=None, lat=LAT_US, gap=GAP_US, age=AGE_US, size=SIZE
         T = t[ti]
         W = None if winner is None else float(winner == sd)
         B, S = b / 1000, s / 1000
-        fb = _first(bad, ti + 1)
+        fb = _first(bad[sd], ti + 1)
         j = _first(eidx(sd, b), max(ti + 1, int(np.searchsorted(t, T + lat))))
         xi = int(np.searchsorted(t, T + ttl * 1_000_000))
         xi = max(xi, ti + 1)
@@ -377,7 +377,7 @@ def evaluate(m, grid, winner=None, lat=LAT_US, gap=GAP_US, age=AGE_US, size=SIZE
             continue
         entry[ci] = t[j]
         k = _first(xidx(sd, s), max(j + 1, int(np.searchsorted(t, t[j] + lat))))
-        fb2 = _first(bad, j + 1)
+        fb2 = _first(bad[sd], j + 1)
         k = k if k < n else BIG
         held = [W - B] if W is not None else [-B, 1 - B]
         if (fb2 <= k and fb2 < BIG) or (k == BIG and tail_bad):
@@ -473,14 +473,19 @@ def cmd_diag(a):
 # ---------------------------------------------------------------- walk-forward
 
 
-def day_stats(z):
-    lo = z["lo"].astype(float)  # (markets, cands), markets in time order
-    o = np.argsort(z["epochs"])
-    lo = lo[o]
-    eq = np.cumsum(lo, 0)
-    dd = (np.maximum.accumulate(np.vstack([np.zeros((1, lo.shape[1])), eq]), 0)[1:] - eq).max(0)
+def day_stats(z, use_obs=False):
+    o = np.argsort(z["epochs"])  # markets in time order
+    lo = z["lo"].astype(float)[o]
+    cens = z["status"][o] >= CENS_PEND
+    obs = np.where(cens, 0.0, lo)  # censored trades excluded (assumes censoring uninformative)
+    x = obs if use_obs else lo
+    eq = np.cumsum(x, 0)
+    dd = (np.maximum.accumulate(np.vstack([np.zeros((1, x.shape[1])), eq]), 0)[1:] - eq).max(0)
     return {
         "pnl": eq[-1],
+        "lo": lo.sum(0),
+        "obs": obs.sum(0),
+        "cens": cens.sum(0),
         "hi": z["hi"].astype(float).sum(0),
         "score": eq[-1] - 0.5 * dd,
         "n": z["entered"].sum(0),
@@ -520,13 +525,16 @@ def cmd_wf(a):
     grid = [tuple(c) for c in json.loads((a.out / "grid.json").read_text())["candidates"]]
     days, st = [], []
     for f in sorted(a.out.glob("????-??-??.npz")):
-        s = day_stats(np.load(f))
+        s = day_stats(np.load(f), a.score == "obs")
         if s["markets"] >= a.min_markets:
             days.append(f.stem)
             st.append(s)
     S = np.array([s["score"] for s in st])
     P = np.array([s["pnl"] for s in st])
     H = np.array([s["hi"] for s in st])
+    L = np.array([s["lo"] for s in st])
+    O = np.array([s["obs"] for s in st])
+    C = np.array([s["cens"] for s in st])
     N = np.array([s["n"] for s in st])
     nd, w = len(days), a.train_days + a.validation_days
     if nd < w + a.holdout_days + 1:
@@ -555,11 +563,16 @@ def cmd_wf(a):
                 "day": days[i],
                 "phase": "holdout" if i >= h0 else "dev_oos",
                 "params": c,
-                "lo": 0.0 if sel is None else P[i, sel],
+                "lo": 0.0 if sel is None else L[i, sel],
+                "obs": 0.0 if sel is None else O[i, sel],
                 "hi": 0.0 if sel is None else H[i, sel],
                 "entries": 0 if sel is None else int(N[i, sel]),
-                "prior_lo": P[i, grid.index(PRIOR)],
+                "censored": 0 if sel is None else int(C[i, sel]),
+                "prior_lo": L[i, grid.index(PRIOR)],
+                "prior_obs": O[i, grid.index(PRIOR)],
+                "prior_hi": H[i, grid.index(PRIOR)],
                 "prior_n": int(N[i, grid.index(PRIOR)]),
+                "prior_censored": int(C[i, grid.index(PRIOR)]),
             }
         )
     rng = np.random.default_rng(0)
@@ -574,7 +587,7 @@ def cmd_wf(a):
             "ci90_mean_day": [float(np.percentile(bs, 5)), float(np.percentile(bs, 95))],
             "trades": int(sum(r[nkey] for r in rows)),
             "pnl_per_trade": float(v.sum() / max(1, sum(r[nkey] for r in rows))),
-            "cash_days": sum(r.get("params", 1) is None for r in rows) if key == "lo" else 0,
+            "cash_days": sum(r.get("params", 1) is None for r in rows),
         }
 
     dev = [r for r in daily if r["phase"] == "dev_oos"]
@@ -584,14 +597,24 @@ def cmd_wf(a):
         "usable_days": days,
         "holdout_start": days[h0],
         "frozen": None if frozen is None else grid[frozen],
+        "score_mode": a.score,
         "dev_oos": summ(dev),
+        "dev_oos_obs": summ(dev, "obs"),
+        "dev_oos_hi": summ(dev, "hi"),
         "holdout": summ(ho),
+        "holdout_obs": summ(ho, "obs"),
+        "holdout_hi": summ(ho, "hi"),
         "prior_fixed_dev": summ(dev, "prior_lo", "prior_n"),
+        "prior_fixed_dev_obs": summ(dev, "prior_obs", "prior_n"),
+        "prior_fixed_dev_hi": summ(dev, "prior_hi", "prior_n"),
         "prior_fixed_holdout": summ(ho, "prior_lo", "prior_n"),
+        "prior_fixed_holdout_obs": summ(ho, "prior_obs", "prior_n"),
+        "prior_fixed_holdout_hi": summ(ho, "prior_hi", "prior_n"),
         "selection_counts": {
             str(None if k is None else grid[k]): v for k, v in picks.most_common()
         },
-        "holdout_grid_share_positive": float((P[hold].sum(0) > 0).mean()),
+        "holdout_grid_share_positive": float((L[hold].sum(0) > 0).mean()),
+        "holdout_grid_share_positive_obs": float((O[hold].sum(0) > 0).mean()),
         "execution": "QUOTE_PROXY trade-through, latency 250ms, maker fee 0",
     }
     pi = grid.index(PRIOR)
@@ -615,17 +638,33 @@ def cmd_wf(a):
     with (a.out / "dev_in_sample_top25.csv").open("w", newline="") as f:
         wr = csv.writer(f)
         wr.writerow(
-            ["x", "b", "s", "ttl", "dev_pnl", "dev_hi", "trades", "pos_day_share", "holdout_pnl"]
+            [
+                "x",
+                "b",
+                "s",
+                "ttl",
+                "dev_lo",
+                "dev_obs",
+                "dev_hi",
+                "trades",
+                "censored",
+                "pos_day_share",
+                "holdout_lo",
+                "holdout_obs",
+            ]
         )
         for k in top:
             wr.writerow(
                 [
                     *grid[k],
-                    round(P[dv, k].sum(), 3),
+                    round(L[dv, k].sum(), 3),
+                    round(O[dv, k].sum(), 3),
                     round(H[dv, k].sum(), 3),
                     int(N[dv, k].sum()),
+                    int(C[dv, k].sum()),
                     round(float((P[dv, k] > 0).mean()), 3),
-                    round(P[hold, k].sum(), 3),
+                    round(L[hold, k].sum(), 3),
+                    round(O[hold, k].sum(), 3),
                 ]
             )
     with (a.out / "daily_oos.csv").open("w", newline="") as f:
@@ -663,6 +702,7 @@ def main():
     p.add_argument("--min-entries", type=int, default=30)
     p.add_argument("--top-k", type=int, default=20)
     p.add_argument("--min-markets", type=int, default=250)
+    p.add_argument("--score", choices=("lo", "obs"), default="lo")
     a = ap.parse_args()
     {"prep": cmd_prep, "settle": cmd_settle, "diag": cmd_diag, "grid": cmd_grid, "wf": cmd_wf}[
         a.cmd

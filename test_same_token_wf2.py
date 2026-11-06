@@ -14,17 +14,15 @@ def reference(m, c, winner, lat=wf.LAT_US, gap=wf.GAP_US, age=wf.AGE_US, size=wf
     n = len(t)
     if n == 0:
         return wf.FLAT, 0.0, 0.0
-    good = [
-        (m["bid"][i] >= 0).all() and all(t[i] - m["seen"][i, k] <= age for k in (0, 1))
-        for i in range(n)
-    ]
+    gs = [[m["bid"][i, k] >= 0 and t[i] - m["seen"][i, k] <= age for k in (0, 1)] for i in range(n)]
+    good = [all(g) for g in gs]
     st, side, T, te = "wait", None, None, None
-    last_good = -(10**18)
+    last_good = [-(10**18)] * 2
     for i in range(n):
         g = t[i] - t[i - 1] > gap if i else t[0] > gap
-        if good[i]:
-            last_good = t[i]
-        bad = g or (not good[i] and t[i] - last_good > age and t[i] > age)
+        for k in (0, 1):
+            if gs[i][k]:
+                last_good[k] = t[i]
         if st == "wait":
             if i and good[i] and good[i - 1] and not g and t[i] <= wf.TRIG_MAX_US:
                 ms0 = m["bid"][i - 1] + m["ask"][i - 1]
@@ -36,12 +34,12 @@ def reference(m, c, winner, lat=wf.LAT_US, gap=wf.GAP_US, age=wf.AGE_US, size=wf
                     st, side, T = "pend", cr[0], t[i]
                     W = None if winner is None else float(winner == side)
             continue
-        if bad:
+        if g or (not gs[i][side] and t[i] - last_good[side] > age and t[i] > age):
             st = "cpend" if st == "pend" else "cpos"
             break
         if st == "pend" and t[i] >= T + ttl * 1_000_000:
             return wf.EXPIRED, 0.0, 0.0
-        if not good[i] or not m["upd"][i, side]:
+        if not gs[i][side] or not m["upd"][i, side]:
             continue
         if st == "pend" and t[i] >= T + lat and m["ask"][i, side] < b and m["asz"][i, side] >= size:
             st, te = "pos", t[i]
@@ -156,6 +154,9 @@ class TestWF2(unittest.TestCase):
         mm = m(rows)
         mm["bid"][3:6, 0] = mm["ask"][3:6, 0] = -1
         self.assertEqual(wf.evaluate(mm, c)[0][0], wf.CENS_POS)
+        mm = m(rows)
+        mm["bid"][3:6, 1] = mm["ask"][3:6, 1] = -1  # other token's book invalid: no censor
+        self.assertEqual(wf.evaluate(mm, c)[0][0], wf.EXITED)
         # gap while waiting is not a loss
         st, lo, _, _ = wf.evaluate(m([(1, 500, 520), (20, 510, 530)] + tail), c)
         self.assertEqual((st[0], lo[0]), (wf.FLAT, 0.0))
