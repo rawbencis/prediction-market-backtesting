@@ -19,9 +19,12 @@ def reference(m, c, winner, lat=wf.LAT_US, gap=wf.GAP_US, age=wf.AGE_US, size=wf
         for i in range(n)
     ]
     st, side, T, te = "wait", None, None, None
+    last_good = -(10**18)
     for i in range(n):
         g = t[i] - t[i - 1] > gap if i else t[0] > gap
-        bad = g or (not good[i] and t[i] > age)
+        if good[i]:
+            last_good = t[i]
+        bad = g or (not good[i] and t[i] - last_good > age and t[i] > age)
         if st == "wait":
             if i and good[i] and good[i - 1] and not g and t[i] <= wf.TRIG_MAX_US:
                 ms0 = m["bid"][i - 1] + m["ask"][i - 1]
@@ -120,7 +123,7 @@ class TestWF2(unittest.TestCase):
 
     def test_roundtrip_and_settlement(self):
         def m(rows):
-            t = np.array([r[0] for r in rows], np.int64) * 1_000_000
+            t = np.rint(np.array([r[0] for r in rows]) * 1e6).astype(np.int64)
             n = len(t)
             bid = np.array([[r[1], 100] for r in rows], np.int32)
             ask = np.array([[r[2], 120] for r in rows], np.int32)
@@ -144,6 +147,15 @@ class TestWF2(unittest.TestCase):
         self.assertEqual((st[0], lo[0]), (wf.SETTLED, 0.7 * wf.SIZE))
         st, _, _, _ = wf.evaluate(m(base + tail), c, winner=None)
         self.assertEqual(st[0], wf.UNSETTLED)
+        # one invalid tick after the trigger does not censor; a >2s invalid stretch does
+        rows = base + [(3.5, -1, -1), (4, 710, 730)] + tail
+        mm = m([r if r[1] >= 0 else (r[0], 700, 720) for r in rows])
+        mm["bid"][3, 0] = mm["ask"][3, 0] = -1
+        self.assertEqual(wf.evaluate(mm, c)[0][0], wf.EXITED)
+        rows = [*base, (3.5, 0, 0), (4.5, 0, 0), (6.0, 0, 0), (6.5, 710, 730), *tail]
+        mm = m(rows)
+        mm["bid"][3:6, 0] = mm["ask"][3:6, 0] = -1
+        self.assertEqual(wf.evaluate(mm, c)[0][0], wf.CENS_POS)
         # gap while waiting is not a loss
         st, lo, _, _ = wf.evaluate(m([(1, 500, 520), (20, 510, 530)] + tail), c)
         self.assertEqual((st[0], lo[0]), (wf.FLAT, 0.0))

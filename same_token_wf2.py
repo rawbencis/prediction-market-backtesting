@@ -310,7 +310,9 @@ def evaluate(m, grid, winner=None, lat=LAT_US, gap=GAP_US, age=AGE_US, size=SIZE
     good = valid & fresh
     gapi = np.diff(t, prepend=t[0]) > gap
     gapi[0] = t[0] > gap
-    bad = np.flatnonzero(gapi | (~good & (t > age)))
+    # a transient invalid/stale tick is skipped; censor only when no good quote for > age
+    lastg = np.maximum.accumulate(np.where(good, t, np.iinfo(np.int64).min // 2))
+    bad = np.flatnonzero(gapi | (~good & (t - lastg > age) & (t > age)))
     tail_bad = MKT_US - t[-1] > gap
     msum = bid + ask  # 2*mid in milli
     okc = np.r_[False, good[1:] & good[:-1] & ~gapi[1:] & (t[1:] <= TRIG_MAX_US)]
@@ -432,6 +434,40 @@ def cmd_grid(a):
     with Pool(a.workers) as pool:
         for d, k in pool.imap_unordered(_grid_day, jobs):
             print(d, k, flush=True)
+
+
+def cmd_diag(a):
+    """Invalid/stale stretch lengths and recorder gaps on a sample of cached days."""
+    stretch, gaps, inval, ev = [], [], 0, 0
+    for ddir in done_days(a.cache)[: a.days]:
+        for _, m in markets(ddir):
+            t = m["t"]
+            if len(t) < 2:
+                continue
+            good = (m["bid"] >= 0).all(1) & ((t[:, None] - m["seen"]) <= AGE_US).all(1)
+            ev += len(t)
+            inval += int((~good).sum())
+            d = np.diff(np.r_[0, (~good).astype(np.int8), 0])
+            s0, s1 = np.flatnonzero(d == 1), np.flatnonzero(d == -1)
+            end = np.r_[t, MKT_US][s1]  # time of next good event (or market end)
+            stretch += list((end - t[s0]) / 1e6)
+            gaps += list(np.diff(t)[np.diff(t) > GAP_US] / 1e6)
+    q = [50, 90, 99, 99.9]
+    st = np.array(stretch) if stretch else np.zeros(1)
+    print(
+        json.dumps(
+            {
+                "events": ev,
+                "bad_event_share": round(inval / max(ev, 1), 4),
+                "bad_stretches": len(stretch),
+                "bad_stretch_s_pct": dict(zip(map(str, q), np.percentile(st, q).round(3).tolist())),
+                "bad_stretches_over_age": int((st > AGE_US / 1e6).sum()),
+                "recorder_gaps_over_5s": len(gaps),
+                "gap_s_max": max(gaps, default=0),
+            },
+            indent=1,
+        )
+    )
 
 
 # ---------------------------------------------------------------- walk-forward
@@ -558,6 +594,14 @@ def cmd_wf(a):
         "holdout_grid_share_positive": float((P[hold].sum(0) > 0).mean()),
         "execution": "QUOTE_PROXY trade-through, latency 250ms, maker fee 0",
     }
+    pi = grid.index(PRIOR)
+    summary["prior_status_all_days"] = dict(
+        Counter(STATUS[x] for s_ in st for x in s_["status"][:, pi])
+    )
+    allc = np.bincount(np.concatenate([s_["status"].ravel() for s_ in st]), minlength=8)
+    summary["status_share_all_candidates"] = {
+        STATUS[k]: round(float(v / allc.sum()), 4) for k, v in enumerate(allc)
+    }
     if frozen is not None:
         summary["frozen_neighbours_holdout"] = {
             str(grid[k]): float(P[hold, k].sum()) for k in neighbours(grid, grid[frozen])
@@ -604,6 +648,9 @@ def main():
     p.add_argument("--force", action="store_true")
     p = sp.add_parser("settle")
     p.add_argument("--cache", type=Path, required=True)
+    p = sp.add_parser("diag")
+    p.add_argument("--cache", type=Path, required=True)
+    p.add_argument("--days", type=int, default=3)
     p = sp.add_parser("grid")
     p.add_argument("--cache", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
@@ -617,7 +664,9 @@ def main():
     p.add_argument("--top-k", type=int, default=20)
     p.add_argument("--min-markets", type=int, default=250)
     a = ap.parse_args()
-    {"prep": cmd_prep, "settle": cmd_settle, "grid": cmd_grid, "wf": cmd_wf}[a.cmd](a)
+    {"prep": cmd_prep, "settle": cmd_settle, "diag": cmd_diag, "grid": cmd_grid, "wf": cmd_wf}[
+        a.cmd
+    ](a)
 
 
 if __name__ == "__main__":
