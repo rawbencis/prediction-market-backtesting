@@ -4,8 +4,10 @@ fetch: Binance public 1s BTCUSDT spot klines (data.binance.vision) for the cache
 snap:  every SNAP_S seconds per market: Polymarket UP mid (last valid quote), BTC features known
        at that instant (last COMPLETED 1s kline), winner.
 eval:  rolling walk-forward logistic models refit per day on the previous TRAIN days:
-         A = Polymarket price only, B = A + BTC features. Out-of-sample log-loss / Brier by time
-       left, plus a diagnostic taker test (buy the side whose model prob exceeds ask + fee + theta).
+         A = Polymarket price only, B = A + BTC features, C = A + the token's own price momentum
+       (log-odds change over 5/15/30/60 s). Out-of-sample log-loss / Brier by time left, a
+       diagnostic model taker test, and a plain taker TREND rule: buy the side whose mid rose more
+       than delta over the last h seconds, hold to settlement, after fees.
 """
 
 import argparse
@@ -106,6 +108,14 @@ def snapshots(e, m, btc, winner):
         if f is None:
             continue
         mid = (m["bid"][i, 0] + m["ask"][i, 0]) / 2000
+        past = {}
+        for h in MOM_S:  # UP mid h seconds earlier (last fresh valid quote), NaN if none
+            tp = (s - h) * 1_000_000
+            kp = np.searchsorted(t[use], tp, "right") - 1
+            ok = tp >= 0 and kp >= 0 and tp - t[use[kp]] <= wf.AGE_US
+            past[f"mid_{h}"] = (
+                (m["bid"][use[kp], 0] + m["ask"][use[kp], 0]) / 2000 if ok else np.nan
+            )
         rows.append(
             {
                 "epoch": e,
@@ -115,6 +125,7 @@ def snapshots(e, m, btc, winner):
                 "ask_dn": m["ask"][i, 1] / 1000,
                 "up_won": int(winner == 0),
                 **f,
+                **past,
             }
         )
     return rows
@@ -150,13 +161,18 @@ def logit(p):
     return np.log(p / (1 - p))
 
 
-def design(df, btc):
+def design(df, btc=False, own=False):
     tau = (300 - df["s"].to_numpy()) / 300
     lm = logit(df["mid"].to_numpy())
     cols = [np.ones(len(df)), lm, lm * tau]
     if btc:
         z = np.clip(df["z"].to_numpy(), -8, 8)
         cols += [z, z * tau] + [np.clip(df[f"m{h}"].to_numpy(), -8, 8) for h in MOM_S]
+    if own:  # log-odds change of the UP mid over h seconds (0 when unknown) + availability flag
+        for h in MOM_S:
+            past = df[f"mid_{h}"].to_numpy(float)
+            d = np.where(np.isnan(past), 0.0, lm - logit(np.nan_to_num(past, nan=0.5)))
+            cols += [np.clip(d, -6, 6), np.clip(d, -6, 6) * tau, np.isnan(past).astype(float)]
     return np.column_stack(cols)
 
 
@@ -185,9 +201,9 @@ def cmd_eval(a):
         tr = df[df.day.isin(days[i - a.train_days : i])]
         te = df[df.day == days[i]].copy()
         y = tr["up_won"].to_numpy(float)
-        for name, btc in (("A", False), ("B", True)):
-            w = fit_logistic(design(tr, btc), y)
-            te[f"p{name}"] = predict(design(te, btc), w)
+        for name, kw in (("A", {}), ("B", {"btc": True}), ("C", {"own": True})):
+            w = fit_logistic(design(tr, **kw), y)
+            te[f"p{name}"] = predict(design(te, **kw), w)
         preds.append(te)
     p = pd.concat(preds)
     hold = days[-a.holdout_days]
@@ -198,8 +214,8 @@ def cmd_eval(a):
         q = np.clip(q, 1e-6, 1 - 1e-6)
         return -(y * np.log(q) + (1 - y) * np.log(1 - q))
 
-    p["ll_mid"], p["llA"], p["llB"] = ll(p["mid"]), ll(p["pA"]), ll(p["pB"])
-    p["br_mid"], p["brA"], p["brB"] = [(p[c] - y) ** 2 for c in ("mid", "pA", "pB")]
+    p["ll_mid"], p["llA"], p["llB"], p["llC"] = (ll(p[c]) for c in ("mid", "pA", "pB", "pC"))
+    p["br_mid"], p["brA"], p["brB"], p["brC"] = ((p[c] - y) ** 2 for c in ("mid", "pA", "pB", "pC"))
     p["bucket"] = pd.cut(
         p["s"],
         [0, 60, 120, 180, 240, 300],
@@ -207,49 +223,35 @@ def cmd_eval(a):
         labels=["0-60", "60-120", "120-180", "180-240", "240-300"],
     )
 
-    def gain_ci(g):
-        # B vs A log-loss improvement per snapshot, CI by resampling days
-        d = g.groupby("day").apply(lambda x: (x.llA - x.llB).sum()).to_numpy()
+    def gain_ci(g, m):
+        # model m vs A log-loss improvement per snapshot, CI by resampling days
+        d = g.groupby("day").apply(lambda x: (x.llA - x[f"ll{m}"]).sum()).to_numpy()
         n = g.groupby("day").size().to_numpy()
         rng = np.random.default_rng(0)
         b = [d[ix].sum() / n[ix].sum() for ix in rng.integers(0, len(d), (2000, len(d)))]
         return d.sum() / n.sum(), np.percentile(b, 5), np.percentile(b, 95)
 
-    rows = []
-    for (ph, bk), g in p.groupby(["phase", "bucket"], observed=True):
-        gm, lo, hi = gain_ci(g)
-        rows.append(
-            {
-                "phase": ph,
-                "secs_in": bk,
-                "n": len(g),
-                "ll_mid": round(g.ll_mid.mean(), 4),
-                "ll_A": round(g.llA.mean(), 4),
-                "ll_B": round(g.llB.mean(), 4),
-                "B_gain": round(gm, 4),
-                "B_gain_ci90": [round(lo, 4), round(hi, 4)],
-                "brier_mid": round(g.br_mid.mean(), 4),
-                "brier_B": round(g.brB.mean(), 4),
-            }
-        )
-    for ph, g in p.groupby("phase"):
-        gm, lo, hi = gain_ci(g)
-        rows.append(
-            {
-                "phase": ph,
-                "secs_in": "ALL",
-                "n": len(g),
-                "ll_mid": round(g.ll_mid.mean(), 4),
-                "ll_A": round(g.llA.mean(), 4),
-                "ll_B": round(g.llB.mean(), 4),
-                "B_gain": round(gm, 4),
-                "B_gain_ci90": [round(lo, 4), round(hi, 4)],
-                "brier_mid": round(g.br_mid.mean(), 4),
-                "brier_B": round(g.brB.mean(), 4),
-            }
-        )
+    def row(ph, bk, g):
+        r = {
+            "phase": ph,
+            "secs_in": bk,
+            "n": len(g),
+            "ll_mid": round(g.ll_mid.mean(), 4),
+            "ll_A": round(g.llA.mean(), 4),
+        }
+        for m in ("B", "C"):
+            gm, lo, hi = gain_ci(g, m)
+            r[f"{m}_gain"] = round(gm, 4)
+            r[f"{m}_ci90"] = [round(lo, 4), round(hi, 4)]
+        return r
+
+    rows = [row(ph, bk, g) for (ph, bk), g in p.groupby(["phase", "bucket"], observed=True)]
+    rows += [row(ph, "ALL", g) for ph, g in p.groupby("phase")]
     t = pd.DataFrame(rows)
-    print("== out-of-sample log-loss (lower is better); B_gain = A minus B per snapshot")
+    print(
+        "== out-of-sample log-loss (lower is better); gain = A minus model, per snapshot "
+        "(B = +BTC, C = +own price momentum)"
+    )
     print(t.to_string(index=False))
 
     # diagnostic taker test: buy UP if pB - ask_up - fee > theta, DOWN if (1-pB) - ask_dn - fee > theta
@@ -285,9 +287,66 @@ def cmd_eval(a):
                 }
             )
     print(pd.DataFrame(out).to_string(index=False))
+
+    # plain taker trend rule on the token's own price, no model
+    print(
+        "\n== taker TREND rule: buy the side whose mid rose > delta over the last h s "
+        "(first qualifying 10 s snapshot per market, ask <= 0.95, hold to settlement, after fee)"
+    )
+    trend = []
+    for h in MOM_S:
+        for delta in (0.05, 0.10, 0.15, 0.20):
+            d = p["mid"] - p[f"mid_{h}"]
+            up, dn = (d > delta) & (p.ask_up <= 0.95), (d < -delta) & (p.ask_dn <= 0.95)
+            fu = a.fee_rate * p.ask_up * (1 - p.ask_up)
+            fd = a.fee_rate * p.ask_dn * (1 - p.ask_dn)
+            sig = p.assign(
+                pnl=np.where(
+                    up, p.up_won - p.ask_up - fu, np.where(dn, 1 - p.up_won - p.ask_dn - fd, np.nan)
+                ),
+                gross=np.where(
+                    up, p.up_won - p.ask_up, np.where(dn, 1 - p.up_won - p.ask_dn, np.nan)
+                ),
+                ask=np.where(up, p.ask_up, np.where(dn, p.ask_dn, np.nan)),
+            )
+            tr = sig.dropna(subset=["pnl"]).sort_values("s").drop_duplicates("epoch")
+            for ph, g in p.groupby("phase"):
+                x = tr[tr.phase == ph]
+                daily = x.groupby("day").pnl.sum().reindex(g.day.unique(), fill_value=0)
+                b = np.random.default_rng(0).choice(daily.to_numpy(), (2000, len(daily))).mean(1)
+                trend.append(
+                    {
+                        "h_s": h,
+                        "delta": delta,
+                        "phase": ph,
+                        "trades": len(x),
+                        "avg_ask": round(x.ask.mean(), 3) if len(x) else 0,
+                        "gross_per_trade": round(x.gross.mean(), 4) if len(x) else 0,
+                        "net_per_trade": round(x.pnl.mean(), 4) if len(x) else 0,
+                        "net_ci90_day": [
+                            round(np.percentile(b, 5), 3),
+                            round(np.percentile(b, 95), 3),
+                        ],
+                    }
+                )
+    tt = pd.DataFrame(trend)
+    print(
+        tt.pivot_table(
+            index=["h_s", "delta"],
+            columns="phase",
+            values=["trades", "gross_per_trade", "net_per_trade"],
+        ).to_string()
+    )
+    pos = tt[tt.phase == "dev"].sort_values("net_per_trade", ascending=False).head(1)
+    if len(pos):
+        h, dl = int(pos.h_s.iloc[0]), float(pos.delta.iloc[0])
+        print(
+            f"best rule before the holdout: h={h}s delta={dl} -> holdout:",
+            tt[(tt.phase == "holdout") & (tt.h_s == h) & (tt.delta == dl)].to_dict("records"),
+        )
     p.to_csv(a.snaps.with_name("overlay_oos_predictions.csv"), index=False)
     (a.snaps.with_name("overlay_eval.json")).write_text(
-        json.dumps({"loglik": rows, "taker": out}, indent=1, default=str)
+        json.dumps({"loglik": rows, "taker": out, "trend": trend}, indent=1, default=str)
     )
 
 
