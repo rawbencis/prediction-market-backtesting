@@ -111,6 +111,21 @@ class TestEntries(unittest.TestCase):
         self.assertAlmostEqual(ll.fee(0.5, 0.07), 0.0175)
 
 
+class TestEmptyMarket(unittest.TestCase):
+    def test_no_events_skipped(self):
+        m = {"t": np.zeros(0, np.int64), "bid": np.zeros((0, 2), np.int32),
+             "ask": np.zeros((0, 2), np.int32), "bsz": np.zeros((0, 2), np.float32),
+             "asz": np.zeros((0, 2), np.float32), "upd": np.zeros((0, 2), bool),
+             "seen": np.zeros((0, 2), np.int64)}
+        b = ll.Btc.__new__(ll.Btc)
+        b.g, b.t0, b.res = 60000 * np.exp(np.cumsum(np.full(2 * 86400, 1e-6))), ll.day_ms(D0), 1000
+        ep = (ll.day_ms(D0) + 86400_000) // 1000 + 3600
+        mk, R, xc = ll.market_rows(m, ep, 0, b, 1800, 1000)
+        self.assertIsNone(R)
+        self.assertEqual(mk[0], ep)
+        self.assertTrue(np.isnan(ll.book(m, [1, 2])[0]).all())
+
+
 class TestWalkForward(unittest.TestCase):
     def test_past_only_and_cash(self):
         days = ["d0", "d1", "d2", "d3", "d4"]

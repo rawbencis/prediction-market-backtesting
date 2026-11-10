@@ -171,6 +171,9 @@ def cmd_btc(a):
 def book(m, q, age=wf.AGE_US):
     """Book state at query times q (us from open) -> bid, ask, bsz, asz (n,2) in $, NaN if not fresh."""
     q = np.asarray(q, np.int64)
+    if not len(m["t"]):  # market with no book events: everything stale
+        nan = np.full((len(q), 2), np.nan)
+        return nan, nan, nan, nan
     i = np.searchsorted(m["t"], q, "right") - 1
     ii = np.maximum(i, 0)
     ok = (
@@ -226,7 +229,7 @@ def market_rows(m, epoch, w, btc, vol_win, res):
     s0, se = btc.at(e), btc.at(e + 300_000)
     sig = btc.sigma(e, vol_win)
     mk = (epoch, -1 if w is None else w, s0, se, btc.twap(e), sig)
-    if not (np.isfinite(s0) and np.isfinite(sig) and sig > 0):
+    if not len(m["t"]) or not (np.isfinite(s0) and np.isfinite(sig) and sig > 0):
         return mk, None, None
     ts = np.arange(*T_ROWS, 1.0)
     q = np.rint(ts * 1e6).astype(np.int64)
@@ -263,10 +266,11 @@ def _extract_day(args):
     ddir, out, gdir, res, sett, vol_win = args
     btc = Btc(gdir, ddir.name, res)
     mks, rows, xc = [], {c: [] for c in COLS}, 0
-    ep = []
+    ep, empty = [], 0
     for epoch, m in wf.markets(ddir):
         mk, R, x = market_rows(m, epoch, sett.get(epoch), btc, vol_win, res)
         mks.append(mk)
+        empty += not len(m["t"])
         if R is None:
             continue
         ep.append(np.full(len(R["t"]), epoch, np.int64))
@@ -274,7 +278,7 @@ def _extract_day(args):
             rows[c].append(np.asarray(R[c], np.float32))
         xc = xc + x
     if not ep:
-        return ddir.name, 0
+        return ddir.name, f"0 markets with rows, {empty} empty"
     tmp = out / f".{ddir.name}.tmp"
     with tmp.open("wb") as fh:
         np.savez(
@@ -285,7 +289,7 @@ def _extract_day(args):
             **{c: np.concatenate(v) for c, v in rows.items()},
         )
     tmp.replace(out / f"{ddir.name}.npz")
-    return ddir.name, len(mks)
+    return ddir.name, f"{len(mks)} markets, {len(ep)} with rows, {empty} empty"
 
 
 def cmd_extract(a):
@@ -483,12 +487,16 @@ def cmd_stats(a):
         x = sum(XC[d] for d in ds)
         return x[:, 0] / np.sqrt(x[:, 1] * x[:, 2])
 
+    def peak(c):
+        return float(lags[np.nanargmax(c)]) if np.isfinite(c).any() else None
+
     for name, ds in (("dev", dev), ("holdout", hold)):
         c = prof(ds)
-        S[f"xcorr_{name}"] = {"peak_lag_s": float(lags[np.nanargmax(c)]),
+        S[f"xcorr_{name}"] = {"peak_lag_s": peak(c),
                               "corr": {f"{lg:+.1f}": round(float(v), 4)
                                        for lg, v in zip(lags, c) if abs(lg) <= 2}}
-    S["xcorr_peak_lag_by_day"] = {d: float(lags[np.nanargmax(prof([d]))]) for d in days}
+    with np.errstate(invalid="ignore", divide="ignore"):
+        S["xcorr_peak_lag_by_day"] = {d: peak(prof([d])) for d in days}
 
     # pass 2: per day, gap closure + every trade config's daily pnl
     C = cfgs()
