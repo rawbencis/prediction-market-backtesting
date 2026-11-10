@@ -127,7 +127,7 @@ class Units(unittest.TestCase):
         ci = xp.PRE
         # A_UP ask 400, B_UP bid 500 -> o=0 cost 400+500 = 900, fees 16.8+17.5 -> 934.3 <= 950
         ga, gb = flat_grid(bu=390, au=400), flat_grid(bu=500, au=510)
-        snap, hist, trig = xp.pair_day(ga, gb, np.array([1]), np.array([0]))
+        snap, hist, trig, _ = xp.pair_day(ga, gb, np.array([1]), np.array([0]))
         r = trig[0, ci]
         self.assertEqual((r[0], r[1], r[2]), (1, 0, 5.0))
         self.assertAlmostEqual(r[3], 934.3, places=1)
@@ -206,6 +206,27 @@ class Units(unittest.TestCase):
         finally:
             xp.wf.load_market = orig
             shutil.rmtree(root)
+
+    def test_maker_pair(self):
+        ci = xp.MK_PRE
+        # A_UP 390/400, B_UP 500/510 -> B_DOWN 490/500: mid cost 395 + 495 = 890 <= 950, orientation 0, trigger at 10.0 s
+        ga, gb = flat_grid(bu=390, au=400), flat_grid(bu=500, au=510)
+        ga["bU"][0, 50:], ga["aU"][0, 50:] = 375, 385  # A_UP ask 385 < 390 -> A bid fills
+        gb2 = {k: v.copy() for k, v in gb.items()}
+        gb2["bU"][0, 60:], gb2["aU"][0, 60:] = 515, 525  # B_DOWN ask 485 < 490 -> B bid fills
+        mk = xp.pair_day(ga, gb2, np.array([1]), np.array([0]))[3][0, ci]
+        self.assertEqual((mk[0], mk[4]), (1, 10.0))
+        self.assertAlmostEqual(mk[1], 110, places=3)
+        self.assertAlmostEqual(mk[2], 2000 - 390 - 490, places=3)
+        self.assertAlmostEqual(mk[3], mk[2], places=3)
+        # only the A leg fills; both down -> A_UP orphan loses 390 if held; completing B_DOWN at ask 500 + fee pays $1
+        mk = xp.pair_day(ga, gb, np.array([0]), np.array([0]))[3][0, ci]
+        self.assertEqual(mk[0], 2)
+        self.assertAlmostEqual(mk[2], -390, places=3)
+        self.assertAlmostEqual(mk[3], 1000 - 390 - 500 - xp.fee(500), places=3)
+        # outside 10-90 s nothing is posted
+        g0 = flat_grid(bu=490, au=500)
+        self.assertEqual(xp.pair_day(g0, gb, np.array([0]), np.array([0]))[3][0, ci, 0], -1)
 
     def test_walk_cash_on_noise(self):
         days = [f"2026-06-{d:02d}" for d in range(1, 31)] + [f"2026-07-{d:02d}" for d in range(1, 32)]

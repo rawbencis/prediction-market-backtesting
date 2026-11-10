@@ -48,6 +48,12 @@ TGT = (30, 60, 100)  # convergence exit target, milli (plus hold-to-settlement)
 CFG = [(m, w) for m in M for w in range(len(WIN))]
 VAR = ("hold",) + tuple(f"x{t}" for t in TGT)
 PRE = CFG.index((50, 0))  # pre-registered: 5c net discount, any time 5-290 s, hold
+# two-legged MAKER pair (S7): post both bids when the pair's MID cost <= 1000-m; fee 0, rebates ignored
+MK_M = (50, 100)
+MK_WIN = ((10, 90), (5, 290))
+MK_TTL = (10, 30, 60)
+MK_CFG = [(m, w, ttl, imp, fm) for m in MK_M for w in range(len(MK_WIN)) for ttl in MK_TTL for imp in (0, 10) for fm in (0, 1)]
+MK_PRE = MK_CFG.index((50, 0, 30, 0, 0))  # pre-registered: mid cost<=950, 10-90 s, ttl 30, no improve, trade-through
 HOLDOUT = "2026-07-19"
 INCIDENT = ("2026-06-01", "2026-06-02", "2026-06-03")  # desynced-quote burst seen in pair_gap_scan
 DEC = np.array([30, 60, 90, 120, 150, 180, 210, 240, 270])  # underlying decision times, s
@@ -485,7 +491,53 @@ def pair_day(ga, gb, Wa, Wb):
             k1 = np.minimum(k + 1, NG - 1)
             ex = (code == 1) & (k < NG - 1) & take(liq, k1)
             trig[:, ci, 6 + ti] = np.where(ex, take(bnet, k1) - cost, hold)
-    return snap, hist, trig
+    mk = maker_pair(ga, gb, v, (bidA, askA, szA), (bidB, askB, szB), wA, wB)
+    return snap, hist, trig, mk
+
+
+def maker_pair(ga, gb, v, LA, LB, wA, wB):
+    """-> float32 (n, len(MK_CFG), 5): code (-1 none, 0 no fill, 1 both, 2 A only, 3 B only), mid gap at
+    trigger, pnl holding any orphan to settlement, pnl completing the orphan as taker at expiry, trigger s."""
+    (bidA, askA, szA), (bidB, askB, szB) = LA, LB
+    n = v.shape[0]
+    midc = [(bidA[o] + askA[o] + bidB[o] + askB[o]) / 2 for o in (0, 1)]
+    ar = np.arange(NG)[None, :]
+    out = np.zeros((n, len(MK_CFG), 5), np.float32)
+    for ci, (m, wi, ttl, imp, fm) in enumerate(MK_CFG):
+        inw = (GS >= MK_WIN[wi][0]) & (GS < MK_WIN[wi][1])
+        ok = [v & inw & (midc[o] <= 1000 - m) for o in (0, 1)]
+        i_o = [np.where(ok[o].any(1), ok[o].argmax(1), NG) for o in (0, 1)]
+        i = np.minimum(i_o[0], i_o[1])
+        ic = np.minimum(i, NG - 1)
+        o = (i_o[1] < i_o[0]) | ((i_o[1] == i_o[0]) & (take(midc[1], ic) < take(midc[0], ic)))
+        j = np.minimum(ic + 1, NG - 1)
+        okj = (i < NG - 1) & take(v, j)
+        S = lambda P: np.where(o[:, None], P[1], P[0])  # noqa: E731
+        bA, aA, sA, bB, aB, sB = S(bidA), S(askA), S(szA), S(bidB), S(askB), S(szB)
+        px = []
+        for b_, a_ in ((bA, aA), (bB, aB)):
+            p = take(b_, j) + imp
+            px.append(np.where(p < take(a_, j), p, take(b_, j)))
+        hi = np.minimum(j + ttl * 1_000_000 // STEP, NG - 1)
+        win = (ar > j[:, None]) & (ar <= hi[:, None])
+        f = []
+        for a_, s_, g, p in ((aA, sA, ga, px[0]), (aB, sB, gb, px[1])):
+            hit = (a_ <= p[:, None]) if fm else (a_ < p[:, None])
+            q = win & g["v"] & hit & (s_ >= SIZE)
+            f.append(q.any(1) & okj)
+        both, onlyA, onlyB = f[0] & f[1], f[0] & ~f[1], f[1] & ~f[0]
+        wa, wb = np.where(o, wA[1], wA[0]), np.where(o, wB[1], wB[0])
+        pay = 1000.0 * (wa + wb)
+        hold = np.where(both, pay - px[0] - px[1], np.where(onlyA, 1000.0 * wa - px[0], np.where(onlyB, 1000.0 * wb - px[1], 0.0)))
+        e = np.minimum(hi + 1, NG - 1)
+        cA, cB = take(aA, e), take(aB, e)
+        okA = take(ga["v"], e) & (take(sA, e) >= SIZE)
+        okB = take(gb["v"], e) & (take(sB, e) >= SIZE)
+        comp = np.where(onlyA & okB, pay - px[0] - cB - fee(cB), np.where(onlyB & okA, pay - px[1] - cA - fee(cA), hold))
+        out[:, ci, 0] = np.where(~okj, -1, np.where(both, 1, np.where(onlyA, 2, np.where(onlyB, 3, 0))))
+        out[:, ci, 1] = np.where(i < NG, 1000 - take(S(midc), ic), np.nan)
+        out[:, ci, 2], out[:, ci, 3], out[:, ci, 4] = hold, comp, np.where(i < NG, GS[ic], np.nan)
+    return out
 
 
 def load_grid(out, asset, day):
@@ -508,10 +560,10 @@ def _pair_day(args):
     ia, ib = oa[np.searchsorted(ga["epochs"][oa], ep)], ob[np.searchsorted(gb["epochs"][ob], ep)]
     ga, gb = {k: ga[k][ia] for k in GK}, {k: gb[k][ib] for k in GK}
     Wa, Wb = np.array([WA[e] for e in ep]), np.array([WB[e] for e in ep])
-    snap, hist, trig = pair_day(ga, gb, Wa, Wb)
+    snap, hist, trig, mk = pair_day(ga, gb, Wa, Wb)
     d = out / "pairs" / f"{A}-{B}"
     d.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(d / f"{day}.npz", epochs=ep, Wa=Wa, Wb=Wb, snap=snap, hist=hist, trig=trig,
+    np.savez_compressed(d / f"{day}.npz", epochs=ep, Wa=Wa, Wb=Wb, snap=snap, hist=hist, trig=trig, mk=mk,
                         va=np.array([ga["v"].mean(), ga["vm"].mean()]), vb=np.array([gb["v"].mean(), gb["vm"].mean()]))
     return A, B, day, len(ep)
 
@@ -703,7 +755,7 @@ def load_pair(out, name):
     days = np.concatenate([[f.stem] * len(z["epochs"]) for f, z in zip(fs, Z)])
     cat = lambda k: np.concatenate([z[k] for z in Z])  # noqa: E731
     return dict(days=days, udays=[f.stem for f in fs], epochs=cat("epochs"), Wa=cat("Wa"), Wb=cat("Wb"), snap=cat("snap"),
-                trig=cat("trig"), hist=sum(z["hist"] for z in Z), va=np.mean([z["va"] for z in Z], 0), vb=np.mean([z["vb"] for z in Z], 0))
+                trig=cat("trig"), mk=cat("mk") if all("mk" in z for z in Z) else None, hist=sum(z["hist"] for z in Z), va=np.mean([z["va"] for z in Z], 0), vb=np.mean([z["vb"] for z in Z], 0))
 
 
 def calib_rows(Z):
@@ -865,6 +917,52 @@ def cross_market(Z, A, B, P):
     return res
 
 
+def mk_name(ci):
+    m, wi, ttl, imp, fm = MK_CFG[ci]
+    return f"mid<={1000 - m} t{MK_WIN[wi][0]}-{MK_WIN[wi][1]} ttl{ttl} imp{imp} {'touch' if fm else 'thru'}"
+
+
+def rep_maker(Z, P):
+    """S7 two-legged maker pair: both bids rest at best bid; quote-proxy fills on the 250 ms grid."""
+    P("  S7 two-legged MAKER pair (both bids at best bid, fee 0, quote-proxy fills; pnl $ at 5 sh; orphan held or completed as taker):")
+    hold = np.array([d >= HOLDOUT for d in Z["days"]])
+    inc = ~np.isin(Z["days"], INCIDENT)
+    rows = []
+    for ci in range(len(MK_CFG)):
+        X = Z["mk"][:, ci]
+        code = X[:, 0]
+        r = dict(cfg=mk_name(ci), posted=int((code >= 0).sum()))
+        r["both"] = float((code == 1).sum() / max(r["posted"], 1))
+        r["one"] = float((code >= 2).sum() / max(r["posted"], 1))
+        r["gap_mid"] = float(np.nanmean(X[code >= 0, 1])) if r["posted"] else np.nan
+        r["pair_mean_milli"] = float(X[code == 1, 2].mean()) if (code == 1).any() else np.nan
+        r["orphan_hold_milli"] = float(X[code >= 2, 2].mean()) if (code >= 2).any() else np.nan
+        r["orphan_comp_milli"] = float(X[code >= 2, 3].mean()) if (code >= 2).any() else np.nan
+        for j, nm in ((2, "hold"), (3, "comp")):
+            pnl = X[:, j].astype(float) * SIZE / 1000
+            for tag, sel in (("pre", ~hold), ("ho", hold), ("pre_ex", ~hold & inc)):
+                ud, inv = np.unique(Z["days"][sel], return_inverse=True)
+                r[f"{nm}_{tag}"] = boot_sum(np.bincount(inv, pnl[sel])) if len(ud) else (0.0, np.nan, np.nan)
+        rows.append(r)
+
+    def line(r, tag=""):
+        P(f"    {tag}{r['cfg']:<36} posted {r['posted']:>5} both {r['both']:.2f} one {r['one']:.2f} gap@mid {r['gap_mid']:5.1f} | "
+          f"pair {r['pair_mean_milli']:+6.1f}m orphan hold {r['orphan_hold_milli']:+7.1f}m comp {r['orphan_comp_milli']:+7.1f}m | "
+          f"complete: pre ${r['comp_pre'][0]:+8.2f} [{r['comp_pre'][1]:+.2f},{r['comp_pre'][2]:+.2f}] ex-Jun1-3 ${r['comp_pre_ex'][0]:+8.2f} "
+          f"hold-out ${r['comp_ho'][0]:+7.2f} | settle: pre ${r['hold_pre'][0]:+8.2f} hold-out ${r['hold_ho'][0]:+7.2f}")
+
+    line(rows[MK_PRE], "PRE-REGISTERED ")
+    for r in sorted(rows, key=lambda r: -r["comp_pre"][0])[:8]:
+        line(r)
+    act = [r for r in rows if r["posted"]]
+    best = max(act, key=lambda r: r["comp_pre"][0]) if act else None
+    if best is not None:
+        P(f"    best-in-hindsight pre: {best['cfg']} ${best['comp_pre'][0]:+.2f} -> hold-out ${best['comp_ho'][0]:+.2f}; "
+          f"share of {len(act)} configs positive pre {np.mean([r['comp_pre'][0] > 0 for r in act]):.2f}, "
+          f"hold-out {np.mean([r['comp_ho'][0] > 0 for r in act]):.2f} (hold-out = {int(hold.sum())} markets)")
+    return dict(pre_registered=rows[MK_PRE], rows=rows)
+
+
 def rep_pairs(a, R, P):
     P("\n== S3-S6 Polymarket pair tests (250 ms grid, fresh + mirrored books, latency 250 ms, 5 shares, taker fee 0.07*p*(1-p)) ==")
     pd_ = a.out / "pairs"
@@ -925,6 +1023,8 @@ def rep_pairs(a, R, P):
               f"share of grid positive in holdout {w['grid_share_positive_hold']:.2f}; best-in-hindsight pre {strat_name(bh['strategy'])} ${bh['pre_usd']:+.2f} -> holdout ${bh['hold_usd']:+.2f}")
         P("  S6 cross-market efficiency (walk-forward logistic on 10 s snapshots):")
         res["cross"] = cross_market(Z, A, B, P)
+        if Z["mk"] is not None:
+            res["maker"] = rep_maker(Z, P)
         R["pairs"][name] = res
 
 
