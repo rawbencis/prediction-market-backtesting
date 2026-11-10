@@ -49,7 +49,7 @@ SRC = {  # path, time col, price col
 DAY_MS = 86_400_000
 T_ROWS = (5, 296)  # row times, s from market open
 HS = (1, 2, 5, 10, 30)  # future-mid horizons, s
-LATS = (100, 250, 1000)  # order arrival latency, ms
+LATS = (100, 150, 250, 500, 1000)  # order arrival latency, ms
 EXITS = (5, 30)  # taker exit after h s
 XC_WIN = (10, 290)  # cross-correlation window, s
 XC_MAX_S = 10  # max lag, s
@@ -341,15 +341,6 @@ def loglik(p, y):
     return float(np.mean(y * np.log(p) + (1 - y) * np.log(1 - p)))
 
 
-def load(out, keys):
-    fs = sorted(out.glob("????-??-??.npz"))
-    D = {}
-    for f in fs:
-        with np.load(f) as z:
-            D[f.stem] = {k: z[k] for k in keys}
-    return D
-
-
 def entries(d, k, theta, win, L, rate):
     """First filled taker entry per market. -> list of (row, side, price)."""
     fair = ndtr(k * d["z"])
@@ -396,18 +387,59 @@ def trade_pnl(d, ent, L, ex, rate):
     return pn
 
 
+TS = (30, 60, 120, 180, 240, 270, 285, 295)
+THETA = (0.0, 0.01, 0.02, 0.03, 0.05, 0.08)
+WINS = ((5, 296), (5, 120), (120, 240), (240, 296))
+EXS = ("settle",) + EXITS
+TRADE_KEYS = ["epoch", "t", "z", "w", "ua", "da"] + [
+    f"{s}{L}" for L in LATS for s in ("ua", "da", "uasz", "dasz")
+] + [f"{s}{L}_{h}" for L in LATS for h in EXITS for s in ("ub", "db")]
+
+
+def cfgs():
+    return [(L, th, w, ex) for L in LATS for th in THETA for w in WINS for ex in EXS]
+
+
+def walkforward(P, days, cfg_l, train, min_trades):
+    """Rolling: each day trades the config with the best mean daily pnl over the previous `train`
+    days (>= min_trades there), or stays in cash if that best is <= 0. -> [(day, pnl, n, cfg)]"""
+    out = []
+    for i in range(train, len(days)):
+        tr = days[i - train : i]
+        best, bv = None, 0.0
+        for c in cfg_l:
+            n = sum(P[c][x][1] for x in tr)
+            v = np.mean([P[c][x][0] for x in tr])
+            if n >= min_trades and v > bv:
+                best, bv = c, v
+        d = days[i]
+        out.append((d, P[best][d][0], P[best][d][1], best) if best else (d, 0.0, 0, None))
+    return out
+
+
 def cmd_stats(a):
     meta = json.loads((a.out / "meta.json").read_text())
-    keys = ["epoch", "mk", "xc"] + COLS
-    D = load(a.out, keys)
-    days = sorted(D)
+    fs = sorted(a.out.glob("????-??-??.npz"))
+    days = [f.stem for f in fs]
     if len(days) <= a.holdout_days:
         sys.exit(f"{len(days)} days; need > {a.holdout_days}")
     dev, hold = days[: -a.holdout_days], days[-a.holdout_days :]
-    S = {"meta": meta, "days": [days[0], days[-1]], "holdout_start": hold[0], "fee_rate": a.fee_rate}
+    S = {"meta": meta, "days": [days[0], days[-1]], "n_days": len(days), "holdout_start": hold[0],
+         "fee_rate": a.fee_rate, "size": SIZE}
+
+    # pass 1 (small): market table, rows at fixed t, cross-correlation sums
+    MK, TSR, XC = [], {}, {}
+    for f in fs:
+        with np.load(f) as z_:
+            MK.append(z_["mk"])
+            XC[f.stem] = z_["xc"]
+            t, w = z_["t"], z_["w"]
+            mid = (z_["ub"] + z_["ua"]) / 2
+            k = np.isin(t, TS) & (w >= 0) & np.isfinite(z_["z"]) & np.isfinite(mid)
+            TSR[f.stem] = (t[k], z_["z"][k], mid[k], (w[k] == 0).astype(float))
 
     # 1. settlement-rule check
-    mk = np.concatenate([D[x]["mk"] for x in days])
+    mk = np.concatenate(MK)
     mk = mk[(mk[:, 1] >= 0) & np.isfinite(mk[:, 2:5]).all(1)]
     up = mk[:, 1] == 0
     mv = np.abs(mk[:, 3] / mk[:, 2] - 1) * 1e4
@@ -423,103 +455,108 @@ def cmd_stats(a):
         "sigma_per_s_bp_median": float(np.nanmedian(mk[:, 5]) * 1e4),
     }
 
-    # 2. calibration: model scale k (dev only), Brier / loglik by t, logistic at fixed t
-    def rows_at(ds, t):
-        z, m_, w = [], [], []
-        for x in ds:
-            d = D[x]
-            k = (d["t"] == t) & (d["w"] >= 0) & np.isfinite(d["z"]) & np.isfinite(d["ub"] + d["ua"])
-            z.append(d["z"][k])
-            m_.append((d["ub"][k] + d["ua"][k]) / 2)
-            w.append((d["w"][k] == 0).astype(float))
-        return np.concatenate(z), np.concatenate(m_), np.concatenate(w)
-
-    TS = (30, 60, 120, 180, 240, 270, 285, 295)
-    zd, _, wd = (np.concatenate(v) for v in zip(*[rows_at(dev, t) for t in TS]))
+    # 2. model scale k on dev only; calibration at fixed t
+    cat = lambda ds, j: np.concatenate([TSR[x][j] for x in ds])  # noqa: E731
+    zd, wd = cat(dev, 1), cat(dev, 3)
     ks = np.round(np.arange(0.4, 1.81, 0.05), 2)
     kk = float(ks[np.argmax([loglik(ndtr(k * zd), wd) for k in ks])])
     S["model_scale_k_dev"] = kk
+    ta, za, ma, wa = (cat(days, j) for j in range(4))
     cal = {}
     for t in TS:
-        z, mid, w = rows_at(days, t)
+        k = ta == t
+        z, mid, w = za[k], ma[k], wa[k]
         fr = ndtr(kk * z)
         b, se = logreg(np.column_stack([logit(mid), logit(fr)]), w)
-        cal[t] = {
-            "n": int(len(w)),
-            "brier_mid": float(np.mean((mid - w) ** 2)),
-            "brier_fair": float(np.mean((fr - w) ** 2)),
-            "loglik_mid": loglik(mid, w),
-            "loglik_fair": loglik(fr, w),
-            "logit_coef_mid": [round(float(b[1]), 3), round(float(se[1]), 3)],
-            "logit_coef_fair": [round(float(b[2]), 3), round(float(se[2]), 3)],
-        }
+        cal[t] = {"n": int(len(w)), "brier_mid": float(np.mean((mid - w) ** 2)),
+                  "brier_fair": float(np.mean((fr - w) ** 2)),
+                  "logit_coef_mid": [round(float(b[1]), 3), round(float(se[1]), 3)],
+                  "logit_coef_fair": [round(float(b[2]), 3), round(float(se[2]), 3)]}
     S["calibration_by_t"] = cal
 
-    # 3. lead-lag profile (+lag: book moves after fair)
+    # 3. lead-lag profile (+lag: book moves after fair), dev / holdout / by day
     res = meta["res"]
     nl = XC_MAX_S * 1000 // res
-    for name, ds in (("all", days), ("holdout", hold)):
-        xc = sum(D[x]["xc"] for x in ds)
-        corr = xc[:, 0] / np.sqrt(xc[:, 1] * xc[:, 2])
-        lags = np.arange(-nl, nl + 1) * res / 1000
-        S[f"xcorr_{name}"] = {
-            "peak_lag_s": float(lags[np.nanargmax(corr)]),
-            "corr": {f"{lg:+.2f}": round(float(c), 4) for lg, c in zip(lags, corr) if abs(lg) <= 5},
-        }
+    lags = np.arange(-nl, nl + 1) * res / 1000
 
-    # 4. gap closure: (mid_{t+h} - mid_t) = beta * (fair_t - mid_t), per-day slopes
-    gc = {}
-    for h in HS:
-        sl = []
-        for x in days:
-            d = D[x]
-            mid = (d["ub"] + d["ua"]) / 2
-            g = ndtr(kk * d["z"]) - mid
+    def prof(ds):
+        x = sum(XC[d] for d in ds)
+        return x[:, 0] / np.sqrt(x[:, 1] * x[:, 2])
+
+    for name, ds in (("dev", dev), ("holdout", hold)):
+        c = prof(ds)
+        S[f"xcorr_{name}"] = {"peak_lag_s": float(lags[np.nanargmax(c)]),
+                              "corr": {f"{lg:+.1f}": round(float(v), 4)
+                                       for lg, v in zip(lags, c) if abs(lg) <= 2}}
+    S["xcorr_peak_lag_by_day"] = {d: float(lags[np.nanargmax(prof([d]))]) for d in days}
+
+    # pass 2: per day, gap closure + every trade config's daily pnl
+    C = cfgs()
+    P = {c: {} for c in C}
+    GC = {h: [] for h in HS}
+    for f in fs:
+        with np.load(f) as z_:
+            d = {k: z_[k] for k in TRADE_KEYS + ["ub"] + [f"m{h}" for h in HS]}
+        mid = (d["ub"] + d["ua"]) / 2
+        g = ndtr(kk * d["z"]) - mid
+        for h in HS:
             y = d[f"m{h}"] - mid
             k = np.isfinite(g) & np.isfinite(y)
-            sl.append(float((g[k] @ y[k]) / (g[k] @ g[k])) if k.sum() > 100 else np.nan)
-        sl = np.array(sl)
-        gc[h] = boot(sl[np.isfinite(sl)])
-    S["gap_closure_beta"] = gc
+            if k.sum() > 100:
+                GC[h].append(float((g[k] @ y[k]) / (g[k] @ g[k])))
+        for L in LATS:
+            for th in THETA:
+                for win in WINS:
+                    ent = entries(d, kk, th, win, L, a.fee_rate)
+                    for ex in EXS:
+                        pn = trade_pnl(d, ent, L, ex, a.fee_rate)
+                        P[(L, th, win, ex)][f.stem] = (SIZE * float(np.sum(pn)), len(pn))
+        del d
+    S["gap_closure_beta"] = {h: boot(v) for h, v in GC.items()}
 
-    # 5. taker trade test
-    THETA = (0.0, 0.01, 0.02, 0.03, 0.05, 0.08)
-    WINS = ((5, 296), (5, 120), (120, 240), (240, 296))
-    EXS = ("settle",) + EXITS
-    res_ = {}
-    for L in LATS:
-        for th in THETA:
-            for win in WINS:
-                per = {x: entries(D[x], kk, th, win, L, a.fee_rate) for x in days}
-                for ex in EXS:
-                    pd_ = {x: trade_pnl(D[x], per[x], L, ex, a.fee_rate) for x in days}
-                    res_[(L, th, win, ex)] = pd_
+    # 4. trade tables
     tab = []
-    for (L, th, win, ex), pd_ in res_.items():
+    for c in C:
+        L, th, win, ex = c
         r = {"lat_ms": L, "theta": th, "win": f"{win[0]}-{win[1]}", "exit": str(ex)}
         for name, ds in (("dev", dev), ("hold", hold)):
-            daily = [SIZE * sum(pd_[x]) for x in ds]
-            n = sum(len(pd_[x]) for x in ds)
-            m_, lo, hi = boot(daily)
+            daily = [P[c][x][0] for x in ds]
+            n = sum(P[c][x][1] for x in ds)
+            _, lo, hi = boot(daily)
             r.update({f"{name}_n": n, f"{name}_pnl": round(sum(daily), 2),
-                      f"{name}_c_per_sh": round(100 * sum(sum(pd_[x]) for x in ds) / max(n, 1), 2),
-                      f"{name}_day_ci": [round(lo, 2), round(hi, 2)]})
+                      f"{name}_c_per_sh": round(100 * sum(daily) / SIZE / max(n, 1), 2),
+                      f"{name}_day_ci": [round(lo, 2), round(hi, 2)],
+                      f"{name}_pos_days": f"{sum(v > 0 for v in daily)}/{len(daily)}"})
         tab.append(r)
     T = pd.DataFrame(tab)
     T.to_csv(a.out / "trade_grid.csv", index=False)
+
+    wf_rows = []
     for L in LATS:
         g = T[(T.lat_ms == L) & (T.dev_n >= a.min_trades)].sort_values("dev_pnl", ascending=False)
+        W = walkforward(P, days, [c for c in C if c[0] == L], a.train_days, a.min_trades)
+        wfo = {}
+        for name, ds in (("dev_oos", set(dev)), ("holdout", set(hold))):
+            sel = [x for x in W if x[0] in ds]
+            m_, lo, hi = boot([x[1] for x in sel])
+            wfo[name] = {"days": len(sel), "pnl": round(sum(x[1] for x in sel), 2),
+                         "trades": sum(x[2] for x in sel), "day_mean_ci": [round(m_, 2), round(lo, 2), round(hi, 2)],
+                         "cash_days": sum(x[3] is None for x in sel),
+                         "distinct_picks": len({x[3] for x in sel if x[3]})}
+        wf_rows += [{"lat_ms": L, "day": x[0], "pnl": x[1], "n": x[2], "pick": str(x[3])} for x in W]
         S[f"trades_lat{L}"] = {
-            "dev_share_positive": round(float((T[T.lat_ms == L].dev_pnl > 0).mean()), 3),
-            "hold_share_positive": round(float((T[T.lat_ms == L].hold_pnl > 0).mean()), 3),
-            "selected_on_dev": g.head(1).to_dict("records"),
+            "grid_share_positive_dev": round(float((T[T.lat_ms == L].dev_pnl > 0).mean()), 3),
+            "grid_share_positive_hold": round(float((T[T.lat_ms == L].hold_pnl > 0).mean()), 3),
+            "frozen_pick_on_dev": g.head(1).to_dict("records"),
             "top5_dev": g.head(5).to_dict("records"),
+            "walkforward": wfo,
         }
+    pd.DataFrame(wf_rows).to_csv(a.out / "walkforward_days.csv", index=False)
     S["prior_250ms_theta0.03_all_settle"] = T[
         (T.lat_ms == 250) & (T.theta == 0.03) & (T.win == "5-296") & (T.exit == "settle")
     ].to_dict("records")
     (a.out / "summary.json").write_text(json.dumps(S, indent=1, default=str))
-    print(json.dumps(S, indent=1, default=str))
+    print(json.dumps({k: v for k, v in S.items() if not k.startswith("xcorr_peak")}, indent=1, default=str))
 
 
 def main():
@@ -547,6 +584,7 @@ def main():
     p.add_argument("--holdout-days", type=int, default=10)
     p.add_argument("--fee-rate", type=float, default=0.07)
     p.add_argument("--min-trades", type=int, default=100)
+    p.add_argument("--train-days", type=int, default=14, help="walk-forward lookback")
     a = ap.parse_args()
     {"btc": cmd_btc, "extract": cmd_extract, "stats": cmd_stats}[a.cmd](a)
 

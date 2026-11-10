@@ -111,6 +111,21 @@ class TestEntries(unittest.TestCase):
         self.assertAlmostEqual(ll.fee(0.5, 0.07), 0.0175)
 
 
+class TestWalkForward(unittest.TestCase):
+    def test_past_only_and_cash(self):
+        days = ["d0", "d1", "d2", "d3", "d4"]
+        P = {"A": {"d0": (3, 50), "d1": (2, 50), "d2": (-5, 50), "d3": (-5, 50), "d4": (9, 50)},
+             "B": {"d0": (-1, 50), "d1": (-1, 50), "d2": (4, 50), "d3": (4, 50), "d4": (-9, 50)},
+             "C": {d: (-1, 50) for d in days}}
+        W = ll.walkforward(P, days, ["A", "B", "C"], 2, 10)
+        self.assertEqual([(x[0], x[3]) for x in W], [("d2", "A"), ("d3", "B"), ("d4", "B")])
+        self.assertEqual(W[2][1], -9)  # takes B's realised day-4 loss, not A's hindsight win
+        W = ll.walkforward({"C": P["C"]}, days, ["C"], 2, 10)
+        self.assertTrue(all(x[3] is None and x[1] == 0 for x in W))  # all negative -> cash
+        W = ll.walkforward(P, days, ["A"], 2, 1000)
+        self.assertTrue(all(x[3] is None for x in W))  # too few trades -> cash
+
+
 class TestEndToEnd(unittest.TestCase):
     def test_planted_lag_recovered(self):
         with tempfile.TemporaryDirectory() as td:
@@ -120,12 +135,15 @@ class TestEndToEnd(unittest.TestCase):
                 [sys.executable, "leadlag.py", *a], check=True, capture_output=True, text=True,
                 cwd=Path(__file__).parent)
             run("extract", "--cache", str(cache), "--btc", str(btc), "--out", str(out))
-            run("stats", "--out", str(out), "--holdout-days", "2", "--min-trades", "5")
+            run("stats", "--out", str(out), "--holdout-days", "2", "--min-trades", "5",
+                "--train-days", "1")
             S = json.loads((out / "summary.json").read_text())
             self.assertEqual(S["rule_check"]["close_vs_open_agree"], 1.0)
-            self.assertEqual(S["xcorr_all"]["peak_lag_s"], 3.0)
+            self.assertEqual(S["xcorr_dev"]["peak_lag_s"], 3.0)
+            self.assertEqual(S["xcorr_holdout"]["peak_lag_s"], 3.0)
             self.assertGreater(S["gap_closure_beta"]["5"][0], 0.3)
-            best = S["trades_lat250"]["selected_on_dev"][0]
+            best = S["trades_lat250"]["frozen_pick_on_dev"][0]
+            self.assertEqual(S["trades_lat250"]["walkforward"]["holdout"]["days"], 2)
             self.assertGreater(best["dev_pnl"], 0)
             self.assertGreater(best["hold_pnl"], 0)
 
@@ -137,10 +155,10 @@ class TestEndToEnd(unittest.TestCase):
                             str(btc), "--out", str(out)], check=True, capture_output=True,
                            cwd=Path(__file__).parent)
             subprocess.run([sys.executable, "leadlag.py", "stats", "--out", str(out),
-                            "--holdout-days", "1", "--min-trades", "5"], check=True,
+                            "--holdout-days", "1", "--min-trades", "5", "--train-days", "1"], check=True,
                            capture_output=True, cwd=Path(__file__).parent)
             S = json.loads((out / "summary.json").read_text())
-            self.assertEqual(S["xcorr_all"]["peak_lag_s"], 0.0)
+            self.assertEqual(S["xcorr_dev"]["peak_lag_s"], 0.0)
 
 
 if __name__ == "__main__":
