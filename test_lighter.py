@@ -35,7 +35,7 @@ def pm(rows):
 def lt(rows):
     a = np.zeros(len(rows), le.LT_DT)
     for i, (t, p, s, buy) in enumerate(rows):
-        a[i] = (int((E + t) * 1e6), 0, 0, 15, E, int(p * 1e4), s, buy, 11, 22, i + 1)
+        a[i] = (int((E + t + 400) * 1e6), int((E + t) * 1e3), 0, 15, E, int(p * 1e4), s, buy, 11, 22, i + 1)  # received late
     return a
 
 

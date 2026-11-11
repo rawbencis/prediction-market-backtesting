@@ -120,16 +120,17 @@ def market_metrics(L, T, P, W, e, tf=15):
     # S2 / S6 trades
     tr = []
     for t in T:
+        tl = int(t["T"]) * 1000 if t["T"] > 0 else int(t["l"])  # trade time; snapshot trades arrive late
         p, s, buy = t["p"] / 1e4, float(t["s"]), bool(t["buy"])
         sgn = 1.0 if buy else -1.0  # maker sold Up when the taker bought
         d = dict(p=p, s=s, buy=buy, maker=int(t["aa"] if buy else t["ba"]), taker=int(t["ba"] if buy else t["aa"]),
                  fee=fl(p) * s, mk_settle=sgn * (p - W) * s if W == W else np.nan, mk_mid=np.nan, mk_mo5=np.nan)
         if havep:
             for key, dt in (("mk_mid", 0), ("mk_mo5", 5_000_000)):
-                k = asof(P["l"], t["l"] + dt)
+                k = asof(P["l"], tl + dt)
                 if k >= 0 and P["b"][k] > 0 and P["k"][k] > P["b"][k]:
                     d[key] = sgn * (p - (P["b"][k] + P["k"][k]) / 2e4) * s
-            kq, kh = asof(P["l"], t["l"] - QUOTE_LAG), asof(P["l"], t["l"] + HEDGE_LAG)
+            kq, kh = asof(P["l"], tl - QUOTE_LAG), asof(P["l"], tl + HEDGE_LAG)
             if kq >= 0 and kh >= 0 and P["b"][kq] > 0 and P["k"][kq] > P["b"][kq] and P["b"][kh] > 0 and P["k"][kh] > P["b"][kh]:
                 m0 = (P["b"][kq] + P["k"][kq]) / 2e4
                 q = min(s, CAP)
@@ -192,6 +193,9 @@ def q(x, ps=(25, 50, 75)):
 
 def cmd_report(a):
     LB, LT = read(a.lt, "lb", LB_DT), read(a.lt, "lt", LT_DT)
+    LB, LT = LB[LB["tf"] == 15], LT[LT["tf"] == 15]
+    _, first = np.unique(LT["id"], return_index=True)
+    LT = LT[np.sort(first)]  # a reconnect can replay recent trades
     PM = read(a.pm, "pm", PM_DT) if a.pm else np.zeros(0, PM_DT)
     PM = PM[PM["tf"] == 15]
     mk = {}
