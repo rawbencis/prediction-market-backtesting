@@ -8,8 +8,9 @@ Same question as favourite_flips.py (Polymarket 5m), executed on Lighter:
   underdog on Lighter (buy Down = sell Up at 1 - q), never modified or cancelled. Price rules:
     join  = Lighter's best bid of that side, posted once for the whole lifetime
     fairH = Polymarket fair of that side minus H (1c ticks, rounded down), posted once
-    rfH   = a REFRESH_S order at fair - H, re-posted at the new fair each time it expires, until
-            the lifetime ends or Q shares filled (new orders only: no modify / cancel)
+    rfH[sS] = an S-second order (default 10) at fair - H, re-posted at the new fair each time it
+            expires, until the lifetime ends or Q shares filled (new orders only: no modify /
+            cancel). `posts` counts the orders sent, for the rate limit.
   An order that would cross Lighter's ask (post-only reject) is not placed.
 - Fill: only by RECORDED Lighter taker trades on the other side within the lifetime. If our price
   improved Lighter's best bid we are first in line: any taker sell at <= our price fills us. If we
@@ -30,9 +31,31 @@ import lighter_eval as le
 import lighter_rec as lr
 
 XS = (0.60, 0.65, 0.70, 0.75, 0.80)
-# join = Lighter best bid; fairH = Polymarket fair - H c, posted once; rfH = re-posted every
-# REFRESH_S at the then-current fair - H c (each order expires by itself: never modified)
-RULES = ("join", "fair2", "fair3", "fair5", "fair7", "fair10", "fair15", "rf3", "rf5", "rf7")
+# join = Lighter best bid; fairH = Polymarket fair - H c, posted once; rfH[sS] = re-posted every
+# S s (default 10) at the then-current fair - H c (each order expires by itself: never modified)
+RULES = (
+    "join",
+    "fair2",
+    "fair3",
+    "fair5",
+    "fair7",
+    "fair10",
+    "fair15",
+    "rf3",
+    "rf5",
+    "rf7",
+    "rf3s5",
+    "rf5s5",
+    "rf3s3",
+    "rf5s3",
+)
+# fixed before data (see the project doc): (x, k, rule, life), both sides, both assets
+PREREG = {
+    (0.70, 1, "fair3", 60),
+    (0.70, 1, "fair3", 900),
+    (0.70, 1, "rf5", 900),
+    (0.70, 1, "fair5", 20),
+}
 LIVES = (10, 20, 30, 60, 300, 900)  # s; 900 = to the close
 REFRESH_S = 10
 PLACE_LAT = 250_000  # us from the flip to the order resting
@@ -119,7 +142,10 @@ def window(L, T, P, W, e, clock="pm"):
                         fair = pm_fair(side, tj)
                         if np.isnan(fair):
                             return None
-                        h = int(rule[4:] if rule.startswith("fair") else rule[2:]) / 100
+                        h = (
+                            int(rule[4:] if rule.startswith("fair") else rule[2:].split("s")[0])
+                            / 100
+                        )
                         q = np.floor((fair - h) * 100 + 1e-9) / 100
                     if q < 0.01 or q >= ask - 1e-9:
                         return None  # post-only would be rejected
@@ -128,12 +154,25 @@ def window(L, T, P, W, e, clock="pm"):
                 for rule in RULES:
                     for life in LIVES:
                         t_end = min(t0 + life * 1_000_000, end_us)
-                        step = REFRESH_S * 1_000_000 if rule.startswith("rf") else t_end - t0
-                        fills, left, tj, posted, first0, q0 = [], Q, t0, False, None, np.nan
+                        if rule.startswith("rf"):
+                            every = int(rule.split("s")[1]) if "s" in rule else REFRESH_S
+                            step = every * 1_000_000
+                        else:
+                            step = t_end - t0
+                        fills, left, tj, posted, first0, q0, posts = (
+                            [],
+                            Q,
+                            t0,
+                            False,
+                            None,
+                            np.nan,
+                            0,
+                        )
                         while tj < t_end and left > 1e-9:
                             pq = price(rule, tj)
                             if pq is not None:
                                 q, first = pq
+                                posts += 1
                                 if not posted:
                                     posted, first0, q0 = True, first, q
                                 te = min(tj + step, t_end)
@@ -161,6 +200,7 @@ def window(L, T, P, W, e, clock="pm"):
                                 "fair0": fair0,
                                 "win": win,
                                 "filled": filled,
+                                "posts": posts,
                                 "pnl": (
                                     sum(f[1] * (win - f[2]) for f in fills)
                                     if not np.isnan(win)
@@ -252,6 +292,7 @@ def cmd_report(a):
                 "rule": key[4],
                 "life": key[5],
                 "orders": len(gdf),
+                "posts_per_order": round(gdf.posts.mean(), 1),
                 "fill_rate": round((gdf.filled > 0).mean(), 3),
                 "shares": round(sh, 0),
                 "avg_q": round(f.q.mean(), 3) if len(f) else np.nan,
@@ -270,18 +311,51 @@ def cmd_report(a):
     t = pd.DataFrame(out)
     t.to_csv(a.lt / "lighter_flips_summary.csv", index=False)
     pd.set_option("display.width", 250)
-    show = t[(t.life.isin(a.show_lives)) & (t.x.isin(a.show_x))]
     print(
-        "ev_sh_* = result per filled share: to settlement, and vs Polymarket's fair of that side at the fill / 5 s later"
+        "ev_sh_* = result per filled share: to settlement, and vs Polymarket's fair of that side "
+        "at the fill / 5 s later; posts_per_order = orders sent per flip (rate limit)"
     )
-    print(show.to_string(index=False))
+    pre = t[
+        [
+            (x, 3 if k == "3+" else k, r, lf_) in PREREG
+            for x, k, r, lf_ in zip(t.x, t.k, t.rule, t.life)
+        ]
+    ]
+    print(
+        "\n== PRE-REGISTERED (judge only these: >= 5 days, settle CI > 0, 5 s markout > 0, >= 500 shares)"
+    )
+    print(pre.to_string(index=False))
+    if a.all:
+        print("\n== all cells for --show-x / --show-lives")
+        print(t[(t.life.isin(a.show_lives)) & (t.x.isin(a.show_x))].to_string(index=False))
+    rf = t[t.rule.str.startswith("rf") & (t.x == 0.70) & (t.k == 1) & (t.life == 900)]
+    print(
+        "\n== re-post variants, X 0.70, first flip, to the close (descriptive: refresh speed vs markout)"
+    )
+    print(
+        rf[
+            [
+                "asset",
+                "who",
+                "rule",
+                "posts_per_order",
+                "fill_rate",
+                "shares",
+                "ev_sh_settle",
+                "ev_sh_vs_fair_fill",
+                "ev_sh_vs_fair_5s",
+                "usd_day",
+            ]
+        ].to_string(index=False)
+    )
     pos = t[(t.shares >= a.min_shares) & (t.usd_day_ci90.apply(lambda c: c[0] > 0))]
     print(
         f"\ncells with >= {a.min_shares:.0f} filled shares and a 90% CI (by window) above 0: {len(pos)} of {len(t)} "
-        "(no selection adjustment; needs >= 5 days before it means anything)"
+        "(no selection adjustment: descriptive only)"
     )
     if len(pos):
         print(pos.sort_values("usd_day", ascending=False).head(15).to_string(index=False))
+    print(f"\nfull table: {a.lt / 'lighter_flips_summary.csv'} (or --all)")
 
 
 def main():
@@ -295,6 +369,9 @@ def main():
     p.add_argument("--min-shares", type=float, default=200)
     p.add_argument("--show-lives", type=int, nargs="+", default=[20, 60, 900])
     p.add_argument("--show-x", type=float, nargs="+", default=[0.70])
+    p.add_argument(
+        "--all", action="store_true", help="also print every cell for --show-x / --show-lives"
+    )
     cmd_report(ap.parse_args())
 
 

@@ -113,6 +113,20 @@ class TestLighterFlips(unittest.TestCase):
         short = pick(rows, x=0.70, k=1, who="fav", rule="fair3", life=20)[0]
         self.assertEqual(short["filled"], 0.0)  # a 20 s order had expired
 
+    def test_faster_refresh_dodges_a_jump_inside_the_10s_window(self):
+        # fair 0.705 after the flip, jumps to 0.60 at ~200.5 s; a taker sells Up at 0.66 at 206 s
+        P = pm_rows([(0, 0.50), (100, 0.705), (200, 0.705), (200.5, 0.60), (899, 0.60)])
+        L = lighter_book(0.60, 0.75)
+        T = trades([(206, 0.66, 30, False)])
+        rows = lf.window(L, T, P, 0.0, E)
+        slow = pick(rows, x=0.70, k=1, who="fav", rule="rf3", life=900)[0]
+        fast = pick(rows, x=0.70, k=1, who="fav", rule="rf3s3", life=900)[0]
+        self.assertEqual(slow["filled"], lf.Q)  # posted at 198 s at 0.67, hit after the jump
+        self.assertLess(slow["mo0"], 0)
+        self.assertEqual(fast["filled"], 0.0)  # re-posted at 203 s at 0.57: not reached
+        self.assertGreater(fast["posts"], slow["posts"])
+        self.assertEqual(pick(rows, x=0.70, k=1, who="fav", rule="fair3", life=900)[0]["posts"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
