@@ -4,10 +4,13 @@ Same question as favourite_flips.py (Polymarket 5m), executed on Lighter:
 - Clock: a side is the favourite at threshold X when its mid >= X. Flips are read on the
   Polymarket 15m mid of the same window (deep, calibrated) or, with --clock lighter, on Lighter's.
   Episode k = k-th change of the favourite side.
-- Order: PLACE_LAT after the flip, one good-till-time post-only buy of the new favourite or the
+- Order: PLACE_LAT after the flip, good-till-time post-only buys of the new favourite or the
   underdog on Lighter (buy Down = sell Up at 1 - q), never modified or cancelled. Price rules:
-    join  = Lighter's best bid of that side
-    fairH = Polymarket fair of that side minus H (1c ticks, rounded down); skipped if it would cross
+    join  = Lighter's best bid of that side, posted once for the whole lifetime
+    fairH = Polymarket fair of that side minus H (1c ticks, rounded down), posted once
+    rfH   = a REFRESH_S order at fair - H, re-posted at the new fair each time it expires, until
+            the lifetime ends or Q shares filled (new orders only: no modify / cancel)
+  An order that would cross Lighter's ask (post-only reject) is not placed.
 - Fill: only by RECORDED Lighter taker trades on the other side within the lifetime. If our price
   improved Lighter's best bid we are first in line: any taker sell at <= our price fills us. If we
   joined an existing level we are behind its queue: only a trade strictly through our price counts.
@@ -27,8 +30,11 @@ import lighter_eval as le
 import lighter_rec as lr
 
 XS = (0.60, 0.65, 0.70, 0.75, 0.80)
-RULES = ("join", "fair2", "fair3", "fair5")
-LIVES = (30, 60, 300, 900)  # s; 900 = to the close
+# join = Lighter best bid; fairH = Polymarket fair - H c, posted once; rfH = re-posted every
+# REFRESH_S at the then-current fair - H c (each order expires by itself: never modified)
+RULES = ("join", "fair2", "fair3", "fair5", "fair7", "fair10", "fair15", "rf3", "rf5", "rf7")
+LIVES = (10, 20, 30, 60, 300, 900)  # s; 900 = to the close
+REFRESH_S = 10
 PLACE_LAT = 250_000  # us from the flip to the order resting
 Q = 10.0  # shares per order
 TF = 15
@@ -96,31 +102,52 @@ def window(L, T, P, W, e, clock="pm"):
             if i < 0 or not valid(L["b1"][i], L["k1"][i]):
                 continue  # no two-sided Lighter book to post into
             for who, side in (("fav", fav), ("dog", 1 - fav)):
-                bid, ask = side_quotes(L, i, side)
-                fair = pm_fair(side, t0)
+                fair0 = pm_fair(side, t0)
                 win = np.nan if np.isnan(W) else (W if side == 0 else 1 - W)
-                for rule in RULES:
+                sells = ~tb if side == 0 else tb  # taker selling `side`
+                px_side = tp if side == 0 else 1 - tp  # trade price in `side` terms
+
+                def price(rule, tj, side=side):
+                    """-> (limit, first in queue) for an order posted at tj, or None."""
+                    j = le.asof(L["l"], tj)
+                    if j < 0 or not valid(L["b1"][j], L["k1"][j]):
+                        return None
+                    bid, ask = side_quotes(L, j, side)
                     if rule == "join":
                         q = round(bid, 2)
                     else:
+                        fair = pm_fair(side, tj)
                         if np.isnan(fair):
-                            continue
-                        q = np.floor((fair - int(rule[4:]) / 100) * 100 + 1e-9) / 100
+                            return None
+                        h = int(rule[4:] if rule.startswith("fair") else rule[2:]) / 100
+                        q = np.floor((fair - h) * 100 + 1e-9) / 100
                     if q < 0.01 or q >= ask - 1e-9:
-                        continue  # post-only would be rejected
-                    first = q > bid + 1e-9  # we improve Lighter's bid: front of the queue
-                    # a taker selling `side` = taker sells Up (side 0) or buys Up (side 1)
-                    sells = ~tb if side == 0 else tb
-                    px_side = tp if side == 0 else 1 - tp  # trade price in `side` terms
-                    hit = sells & ((px_side <= q + 1e-9) if first else (px_side < q - 1e-9))
+                        return None  # post-only would be rejected
+                    return q, q > bid + 1e-9  # improving Lighter's bid puts us first in line
+
+                for rule in RULES:
                     for life in LIVES:
-                        t1 = min(t0 + life * 1_000_000, end_us)
-                        m = hit & (tt > t0) & (tt <= t1)
-                        cum = np.cumsum(np.where(m, ts, 0.0))
-                        filled = float(min(cum[-1], Q)) if len(cum) else 0.0
-                        tf_ = (
-                            int(tt[np.argmax(cum >= min(Q, cum[-1]) - 1e-9)]) if filled > 0 else -1
-                        )
+                        t_end = min(t0 + life * 1_000_000, end_us)
+                        step = REFRESH_S * 1_000_000 if rule.startswith("rf") else t_end - t0
+                        fills, left, tj, posted, first0, q0 = [], Q, t0, False, None, np.nan
+                        while tj < t_end and left > 1e-9:
+                            pq = price(rule, tj)
+                            if pq is not None:
+                                q, first = pq
+                                if not posted:
+                                    posted, first0, q0 = True, first, q
+                                te = min(tj + step, t_end)
+                                thru = (px_side <= q + 1e-9) if first else (px_side < q - 1e-9)
+                                for ti in np.flatnonzero(sells & thru & (tt > tj) & (tt <= te)):
+                                    sz = min(float(ts[ti]), left)
+                                    fills.append((int(tt[ti]), sz, q))
+                                    left -= sz
+                                    if left <= 1e-9:
+                                        break
+                            tj += step
+                        if not posted:
+                            continue
+                        filled = sum(f[1] for f in fills)
                         rows.append(
                             {
                                 "x": x,
@@ -128,18 +155,23 @@ def window(L, T, P, W, e, clock="pm"):
                                 "who": who,
                                 "rule": rule,
                                 "life": life,
-                                "q": q,
-                                "first": first,
-                                "fair0": fair,
+                                "q0": q0,
+                                "q": sum(f[1] * f[2] for f in fills) / filled if filled else np.nan,
+                                "first": first0,
+                                "fair0": fair0,
                                 "win": win,
                                 "filled": filled,
-                                "pnl": (win - q) * filled
-                                if filled and not np.isnan(win)
-                                else (0.0 if not filled else np.nan),
-                                "mo0": (pm_fair(side, tf_) - q) * filled if filled else 0.0,
-                                "mo5": (pm_fair(side, tf_ + 5_000_000) - q) * filled
+                                "pnl": (
+                                    sum(f[1] * (win - f[2]) for f in fills)
+                                    if not np.isnan(win)
+                                    else np.nan
+                                )
                                 if filled
                                 else 0.0,
+                                "mo0": sum(f[1] * (pm_fair(side, f[0]) - f[2]) for f in fills),
+                                "mo5": sum(
+                                    f[1] * (pm_fair(side, f[0] + 5_000_000) - f[2]) for f in fills
+                                ),
                             }
                         )
     return rows
@@ -261,8 +293,8 @@ def main():
     p.add_argument("--clock", choices=("pm", "lighter"), default="pm")
     p.add_argument("--no-gamma", action="store_true")
     p.add_argument("--min-shares", type=float, default=200)
-    p.add_argument("--show-lives", type=int, nargs="+", default=[60, 900])
-    p.add_argument("--show-x", type=float, nargs="+", default=[0.65, 0.70])
+    p.add_argument("--show-lives", type=int, nargs="+", default=[20, 60, 900])
+    p.add_argument("--show-x", type=float, nargs="+", default=[0.70])
     cmd_report(ap.parse_args())
 
 

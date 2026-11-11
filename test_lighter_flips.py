@@ -63,7 +63,7 @@ class TestLighterFlips(unittest.TestCase):
         fav = pick(rows, x=0.70, k=1, who="fav", life=900)
         join = pick(fav, rule="join")[0]
         self.assertEqual(
-            (join["q"], join["first"], join["filled"]), (0.60, False, 0.0)
+            (join["q0"], join["first"], join["filled"]), (0.60, False, 0.0)
         )  # behind queue
         f2 = pick(fav, rule="fair2")[
             0
@@ -84,7 +84,7 @@ class TestLighterFlips(unittest.TestCase):
         self.assertEqual(join["filled"], lf.Q)
         self.assertAlmostEqual(join["pnl"], -0.60 * lf.Q)  # Up lost
         dog = pick(rows, x=0.70, k=1, who="dog", rule="join", life=900)[0]  # Down bid = 1 - 0.75
-        self.assertAlmostEqual(dog["q"], 0.25)
+        self.assertAlmostEqual(dog["q0"], 0.25)
         self.assertEqual(
             dog["filled"], lf.Q
         )  # taker bought Up at 0.76 > 0.75 = sold Down through 0.25
@@ -97,6 +97,21 @@ class TestLighterFlips(unittest.TestCase):
         rows = lf.window(L, T, P, 1.0, E)
         self.assertTrue(all(r["filled"] == 0 for r in pick(rows, x=0.70)))
         self.assertTrue(any(r["filled"] > 0 for r in pick(rows, x=0.60)))
+
+    def test_refresh_follows_fair_and_avoids_the_stale_fill(self):
+        # Up flips to fav at ~98 s, then fair falls back to 0.60 by 300 s (no new flip at 0.70)
+        P = pm_rows([(0, 0.50), (100, 0.705), (300, 0.60), (899, 0.60)])
+        L = lighter_book(0.60, 0.75)
+        T = trades([(400, 0.62, 30, False)])  # a taker sells Up at 0.62 long after the flip
+        rows = lf.window(L, T, P, 0.0, E)
+        static = pick(rows, x=0.70, k=1, who="fav", rule="fair3", life=900)[0]
+        self.assertEqual(static["filled"], lf.Q)  # posted once at 0.67: picked off at 0.62
+        self.assertLess(static["mo0"], 0)  # fair ~0.60 when hit: stale fill
+        rf = pick(rows, x=0.70, k=1, who="fav", rule="rf3", life=900)[0]
+        self.assertAlmostEqual(rf["q0"], static["q0"])  # same first order
+        self.assertEqual(rf["filled"], 0.0)  # re-posted at 0.57 by then: 0.62 doesn't reach it
+        short = pick(rows, x=0.70, k=1, who="fav", rule="fair3", life=20)[0]
+        self.assertEqual(short["filled"], 0.0)  # a 20 s order had expired
 
 
 if __name__ == "__main__":
