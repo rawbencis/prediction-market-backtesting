@@ -5,7 +5,11 @@ report --lt DIR [--pm DIR]
   S2 flow: trades per window, who makes / takes, maker result to settlement and against Polymarket's mid
   S3 settlement: Lighter outcome vs Polymarket winner
   S4 cross-venue taker arb: Up on one venue + Down on the other for < $1 after both fees, still there 500 ms later
-  S5 stale-quote taker on Lighter: Polymarket mid as fair value, 500 ms to match, held to settlement
+     sequential version: Lighter leg first (limit at the trigger price, matches 500 ms later), then the
+     Polymarket hedge 500 ms after that at whatever its ask is by then; 5 s pause after each fill
+  S5 stale-quote taker on Lighter: Polymarket mid as fair value, 500 ms to match; result against Polymarket's
+     mid 5 s and 30 s later, and to settlement
+  LL which book moves first: correlation of 1 s mid changes, Lighter vs Polymarket, at leads/lags up to 2 s
   S6 tighter maker on Lighter: quote Polymarket mid +- h; filled by recorded taker trades it would have
      price-improved; result unhedged (to settlement) and hedged on Polymarket as taker 300 ms later
 Clock: the recorder's local receive time for both venues (same box). Sizes capped at CAP shares.
@@ -36,6 +40,29 @@ SIZE, CAP = 5.0, 200.0
 THETA = (0.02, 0.04, 0.06)
 HS = (0.01, 0.02, 0.03, 0.05)
 QUOTE_LAG, HEDGE_LAG = 150_000, 300_000
+SEQ_TH = (0.0, 0.02, 0.04)  # minimum pair discount (after fees) to start the sequential arb
+COOL = 20  # grid steps (5 s) before the next sequential arb in the same direction
+LAGS = range(-8, 9)  # grid steps; positive = Polymarket moves after Lighter
+RNG = np.random.default_rng(0)
+
+
+def later(x, k):
+    """x shifted so that out[t] = x[t + k]; nan where that falls outside."""
+    out = np.full(len(x), np.nan)
+    if k >= 0:
+        out[: len(x) - k] = x[k:]
+    else:
+        out[-k:] = x[:k]
+    return out
+
+
+def ci(x, days, B=2000):
+    """90% interval of the per-day total, resampling windows."""
+    x = np.asarray(x, float)
+    if len(x) < 5:
+        return np.nan, np.nan
+    t = x[RNG.integers(0, len(x), (B, len(x)))].sum(1) / days
+    return float(np.percentile(t, 5)), float(np.percentile(t, 95))
 
 
 def fl(p):
@@ -106,6 +133,37 @@ def market_metrics(L, T, P, W, e, tf=15):
             r["arb_trig"] += n
             r["arb_fill"] += f
             r["arb_usd"] += tot
+        N = len(g)
+        midv = np.where(vp, mid, np.nan)
+        mid5, mid30 = later(midv, 20), later(midv, 120)
+        # S4 sequential: Lighter leg first, Polymarket hedge after the fill
+        for th in SEQ_TH:
+            for d, edge, lpx, lsz, hsz in (("a", ea, la, las, pbs), ("b", eb, lb, lbs, pas)):
+                nxt = 0
+                for i in np.flatnonzero(v & (edge > th) & (np.minimum(lsz, hsz) >= SIZE)):
+                    if i < nxt:
+                        continue
+                    j, k = i + LAT, i + 2 * LAT
+                    if k >= N:
+                        break
+                    r[f"seq{th}_trig"] += 1
+                    nxt = j
+                    if not (vl[j] and lsz[j] >= SIZE and (lpx[j] <= lpx[i] if d == "a" else lpx[j] >= lpx[i])):
+                        continue  # the Lighter quote was pulled or moved away: nothing bought
+                    nxt = j + COOL
+                    qty = min(float(lsz[j]), CAP)
+                    if not vp[k]:
+                        r[f"seq{th}_nohedge"] += 1
+                        continue
+                    hp = (1 - pb[k]) if d == "a" else pa[k]
+                    if d == "a":
+                        pnl = 1 - lpx[j] - fl(lpx[j]) - hp - fp(hp)
+                    else:
+                        pnl = lpx[j] - fl(lpx[j]) - hp - fp(hp)
+                    r[f"seq{th}_fill"] += 1
+                    r[f"seq{th}_sh"] += qty
+                    r[f"seq{th}_usd"] += pnl * qty
+                    r[f"seq{th}_pos"] += pnl > 0
         # S5: Lighter taker against stale quotes, Polymarket mid as fair
         for th in THETA:
             for side, edge, px_, sz in ((1, mid - la - fl(la), la, las), (-1, lb - mid - fl(lb), lb, lbs)):
@@ -115,8 +173,16 @@ def market_metrics(L, T, P, W, e, tf=15):
                 r[f"sn{th}_trig"] += n
                 r[f"sn{th}_fill"] += f
                 r[f"sn{th}_model"] += tot
+                for nm, m_ in (("mo5", mid5), ("mo30", mid30)):
+                    r[f"sn{th}_{nm}"] += episodes(ok, np.nan_to_num((side * (m_ - px_) - fl(px_)) * q), ok)[2]
                 if W == W:
                     r[f"sn{th}_settle"] += episodes(ok, (side * (W - px_) - fl(px_)) * q, ok)[2]
+        # LL: which mid moves first (1 s changes; Lighter only while its spread is <= 10c)
+        lm = np.where(v & ((la - lb) <= 0.1001), (la + lb) / 2, np.nan)
+        dl, dp = later(lm, 4) - lm, later(midv, 4) - midv
+        r["ll_xx"], r["ll_yy"] = np.nansum(dl * dl), np.nansum(dp * dp)
+        for k in LAGS:
+            r[f"ll{k}"] = np.nansum(dl * later(dp, k))
     # S2 / S6 trades
     tr = []
     for t in T:
@@ -124,9 +190,10 @@ def market_metrics(L, T, P, W, e, tf=15):
         p, s, buy = t["p"] / 1e4, float(t["s"]), bool(t["buy"])
         sgn = 1.0 if buy else -1.0  # maker sold Up when the taker bought
         d = dict(p=p, s=s, buy=buy, maker=int(t["aa"] if buy else t["ba"]), taker=int(t["ba"] if buy else t["aa"]),
-                 fee=fl(p) * s, mk_settle=sgn * (p - W) * s if W == W else np.nan, mk_mid=np.nan, mk_mo5=np.nan)
+                 fee=fl(p) * s, mk_settle=sgn * (p - W) * s if W == W else np.nan, mk_mid=np.nan, mk_mo5=np.nan,
+                 mk_mo30=np.nan, mk_mo120=np.nan)
         if havep:
-            for key, dt in (("mk_mid", 0), ("mk_mo5", 5_000_000)):
+            for key, dt in (("mk_mid", 0), ("mk_mo5", 5_000_000), ("mk_mo30", 30_000_000), ("mk_mo120", 120_000_000)):
                 k = asof(P["l"], tl + dt)
                 if k >= 0 and P["b"][k] > 0 and P["k"][k] > P["b"][k]:
                     d[key] = sgn * (p - (P["b"][k] + P["k"][k]) / 2e4) * s
@@ -134,6 +201,8 @@ def market_metrics(L, T, P, W, e, tf=15):
             if kq >= 0 and kh >= 0 and P["b"][kq] > 0 and P["k"][kq] > P["b"][kq] and P["b"][kh] > 0 and P["k"][kh] > P["b"][kh]:
                 m0 = (P["b"][kq] + P["k"][kq]) / 2e4
                 q = min(s, CAP)
+                k30 = asof(P["l"], tl + 30_000_000)
+                m30 = (P["b"][k30] + P["k"][k30]) / 2e4 if P["b"][k30] > 0 and P["k"][k30] > P["b"][k30] else np.nan
                 for h in HS:
                     if buy:  # we sell Up at A, hedge by buying Up on Polymarket
                         A = np.ceil((m0 + h) * 100 - 1e-9) / 100
@@ -142,6 +211,7 @@ def market_metrics(L, T, P, W, e, tf=15):
                             r[f"mm{h}_n"] += 1
                             r[f"mm{h}_sh"] += q
                             r[f"mm{h}_hedged"] += (A - ha - fp(ha)) * q
+                            r[f"mm{h}_mo30"] += 0 if m30 != m30 else (A - m30) * q
                             if W == W:
                                 r[f"mm{h}_settle"] += (A - W) * q
                     else:  # we buy Up at B, hedge by buying Down on Polymarket at 1 - bid
@@ -151,10 +221,13 @@ def market_metrics(L, T, P, W, e, tf=15):
                             r[f"mm{h}_n"] += 1
                             r[f"mm{h}_sh"] += q
                             r[f"mm{h}_hedged"] += (hb - B - fp(1 - hb)) * q
+                            r[f"mm{h}_mo30"] += 0 if m30 != m30 else (m30 - B) * q
                             if W == W:
                                 r[f"mm{h}_settle"] += (W - B) * q
         tr.append(d)
     r["trades"] = tr
+    for key in ("mk_settle", "mk_mid", "mk_mo5", "mk_mo30", "mk_mo120"):
+        r[f"w_{key}"] = float(np.nansum([t[key] for t in tr])) if tr else 0.0
     return r
 
 
@@ -226,7 +299,7 @@ def cmd_report(a):
         name = lr.ASSETS[ai]
         ks = [k for k in keys if k[0] == ai]
         days = max(len(ks) / 96, 1e-9)
-        A = defaultdict(float)
+        A, per = defaultdict(float), defaultdict(list)
         sp, sz, trades = [], [], []
         Lb, Lt, Pm = LB[LB["a"] == ai], LT[LT["a"] == ai], PM[PM["a"] == ai]
         for _, e in ks:
@@ -242,6 +315,7 @@ def cmd_report(a):
             trades += r.pop("trades")
             for k2, v in r.items():
                 A[k2] += v
+                per[k2].append(float(v))
         sp, sz = np.concatenate(sp) if sp else np.zeros(0), np.concatenate(sz) if sz else np.zeros(0)
         print(f"\n===== {name.upper()} 15m: {len(ks)} windows ({days:.2f} days) =====")
         print(f"S1 book: two-sided {A['l_valid'] / max(A['grid'], 1):.3f} of the time; spread c p25/50/75 {[round(100 * x, 1) for x in q(sp) or []]}; "
@@ -256,8 +330,13 @@ def cmd_report(a):
         nn = lambda v: float(np.nansum(v))  # noqa: E731
         print(f"   all makers together, $/day: to settlement {nn([t['mk_settle'] for t in trades]) / days:+.2f}; "
               f"vs Polymarket mid at the trade {nn([t['mk_mid'] for t in trades]) / days:+.2f}; vs mid 5 s later {nn([t['mk_mo5'] for t in trades]) / days:+.2f}")
+        cps = lambda k: 100 * A[f"w_{k}"] / max(sh, 1e-9)  # noqa: E731
+        iv = lambda k: "[{:+.0f},{:+.0f}]".format(*ci(per[k], days))  # noqa: E731
+        print(f"   makers, cents per share: at the trade {cps('mk_mid'):+.2f}, after 5 s {cps('mk_mo5'):+.2f}, 30 s {cps('mk_mo30'):+.2f}, "
+              f"120 s {cps('mk_mo120'):+.2f}, to settlement {cps('mk_settle'):+.2f}; 90% range $/day: settlement {iv('w_mk_settle')}, "
+              f"30 s {iv('w_mk_mo30')}")
         for role in ("maker", "taker"):
-            agg = defaultdict(lambda: [0.0, 0.0, 0.0, 0])
+            agg = defaultdict(lambda: [0.0, 0.0, 0.0, 0, 0.0])
             for t in trades:
                 g_ = agg[t[role]]
                 sign = 1 if role == "maker" else -1
@@ -265,22 +344,36 @@ def cmd_report(a):
                 g_[1] += 0 if t["mk_settle"] != t["mk_settle"] else sign * t["mk_settle"] - (t["fee"] if role == "taker" else 0)
                 g_[2] += 0 if t["mk_mid"] != t["mk_mid"] else sign * t["mk_mid"]
                 g_[3] += 1
+                g_[4] += 0 if t["mk_mo30"] != t["mk_mo30"] else sign * t["mk_mo30"]
             top = sorted(agg.items(), key=lambda kv: -kv[1][0])[:5]
-            print(f"   top {role}s (account: shares, trades, $ to settlement{' after fee' if role == 'taker' else ''}, $ vs Polymarket mid):")
-            for acc, (s_, ps, pm_, c) in top:
-                print(f"      {acc}: {s_:.0f} sh ({s_ / max(sh, 1e-9):.0%}), {c} trades, {ps:+.2f}, {pm_:+.2f}")
+            print(f"   top {role}s (account: shares, trades, $ to settlement{' after fee' if role == 'taker' else ''}, $ vs Polymarket mid at the trade, "
+                  f"cents/share vs mid 30 s later):")
+            for acc, (s_, ps, pm_, c, m30) in top:
+                print(f"      {acc}: {s_:.0f} sh ({s_ / max(sh, 1e-9):.0%}), {c} trades, {ps:+.2f}, {pm_:+.2f}, {100 * m30 / max(s_, 1e-9):+.2f}c")
         if not A["both_valid"]:
             print("S4-S6: no overlapping Polymarket rows (pass --pm with the shadow_rec output folder)")
             continue
         bv = A["both_valid"]
         print(f"S4 cross-venue taker arb: both books valid {bv / max(A['grid'], 1):.3f} of the time; pair < $1 after fees {A['arb_time'] / bv:.4f} of that "
               f"(before fees {A['arb_time_gross'] / bv:.4f}); episodes {A['arb_trig'] / days:.1f}/day, still there after 500 ms {A['arb_fill'] / days:.1f}/day, ${A['arb_usd'] / days:+.2f}/day")
+        for th in SEQ_TH:
+            f_, s_ = A[f"seq{th}_fill"], A[f"seq{th}_sh"]
+            print(f"S4 sequential, start at > {int(th * 100)}c: tries {A[f'seq{th}_trig'] / days:.0f}/day, Lighter leg filled {f_ / days:.0f}/day "
+                  f"({s_ / days:.0f} shares/day), hedged pair profitable {A[f'seq{th}_pos'] / max(f_, 1):.2f} of fills, "
+                  f"{100 * A[f'seq{th}_usd'] / max(s_, 1e-9):+.2f}c/share, ${A[f'seq{th}_usd'] / days:+.2f}/day {iv(f'seq{th}_usd')}")
         for th in THETA:
             print(f"S5 stale-quote taker, edge > {int(th * 100)}c vs Polymarket mid: episodes {A[f'sn{th}_trig'] / days:.1f}/day, fills {A[f'sn{th}_fill'] / days:.1f}/day, "
-                  f"model ${A[f'sn{th}_model'] / days:+.2f}/day, to settlement ${A[f'sn{th}_settle'] / days:+.2f}/day")
+                  f"model ${A[f'sn{th}_model'] / days:+.2f}/day, vs mid 5 s later ${A[f'sn{th}_mo5'] / days:+.2f}, 30 s later ${A[f'sn{th}_mo30'] / days:+.2f} "
+                  f"{iv(f'sn{th}_mo30')}, to settlement ${A[f'sn{th}_settle'] / days:+.2f}/day {iv(f'sn{th}_settle')}")
         for h in HS:
             print(f"S6 maker at Polymarket mid +- {int(h * 100)}c: {A[f'mm{h}_n'] / days:.1f} fills/day, {A[f'mm{h}_sh'] / days:.0f} shares/day; "
-                  f"hedged on Polymarket ${A[f'mm{h}_hedged'] / days:+.2f}/day; unhedged to settlement ${A[f'mm{h}_settle'] / days:+.2f}/day")
+                  f"hedged on Polymarket ${A[f'mm{h}_hedged'] / days:+.2f}/day {iv(f'mm{h}_hedged')}; unhedged vs mid 30 s later ${A[f'mm{h}_mo30'] / days:+.2f} "
+                  f"{iv(f'mm{h}_mo30')}; unhedged to settlement ${A[f'mm{h}_settle'] / days:+.2f}/day")
+        den = np.sqrt(A["ll_xx"] * A["ll_yy"]) or 1.0
+        cc = {k: A[f"ll{k}"] / den for k in LAGS}
+        best = max(cc, key=cc.get)
+        print(f"LL correlation of 1 s mid changes, Polymarket shifted by (s): " + ", ".join(f"{k * STEP / 1e6:+.2f}: {cc[k]:.2f}" for k in LAGS if k % 2 == 0)
+              + f"; peak at {best * STEP / 1e6:+.2f} s (positive = Polymarket moves after Lighter, as seen from this box)")
 
 
 def main():

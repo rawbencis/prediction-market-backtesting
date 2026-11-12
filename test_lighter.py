@@ -135,10 +135,36 @@ class Eval(unittest.TestCase):
         self.assertAlmostEqual(r["sn0.04_model"], sn * 50, places=6)
         self.assertAlmostEqual(r["sn0.04_settle"], (1 - 0.44 - le.fl(0.44)) * 50, places=6)
         self.assertAlmostEqual(float(np.median(r["spreads"])), 0.16, places=6)
+        # sequential: Lighter Up at 0.44 (500 ms), then Polymarket Down at 0.51 -> same locked pair, once (5 s pause, then again)
+        self.assertEqual((r["seq0.0_trig"], r["seq0.0_fill"], r["seq0.0_pos"]), (2, 2, 2))
+        self.assertAlmostEqual(r["seq0.0_usd"], edge * 50 * 2, places=6)
+        self.assertEqual(r["seq0.04_trig"], 0)  # the pair is only 2.5c under $1
+        self.assertAlmostEqual(r["sn0.04_mo30"], (0.50 - 0.44 - le.fl(0.44)) * 50, places=6)
         # a 300 ms blip is gone before the order matches
         L2 = lb([(0, 0.42, 0.58, 50, 50), (10, 0.30, 0.44, 50, 50), (10.3, 0.42, 0.58, 50, 50)])
         r2 = le.market_metrics(L2, lt([]), pm([(0, 0.49, 0.51)]), 1.0, E)
         self.assertEqual((r2["arb_trig"], r2["arb_fill"]), (1, 0))
+        self.assertEqual((r2["seq0.0_trig"], r2["seq0.0_fill"]), (1, 0))
+
+    def test_sequential_hedge_runs_away(self):
+        # Lighter ask 0.44 looks cheap against Polymarket 0.49/0.51, but Polymarket is the stale side:
+        # 0.75 s later it reprices to 0.41/0.43, so the Down hedge costs 0.59 and the "arb" loses.
+        L = lb([(0, 0.42, 0.58, 50, 50), (10, 0.30, 0.44, 50, 50), (20, 0.42, 0.58, 50, 50)])
+        P = pm([(0, 0.49, 0.51), (10.75, 0.41, 0.43)])
+        r = le.market_metrics(L, lt([]), P, 0.0, E)
+        self.assertEqual((r["seq0.0_fill"], r["seq0.0_pos"]), (1, 0))
+        self.assertAlmostEqual(r["seq0.0_usd"], (1 - 0.44 - le.fl(0.44) - 0.59 - le.fp(0.59)) * 50, places=6)
+        self.assertGreater(r["arb_usd"], 0)  # the simultaneous version still books a profit on the first 500 ms... 
+
+    def test_lead_lag_sign(self):
+        r_ = np.random.default_rng(0)
+        steps = np.cumsum(r_.choice([-0.01, 0.0, 0.01], 3400))
+        tt = 20 + np.arange(3400) * 0.25
+        mid = np.clip(0.5 + steps, 0.2, 0.8).round(2)
+        L = lb([(float(a), float(m) - 0.02, float(m) + 0.02, 50, 50) for a, m in zip(tt, mid)])
+        P = pm([(float(a) + 0.5, float(m) - 0.01, float(m) + 0.01) for a, m in zip(tt, mid)])  # Polymarket 0.5 s behind
+        r = le.market_metrics(L, lt([]), P, 1.0, E)
+        self.assertEqual(max(le.LAGS, key=lambda k: r[f"ll{k}"]), 2)
 
     def test_trades_and_tighter_maker(self):
         L = lb([(0, 0.42, 0.58, 50, 50)])
@@ -180,6 +206,8 @@ class Eval(unittest.TestCase):
             out = buf.getvalue()
             self.assertIn("BTC 15m: 1 windows", out)
             self.assertIn("S6 maker at Polymarket mid +- 2c: ", out)
+            self.assertIn("S4 sequential, start at > 0c: ", out)
+            self.assertIn("LL correlation", out)
             self.assertIn("top makers", out)
             self.assertIn("agreement 1.0000 over 1 windows", out)
             self.assertIn("to settlement -249.60", out)  # makers: ((0.58-1)*20 + (1-0.42)*10) x 96 windows a day
