@@ -139,6 +139,10 @@ class Eval(unittest.TestCase):
         self.assertEqual((r["seq0.0_trig"], r["seq0.0_fill"], r["seq0.0_pos"]), (2, 2, 2))
         self.assertAlmostEqual(r["seq0.0_usd"], edge * 50 * 2, places=6)
         self.assertEqual(r["seq0.04_trig"], 0)  # the pair is only 2.5c under $1
+        self.assertEqual((r["seq0.02_fill"], r["seq0.02_raced"], r["seq0.02_late_usd"], r["seq0.02_small_usd"]), (2, 0, 0, 0))
+        self.assertAlmostEqual(r["seq0.02_8_8_usd"], edge * 50 * 2, places=6)  # 2 s + 2 s still gets both round trips
+        r3 = le.market_metrics(L, lt([(10.4, 0.44, 5, 1)]), pm([(0, 0.49, 0.51)]), 1.0, E)
+        self.assertEqual(r3["seq0.02_raced"], 1)  # a real taker bought the same quote within a second
         self.assertAlmostEqual(r["sn0.04_mo30"], (0.50 - 0.44 - le.fl(0.44)) * 50, places=6)
         # a 300 ms blip is gone before the order matches
         L2 = lb([(0, 0.42, 0.58, 50, 50), (10, 0.30, 0.44, 50, 50), (10.3, 0.42, 0.58, 50, 50)])
@@ -154,6 +158,7 @@ class Eval(unittest.TestCase):
         r = le.market_metrics(L, lt([]), P, 0.0, E)
         self.assertEqual((r["seq0.0_fill"], r["seq0.0_pos"]), (1, 0))
         self.assertAlmostEqual(r["seq0.0_usd"], (1 - 0.44 - le.fl(0.44) - 0.59 - le.fp(0.59)) * 50, places=6)
+        self.assertAlmostEqual(r["seq0.02_1_1_usd"], (1 - 0.44 - le.fl(0.44) - 0.51 - le.fp(0.51)) * 50, places=6)  # 250+250 ms beats the reprice
         self.assertGreater(r["arb_usd"], 0)  # the simultaneous version still books a profit on the first 500 ms... 
 
     def test_lead_lag_sign(self):

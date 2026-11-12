@@ -42,6 +42,8 @@ HS = (0.01, 0.02, 0.03, 0.05)
 QUOTE_LAG, HEDGE_LAG = 150_000, 300_000
 SEQ_TH = (0.0, 0.02, 0.04)  # minimum pair discount (after fees) to start the sequential arb
 COOL = 20  # grid steps (5 s) before the next sequential arb in the same direction
+# (grid steps until the Lighter leg matches, further steps until the Polymarket hedge matches); first = base case
+SEQ_LAT = ((2, 2), (1, 1), (2, 4), (4, 2), (4, 4), (8, 8))
 LAGS = range(-8, 9)  # grid steps; positive = Polymarket moves after Lighter
 RNG = np.random.default_rng(0)
 
@@ -137,33 +139,39 @@ def market_metrics(L, T, P, W, e, tf=15):
         midv = np.where(vp, mid, np.nan)
         mid5, mid30 = later(midv, 20), later(midv, 120)
         # S4 sequential: Lighter leg first, Polymarket hedge after the fill
+        tt_, tb_ = T["T"].astype(np.int64) * 1000, T["buy"].astype(bool)
         for th in SEQ_TH:
-            for d, edge, lpx, lsz, hsz in (("a", ea, la, las, pbs), ("b", eb, lb, lbs, pas)):
-                nxt = 0
-                for i in np.flatnonzero(v & (edge > th) & (np.minimum(lsz, hsz) >= SIZE)):
-                    if i < nxt:
-                        continue
-                    j, k = i + LAT, i + 2 * LAT
-                    if k >= N:
-                        break
-                    r[f"seq{th}_trig"] += 1
-                    nxt = j
-                    if not (vl[j] and lsz[j] >= SIZE and (lpx[j] <= lpx[i] if d == "a" else lpx[j] >= lpx[i])):
-                        continue  # the Lighter quote was pulled or moved away: nothing bought
-                    nxt = j + COOL
-                    qty = min(float(lsz[j]), CAP)
-                    if not vp[k]:
-                        r[f"seq{th}_nohedge"] += 1
-                        continue
-                    hp = (1 - pb[k]) if d == "a" else pa[k]
-                    if d == "a":
-                        pnl = 1 - lpx[j] - fl(lpx[j]) - hp - fp(hp)
-                    else:
-                        pnl = lpx[j] - fl(lpx[j]) - hp - fp(hp)
-                    r[f"seq{th}_fill"] += 1
-                    r[f"seq{th}_sh"] += qty
-                    r[f"seq{th}_usd"] += pnl * qty
-                    r[f"seq{th}_pos"] += pnl > 0
+            for l1, l2 in SEQ_LAT if th > 0 else SEQ_LAT[:1]:
+                key = f"seq{th}" if (l1, l2) == SEQ_LAT[0] else f"seq{th}_{l1}_{l2}"
+                for d, edge, lpx, lsz, hsz in (("a", ea, la, las, pbs), ("b", eb, lb, lbs, pas)):
+                    nxt = 0
+                    for i in np.flatnonzero(v & (edge > th) & (np.minimum(lsz, hsz) >= SIZE)):
+                        if i < nxt:
+                            continue
+                        j, k = i + l1, i + l1 + l2
+                        if k >= N:
+                            break
+                        r[f"{key}_trig"] += 1
+                        nxt = j
+                        if not (vl[j] and lsz[j] >= SIZE and (lpx[j] <= lpx[i] if d == "a" else lpx[j] >= lpx[i])):
+                            continue  # the Lighter quote was pulled or moved away: nothing bought
+                        nxt = j + COOL
+                        qty = min(float(lsz[j]), float(hsz[k]), CAP)
+                        if not vp[k] or qty < SIZE:
+                            r[f"{key}_nohedge"] += 1
+                            continue
+                        hp = (1 - pb[k]) if d == "a" else pa[k]
+                        pnl = (1 - lpx[j] - hp if d == "a" else lpx[j] - hp) - fl(lpx[j]) - fp(hp)
+                        r[f"{key}_fill"] += 1
+                        r[f"{key}_sh"] += qty
+                        r[f"{key}_usd"] += pnl * qty
+                        r[f"{key}_pos"] += pnl > 0
+                        if key == f"seq{th}":
+                            if g[j] - e * 1_000_000 >= (tf * 60 - 120) * 1_000_000:
+                                r[f"{key}_late_usd"] += pnl * qty
+                            r[f"{key}_small_usd"] += pnl * qty if lsz[j] <= 30 else 0.0
+                            if np.any((tt_ >= g[i]) & (tt_ <= g[j] + 1_000_000) & (tb_ == (d == "a"))):
+                                r[f"{key}_raced"] += 1
         # S5: Lighter taker against stale quotes, Polymarket mid as fair
         for th in THETA:
             for side, edge, px_, sz in ((1, mid - la - fl(la), la, las), (-1, lb - mid - fl(lb), lb, lbs)):
@@ -361,6 +369,12 @@ def cmd_report(a):
             print(f"S4 sequential, start at > {int(th * 100)}c: tries {A[f'seq{th}_trig'] / days:.0f}/day, Lighter leg filled {f_ / days:.0f}/day "
                   f"({s_ / days:.0f} shares/day), hedged pair profitable {A[f'seq{th}_pos'] / max(f_, 1):.2f} of fills, "
                   f"{100 * A[f'seq{th}_usd'] / max(s_, 1e-9):+.2f}c/share, ${A[f'seq{th}_usd'] / days:+.2f}/day {iv(f'seq{th}_usd')}")
+            if th > 0:
+                print(f"     of that $: last 2 min of the window {A[f'seq{th}_late_usd'] / days:+.0f}/day, quotes of <= 30 shares {A[f'seq{th}_small_usd'] / days:+.0f}/day; "
+                      f"a real taker hit the same side within 1 s on {A[f'seq{th}_raced'] / max(f_, 1):.2f} of fills; no hedge size {A[f'seq{th}_nohedge'] / days:.0f}/day")
+                print("     by delay (Lighter match ms + hedge ms): " + "; ".join(
+                    f"{l1 * 250}+{l2 * 250}: {100 * A[f'seq{th}_{l1}_{l2}_usd'] / max(A[f'seq{th}_{l1}_{l2}_sh'], 1e-9):+.2f}c, ${A[f'seq{th}_{l1}_{l2}_usd'] / days:+.0f} "
+                    + iv(f"seq{th}_{l1}_{l2}_usd") for l1, l2 in SEQ_LAT[1:]))
         for th in THETA:
             print(f"S5 stale-quote taker, edge > {int(th * 100)}c vs Polymarket mid: episodes {A[f'sn{th}_trig'] / days:.1f}/day, fills {A[f'sn{th}_fill'] / days:.1f}/day, "
                   f"model ${A[f'sn{th}_model'] / days:+.2f}/day, vs mid 5 s later ${A[f'sn{th}_mo5'] / days:+.2f}, 30 s later ${A[f'sn{th}_mo30'] / days:+.2f} "
