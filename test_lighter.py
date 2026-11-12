@@ -213,6 +213,11 @@ class Eval(unittest.TestCase):
             self.assertIn("S6 maker at Polymarket mid +- 2c: ", out)
             self.assertIn("S4 sequential, start at > 0c: ", out)
             self.assertIn("LL correlation", out)
+            buf = io.StringIO()
+            sys.argv += ["--since", "2026-11-12"]
+            with redirect_stdout(buf):
+                le.main()
+            self.assertIn("markets: 0 finished", buf.getvalue().replace("only windows starting at or after 2026-11-12 UTC\n", ""))
             self.assertIn("top makers", out)
             self.assertIn("agreement 1.0000 over 1 windows", out)
             self.assertIn("to settlement -249.60", out)  # makers: ((0.58-1)*20 + (1-0.42)*10) x 96 windows a day

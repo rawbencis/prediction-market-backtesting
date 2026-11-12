@@ -20,6 +20,7 @@ import csv
 import json
 import urllib.request
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -290,6 +291,11 @@ def cmd_report(a):
     now_e = int(LB["l"].max() // 1_000_000) if len(LB) else 0
     keys = sorted({(int(x), int(y)) for x, y in zip(LB["a"], LB["e"])})
     keys = [k for k in keys if k[1] + 900 < now_e]  # finished windows only
+    if a.since:
+        t0 = int(datetime.fromisoformat(a.since).replace(tzinfo=timezone.utc).timestamp())
+        keys = [k for k in keys if k[1] >= t0]
+        lo = {k: v for k, v in lo.items() if k[1] >= t0}
+        print(f"only windows starting at or after {a.since} UTC")
     win = pm_winners(a.lt / "pm_winners.csv", [(lr.ASSETS[x], e) for x, e in keys], fetch=not a.no_gamma)
     # decode Lighter's outcome code against Polymarket winners
     tab = defaultdict(lambda: [0, 0])
@@ -397,6 +403,7 @@ def main():
     p.add_argument("--lt", type=Path, required=True, help="lighter_rec output folder")
     p.add_argument("--pm", type=Path, default=None, help="shadow_rec output folder (Polymarket books)")
     p.add_argument("--no-gamma", action="store_true")
+    p.add_argument("--since", default=None, help="UTC date or datetime, e.g. 2026-11-13 or 2026-11-12T19:00")
     cmd_report(ap.parse_args())
 
 
