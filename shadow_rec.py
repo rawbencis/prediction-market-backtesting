@@ -1,8 +1,9 @@
 """Shadow recorder: Polymarket crypto up/down books (5m, 15m) + Binance trades. Read-only: no keys, no orders.
 
 rec:   Binance spot and USD-M aggTrade for BTC/ETH/SOL/XRP/DOGE, and the UP token's top of book for
-       every live 5m / 15m window (DOWN is the mirror: ask = 1 - UP bid). One Polymarket socket per
-       window, opened 45 s before it starts. Fixed-width binary rows, hourly files under OUT/YYYY-MM-DD/.
+       every live 5m / 15m window (DOWN is the mirror: ask = 1 - UP bid). Polymarket sockets opened 45 s
+       before each window starts: by default one per token (--split), since one socket per window
+       backlogged by seconds over Tokyo<->London. Fixed-width binary rows, hourly files under OUT/YYYY-MM-DD/.
 check: print the markets found for the current windows and the CLOB market info (taker delay, fees).
 
 pm row: local_us, exchange_ms, asset, tf, epoch, bid, ask (1e-4 $), bid_size, ask_size. bid=ask=0 marks
@@ -163,7 +164,7 @@ def on_msg(raw, lus, toks, tf, epoch, books, last, out, lag=None, trk=None):
     return xmax
 
 
-async def pm_window(tf, epoch, out, st, trades=True):
+async def pm_window(tf, epoch, out, st, trades=True, split="token"):
     end = epoch + tf * 60 + 3
     toks, downs, deadline = {}, {}, max(epoch + 60, time.time() + 15)
     while time.time() < deadline:
@@ -197,11 +198,32 @@ async def pm_window(tf, epoch, out, st, trades=True):
             print("clob-market", slug("btc", tf, epoch), json.dumps(info)[:600], flush=True)
         except Exception as e:  # noqa: BLE001
             st["err"] = f"clob info: {e!r}"[:160]
+    # one socket per group: a single Tokyo<->London TCP stream can't carry every book's update rate, and the
+    # backlog grows for as long as the socket lives (2026-11-14: p90 8.7 s on one socket per window)
+    groups = []
+    for t, (i, _, _) in toks.items():
+        up_trk = {t: (i, 0)} if trk else None
+        dn = {downs[t]: (i, 1)} if trk and t in downs else {}
+        if split == "window":
+            continue
+        if split == "asset":
+            groups.append(({t: toks[t]}, {**(up_trk or {}), **dn} or None))
+        else:  # token: UP books (+ UP trades) on one socket, DOWN trades on another
+            groups.append(({t: toks[t]}, up_trk))
+            if dn:
+                groups.append(({}, dn))
+    if split == "window":
+        groups = [(toks, trk)]
+    await asyncio.gather(*(pm_conn(tf, epoch, end, g, k, out, st) for g, k in groups))
+
+
+async def pm_conn(tf, epoch, end, toks, trk, out, st):
+    subs = list(trk or toks)
     while time.time() < end:
         books, last, xl, up = {t: ({}, {}) for t in toks}, {}, 0, False
         try:
             async with websockets.connect(PM_WS, open_timeout=10, ping_interval=None, max_size=None) as ws:
-                await ws.send(json.dumps({"assets_ids": list(trk or toks), "type": "market"}))
+                await ws.send(json.dumps({"assets_ids": subs, "type": "market"}))
                 st["conn"] += 1
                 up, nxt = True, time.time() + 10
                 while time.time() < end:
@@ -225,9 +247,11 @@ async def pm_window(tf, epoch, out, st, trades=True):
             for t in last:
                 out.add("pm", PM_REC.pack(lus, xl + 1, toks[t][0], tf, epoch, 0, 0, 0.0, 0.0))
             await asyncio.sleep(0.5)
+        elif time.time() < end and not up:
+            await asyncio.sleep(1)
 
 
-async def pm_sched(out, st, trades=True):
+async def pm_sched(out, st, trades=True, split="token"):
     seen, tasks = set(), set()
     while True:
         now = time.time()
@@ -237,7 +261,7 @@ async def pm_sched(out, st, trades=True):
             for e in (cur, cur + w):
                 if (tf, e) not in seen and now >= e - LEAD_S:
                     seen.add((tf, e))
-                    t = asyncio.create_task(pm_window(tf, e, out, st, trades))
+                    t = asyncio.create_task(pm_window(tf, e, out, st, trades, split))
                     tasks.add(t)
                     t.add_done_callback(tasks.discard)
         seen = {k for k in seen if k[1] > now - 7200}
@@ -301,7 +325,7 @@ async def run(a):
     out = Out(a.out)
     st = {"lag": [], "bl": ([], []), "conn": 0, "drops": 0, "bdrops": 0, "nomkt": 0, "err": None}
     await asyncio.gather(
-        binance(0, out, st), binance(1, out, st), pm_sched(out, st, not a.no_trades), housekeeping(out, st, a.keep_days)
+        binance(0, out, st), binance(1, out, st), pm_sched(out, st, not a.no_trades, a.split), housekeeping(out, st, a.keep_days)
     )
 
 
@@ -326,6 +350,8 @@ def main():
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--keep-days", type=int, default=14, help="delete recorded day folders older than this")
     p.add_argument("--no-trades", action="store_true", help="do not subscribe DOWN tokens / record trade prints")
+    p.add_argument("--split", choices=("token", "asset", "window"), default="token",
+                   help="websocket per token (default), per asset, or one per window (pre-2026-11-14 behaviour)")
     sp.add_parser("check")
     a = ap.parse_args()
     if a.cmd == "check":

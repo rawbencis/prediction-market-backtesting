@@ -46,6 +46,39 @@ class TestTradeCapture(unittest.TestCase):
         self.assertEqual(out2.rows["tr"], [])
 
 
+class TestSplit(unittest.TestCase):
+    def run_split(self, split, trades=True):
+        import asyncio
+        import time as _t
+
+        calls = []
+
+        def fake_find(tf, epoch, downs=None):
+            if downs is not None:
+                downs.update({"U0": "D0", "U1": "D1"})
+            return {"U0": (0, "btc", "c0"), "U1": (1, "eth", "c1")}
+
+        async def fake_conn(tf, epoch, end, toks, trk, out, st):
+            calls.append((sorted(toks), sorted(trk) if trk else None))
+
+        of, oc = sr.find_markets, sr.pm_conn
+        sr.find_markets, sr.pm_conn = fake_find, fake_conn
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                out = sr.Out(Path(td))
+                st = {"nomkt": 0, "err": None}
+                asyncio.run(sr.pm_window(5, int(_t.time()) // 300 * 300 + 7, out, st, trades, split))
+        finally:
+            sr.find_markets, sr.pm_conn = of, oc
+        return sorted(calls, key=str)
+
+    def test_groups(self):
+        self.assertEqual(self.run_split("window"), [(["U0", "U1"], ["D0", "D1", "U0", "U1"])])
+        self.assertEqual(self.run_split("asset"), [(["U0"], ["D0", "U0"]), (["U1"], ["D1", "U1"])])
+        self.assertEqual(self.run_split("token"), sorted([(["U0"], ["U0"]), ([], ["D0"]), (["U1"], ["U1"]), ([], ["D1"])], key=str))
+        self.assertEqual(self.run_split("token", trades=False), [(["U0"], None), (["U1"], None)])
+
+
 class TestMomentum(unittest.TestCase):
     def test_fill_and_report(self):
         with tempfile.TemporaryDirectory() as td:

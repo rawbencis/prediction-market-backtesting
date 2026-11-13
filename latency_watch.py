@@ -115,6 +115,35 @@ def cmd_report(a):
     print("verdict:", v, "  [rule: NEW BOX if > 10% of samples have pm p90 > 200 ms or > 0.5% of pm rows arrive > 1 s late]")
 
 
+def cmd_detail(a):
+    """Delay of rows received since --since (UTC ISO), split by time into the window and by asset."""
+    t0 = datetime.fromisoformat(a.since).replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    parts, t = [], t0.replace(minute=0, second=0, microsecond=0)
+    while t <= now:
+        f = a.rec / t.strftime("%Y-%m-%d") / f"pm-{t.hour:02d}.bin"
+        if f.exists():
+            parts.append(np.fromfile(f, dtype=PM_DT, count=f.stat().st_size // PM_DT.itemsize))
+        t += timedelta(hours=1)
+    pm = np.concatenate(parts) if parts else np.zeros(0, PM_DT)
+    pm = pm[(pm["x"] > 0) & (pm["l"] >= int(t0.timestamp() * 1e6))]
+    d = pm["l"] / 1000 - pm["x"]
+    tw = pm["x"] // 1000 - pm["e"].astype(np.int64)
+    tf = pm["tf"].astype(int)
+
+    def P(v):
+        return f"n={len(v):>8} p50 {np.percentile(v, 50):>6.0f} p90 {np.percentile(v, 90):>7.0f} p99 {np.percentile(v, 99):>7.0f} >1s {100 * (v > 1000).mean():5.1f}%" if len(v) else "n=0"
+
+    print(f"since {t0.isoformat()} ({(now - t0).total_seconds() / 60:.0f} min)")
+    print("all                         ", P(d))
+    for w in (5, 15):
+        for lo, hi in ((-60, 0), (0, 30), (30, 120), (120, 60 * w)):
+            m = (tf == w) & (tw >= lo) & (tw < hi)
+            print(f"{w:>2}m {lo:>4}..{hi:<4}s into window   ", P(d[m]))
+    for i, n in enumerate(("btc", "eth", "sol", "xrp", "doge")):
+        print(f"{n:>5}                       ", P(d[pm["a"] == i]))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -122,11 +151,14 @@ def main():
     p.add_argument("--rec", type=Path, default=Path.home() / "shadow-rec")
     p.add_argument("--log", type=Path, default=Path.home() / "shadow-latency.csv")
     p.add_argument("--window", type=int, default=15, help="minutes")
+    p = sp.add_parser("detail")
+    p.add_argument("--rec", type=Path, default=Path.home() / "shadow-rec")
+    p.add_argument("--since", required=True, help="UTC, e.g. 2026-11-14T00:05")
     p = sp.add_parser("report")
     p.add_argument("--log", type=Path, default=Path.home() / "shadow-latency.csv")
     p.add_argument("--hours", type=int, default=48)
     a = ap.parse_args()
-    {"sample": cmd_sample, "report": cmd_report}[a.cmd](a)
+    {"sample": cmd_sample, "report": cmd_report, "detail": cmd_detail}[a.cmd](a)
 
 
 if __name__ == "__main__":
