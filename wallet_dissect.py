@@ -1,7 +1,10 @@
 """Dissect one Polymarket wallet (default: OhioAI) trading BTC up/down markets.
 
-probe    print raw samples from data-api /activity and /trades (schema check)
-fetch    full /activity history (all types) -> act.jsonl; taker trades on a sample of markets -> taker.jsonl
+Uses the Polymarket Data API v2 (cursor pagination, snake_case rows; v1 returns 410).
+probe    print raw samples from /v2/activity, /v2/trades, /v2/user-pnl (schema check)
+fetch    full /v2/activity history (all types incl. rebates) -> act.jsonl
+         full /v2/trades taker_only=true history -> taker.jsonl (maker = activity trades not in it)
+         /v2/user-pnl interval=max fidelity=1d -> pnl.json (cumulative pnl, fees, maker rebates, volume)
 settle   winners for every up/down market traded (stwf2 settlements first, then Gamma) -> winners.csv
 report   per-market books, PnL split (pair lock / direction / sells / merges), monthly, timing, prices,
          and for Jun-Jul markets: join with the stwf2 top-of-book cache (block-time lag, maker/taker, markouts)
@@ -22,7 +25,7 @@ from pathlib import Path
 import numpy as np
 
 WALLET = "0x129246beaac356e104c397f0985c11b7469be5a6"
-DATA = "https://data-api.polymarket.com"
+DATA = "https://data-api.polymarket.com/v2"
 GAMMA = "https://gamma-api.polymarket.com"
 SLUG = re.compile(r"^(btc|eth|sol|xrp|doge|bnb)-updown-(5m|15m|1h|4h)-(\d+)$")
 LEN = {"5m": 300, "15m": 900, "1h": 3600, "4h": 14400}
@@ -51,8 +54,31 @@ def rows_of(x):
     return x["data"] if isinstance(x, dict) and "data" in x else x
 
 
+V2 = dict(condition_id="conditionId", usdc_size="usdcSize", transaction_hash="transactionHash", token_id="asset", outcome_index="outcomeIndex", proxy_wallet="proxyWallet", event_slug="eventSlug")
+
+
+def norm(r):
+    return {V2.get(k, k): v for k, v in r.items()}
+
+
 def key(r):
     return (r.get("transactionHash"), r.get("asset"), r.get("type", "TRADE"), r.get("side"), str(r.get("size")), str(r.get("price")), r.get("timestamp"))
+
+
+def pages(path, params, sleep):
+    """follow pagination.next_cursor, re-sending identical filters."""
+    cur = None
+    while True:
+        p = dict(params)
+        if cur:
+            p["cursor"] = cur
+        x = get(DATA + path, p)
+        yield [norm(r) for r in rows_of(x)]
+        pg = x.get("pagination", {}) if isinstance(x, dict) else {}
+        cur = pg.get("next_cursor")
+        if not cur or not pg.get("has_more", True):
+            return
+        time.sleep(sleep)
 
 
 # ---------------------------------------------------------------- probe / fetch
@@ -61,74 +87,46 @@ def key(r):
 def cmd_probe(a):
     for path, p in (
         ("/activity", dict(user=a.wallet, limit=3)),
-        ("/trades", dict(user=a.wallet, limit=3, takerOnly="false")),
-        ("/trades", dict(user=a.wallet, limit=3, takerOnly="true")),
+        ("/trades", dict(user=a.wallet, limit=3, taker_only="false")),
+        ("/trades", dict(user=a.wallet, limit=3, taker_only="true")),
+        ("/user-pnl", dict(user=a.wallet, interval="1w", fidelity="1d")),
     ):
         try:
-            x = rows_of(get(DATA + path, p))
-            print(f"== {path} {p}: {len(x)} rows; keys {sorted(x[0]) if x else []}")
-            print(json.dumps(x[:2], indent=1)[:3000])
+            x = get(DATA + path, p)
+            r = rows_of(x)
+            print(f"== {path} {p}: keys {sorted(x) if isinstance(x, dict) else type(x)}")
+            print(json.dumps(r[:2] if isinstance(r, list) else r, indent=1)[:2500])
         except Exception as e:  # noqa: BLE001
             print(f"== {path} {p}: ERROR {e!r}")
 
 
+def dump(f, path, params, sleep, label):
+    n = 0
+    tmp = f.with_suffix(".tmp")
+    with tmp.open("w") as fh:
+        for rows in pages(path, params, sleep):
+            for r in rows:
+                fh.write(json.dumps(r) + "\n")
+            n += len(rows)
+            if rows:
+                day = datetime.fromtimestamp(int(rows[-1]["timestamp"]), timezone.utc).isoformat()[:16]
+                print(f"{label}: {n} rows, at {day}", flush=True)
+    tmp.replace(f)
+    print(f"{label}: {n} rows -> {f}")
+
+
 def cmd_fetch(a):
     a.out.mkdir(parents=True, exist_ok=True)
-    f = a.out / "act.jsonl"
-    seen, n = set(), 0
-    if f.exists():
-        for line in f.open():
-            seen.add(key(json.loads(line)))
-    end = a.end or int(time.time())
-    stale = 0
-    with f.open("a") as fh:
-        while end > a.since:
-            p = dict(user=a.wallet, limit=500, end=end, sortBy="TIMESTAMP", sortDirection="DESC")
-            if a.since:
-                p["start"] = a.since
-            rows = rows_of(get(DATA + "/activity", p))
-            new = [r for r in rows if key(r) not in seen]
-            for r in new:
-                seen.add(key(r))
-                fh.write(json.dumps(r) + "\n")
-            n += len(new)
-            if not rows:
-                break
-            lo = min(int(r["timestamp"]) for r in rows)
-            day = datetime.fromtimestamp(lo, timezone.utc).isoformat()[:16]
-            print(f"{n} rows, back to {day}", flush=True)
-            stale = 0 if new else stale + 1
-            if stale >= 3:
-                print("3 pages with nothing new: API is ignoring `end` or history is exhausted; stopping")
-                break
-            end = lo if new else lo - 1  # whole page already seen -> step past this second
-            if len(rows) < 500 and not new:
-                break
-            time.sleep(a.sleep)
-    print(f"activity: {n} new rows -> {f}")
-    if a.taker_sample:
-        cmd_taker(a)
+    types = "TRADE,SPLIT,MERGE,REDEEM,CONVERSION,REWARD,YIELD,MAKER_REBATE,TAKER_REBATE,REFERRAL_REWARD,DIRECTIONAL_SPLIT,DIRECTIONAL_MERGE"
+    dump(a.out / "act.jsonl", "/activity", dict(user=a.wallet, limit=1000, start=a.since or 1, type=types, sort_direction="ASC"), a.sleep, "activity")
+    cmd_taker(a)
+    x = get(DATA + "/user-pnl", dict(user=a.wallet, interval="max", fidelity="1d"))
+    (a.out / "pnl.json").write_text(json.dumps(x))
+    print(f"user-pnl: {len(rows_of(x).get('points', []))} daily points -> {a.out / 'pnl.json'}")
 
 
 def cmd_taker(a):
-    """/trades takerOnly=true for a random sample of BTC 5m markets -> which fills were taker."""
-    acts = [json.loads(x) for x in (a.out / "act.jsonl").open()]
-    conds = sorted({r["conditionId"] for r in acts if r.get("type") == "TRADE" and SLUG.match(r.get("slug") or "")})
-    rng = np.random.default_rng(0)
-    pick = [conds[i] for i in rng.choice(len(conds), min(a.taker_sample, len(conds)), replace=False)]
-    f = a.out / "taker.jsonl"
-    done = set()
-    if f.exists():
-        done = {json.loads(x)["_market"] for x in f.open()}
-    with f.open("a") as fh:
-        for i, c in enumerate(pick):
-            if c in done:
-                continue
-            rows = rows_of(get(DATA + "/trades", dict(user=a.wallet, market=c, takerOnly="true", limit=1000)))
-            fh.write(json.dumps({"_market": c, "rows": rows}) + "\n")
-            if i % 50 == 0:
-                print(f"taker sample {i}/{len(pick)}", flush=True)
-            time.sleep(a.sleep)
+    dump(a.out / "taker.jsonl", "/trades", dict(user=a.wallet, limit=1000, start=a.since or 1, taker_only="true"), a.sleep, "taker trades")
 
 
 # ---------------------------------------------------------------- settle
@@ -415,17 +413,48 @@ def cmd_report(a):
             st[ak]["first_up_vs_first_down_gap_s_q"] = q(gaps)
     rep["structure"] = st
     rep["book_join_btc5m"] = book_join(B, a.cache) if a.cache else None
-    # taker sample
+    # maker vs taker (full taker history)
     tf = a.out / "taker.jsonl"
     if tf.exists():
         tk = [json.loads(x) for x in tf.open()]
-        tkeys = {(r.get("transactionHash"), r.get("asset"), str(r.get("size"))) for m in tk for r in m["rows"] if (r.get("proxyWallet") or "").lower() == a.wallet.lower()}
-        mk = {m["_market"] for m in tk}
-        mine = [r for r in acts if r.get("type") == "TRADE" and r.get("conditionId") in mk]
-        is_t = [(r.get("transactionHash"), r.get("asset"), str(r.get("size"))) in tkeys for r in mine]
-        usd = np.array([float(r.get("usdcSize") or 0) for r in mine])
-        it = np.array(is_t, bool)
-        rep["taker_sample"] = dict(markets=len(mk), fills=len(mine), taker_fill_share=round(float(it.mean()), 3) if len(it) else None, taker_usd_share=round(float(usd[it].sum() / max(usd.sum(), 1)), 3) if len(it) else None, raw_taker_rows=sum(len(m["rows"]) for m in tk))
+        tkeys = Counter((r.get("transactionHash"), r.get("asset"), r.get("side"), round(float(r.get("size") or 0), 4)) for r in tk)
+        tr_ = [r for r in acts if r.get("type") == "TRADE"]
+        it = []
+        for r in tr_:
+            kk = (r.get("transactionHash"), r.get("asset"), r.get("side"), round(float(r.get("size") or 0), 4))
+            hit = tkeys[kk] > 0
+            if hit:
+                tkeys[kk] -= 1
+            it.append(hit)
+        it = np.array(it, bool)
+        usd = np.array([float(r.get("usdcSize") or 0) or float(r.get("size") or 0) * float(r.get("price") or 0) for r in tr_])
+        mon = np.array([datetime.fromtimestamp(int(r["timestamp"]), timezone.utc).strftime("%Y-%m") for r in tr_])
+        rep["maker_taker"] = dict(
+            taker_rows=len(tk), trade_rows=len(tr_), taker_fill_share=round(float(it.mean()), 3) if len(it) else None,
+            taker_usd_share=round(float(usd[it].sum() / max(usd.sum(), 1)), 3),
+            unmatched_taker_rows=int(sum(v for v in tkeys.values() if v > 0)),
+            taker_usd_share_by_month={m: round(float(usd[(mon == m) & it].sum() / max(usd[mon == m].sum(), 1)), 3) for m in sorted(set(mon))},
+        )
+    # official cumulative pnl series
+    pf = a.out / "pnl.json"
+    if pf.exists():
+        pts = rows_of(json.loads(pf.read_text())).get("points", [])
+        if pts:
+            by = {}
+            for pt in pts:
+                by[datetime.fromtimestamp(int(pt["timestamp"]), timezone.utc).strftime("%Y-%m")] = pt  # last point of month
+            prev = {}
+            mo = {}
+            for m, pt in sorted(by.items()):
+                row = {}
+                for f in ("realized_pnl", "economic_pnl", "volume_usdc", "trade_count", "fees", "maker_rebate", "taker_rebate", "reward_income"):
+                    v = pt.get(f)
+                    if v is not None:
+                        row[f] = round(float(v) - float(prev.get(f, 0) or 0), 2)
+                mo[m] = row
+                prev = {k: v for k, v in pt.items() if v is not None}
+            rep["official_monthly"] = mo
+            rep["official_cumulative_last"] = {k: v for k, v in pts[-1].items() if k not in ("source_block",)}
     (a.out / "report.json").write_text(json.dumps(rep, indent=1, default=float))
     print(json.dumps(rep, indent=1, default=float))
 
@@ -439,8 +468,6 @@ if __name__ == "__main__":
         p.add_argument("--out", type=Path, default=Path.home() / "ohioai")
         p.add_argument("--cache", type=Path, default=None)
         p.add_argument("--since", type=int, default=0)
-        p.add_argument("--end", type=int, default=0)
         p.add_argument("--sleep", type=float, default=0.25)
-        p.add_argument("--taker-sample", type=int, default=0)
     a = ap.parse_args()
     {"probe": cmd_probe, "fetch": cmd_fetch, "taker": cmd_taker, "settle": cmd_settle, "report": cmd_report}[a.cmd](a)

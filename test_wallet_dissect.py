@@ -72,6 +72,47 @@ class T(unittest.TestCase):
             self.assertAlmostEqual(rep["pnl_usd"], 30 * 20 * (1 - 0.96), places=4)
             self.assertEqual(rep["structure"]["btc-5m"]["pct_both_sides"], 1.0)
 
+    def test_fetch_v2_pages_and_report(self):
+        def v2(t, side, outcome, px, sz, j):
+            return dict(proxy_wallet=wd.WALLET, timestamp=EP + 300 * j + t, condition_id=f"0x{j}", type="TRADE", size=sz, usdc_size=px * sz,
+                        transaction_hash=f"0x{j}{t}", price=px, token_id=f"tok{outcome}{j}", side=side, outcome_index=0 if outcome == "Up" else 1,
+                        slug=f"btc-updown-5m-{EP + 300 * j}", outcome=outcome)
+
+        act = [v2(5, "BUY", "Up", 0.47, 10, j) for j in range(4)] + [v2(9, "BUY", "Down", 0.50, 10, j) for j in range(4)]
+        calls = []
+
+        def fake_get(url, params, tries=6):
+            calls.append((url, dict(params)))
+            if url.endswith("/activity"):
+                if "cursor" not in params:
+                    return dict(data=act[:5], pagination=dict(has_more=True, next_cursor="c1"))
+                return dict(data=act[5:], pagination=dict(has_more=False, next_cursor=None))
+            if url.endswith("/trades"):
+                return dict(data=[act[0]], pagination=dict(has_more=False, next_cursor=None))
+            return dict(data=dict(points=[dict(timestamp=EP, realized_pnl=1.0, maker_rebate=0.5, volume_usdc=100), dict(timestamp=EP + 86400 * 40, realized_pnl=3.0, maker_rebate=0.7, volume_usdc=300)]))
+
+        orig = wd.get
+        wd.get = fake_get
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp)
+                wd.cmd_fetch(Namespace(out=out, wallet=wd.WALLET, since=0, sleep=0))
+                self.assertEqual(sum(1 for _ in (out / "act.jsonl").open()), 8)
+                self.assertEqual(calls[1][1]["cursor"], "c1")
+                self.assertEqual(calls[1][1]["type"], calls[0][1]["type"])
+                with (out / "winners.csv").open("w", newline="") as f:
+                    w = csv.writer(f)
+                    w.writerow(["slug", "winner"])
+                    w.writerows([(f"btc-updown-5m-{EP + 300 * j}", "UP") for j in range(4)])
+                wd.cmd_report(Namespace(out=out, cache=None, wallet=wd.WALLET))
+                rep = json.loads((out / "report.json").read_text())
+                self.assertAlmostEqual(rep["pnl_usd"], 4 * (10 - 4.7 - 5.0), places=4)
+                self.assertEqual(rep["maker_taker"]["taker_fill_share"], 0.125)
+                self.assertEqual(rep["maker_taker"]["unmatched_taker_rows"], 0)
+                self.assertEqual(len(rep["official_monthly"]), 2)
+        finally:
+            wd.get = orig
+
 
 if __name__ == "__main__":
     unittest.main()
