@@ -8,6 +8,9 @@ check: print the markets found for the current windows and the CLOB market info 
 pm row: local_us, exchange_ms, asset, tf, epoch, bid, ask (1e-4 $), bid_size, ask_size. bid=ask=0 marks
         a dropped connection (book unknown from there until the next row).
 bn row: local_us, trade_ms, src (0 spot, 1 USD-M), asset, price.
+tr row: local_us, exchange_ms, asset, tf, epoch, token (0 UP, 1 DOWN), side (0 BUY, 1 SELL: taker side),
+        price (1e-4 $), size, fee_rate_bps, transaction hash (32 bytes). From `last_trade_price`; both tokens
+        are subscribed for this (books are still kept for UP only). `--no-trades` turns it off.
 """
 
 import argparse
@@ -33,6 +36,7 @@ ASSETS = ("btc", "eth", "sol", "xrp", "doge")
 TFS = (5, 15)
 PM_REC = struct.Struct("<qqBBIHHff")
 BN_REC = struct.Struct("<qqBBd")
+TR_REC = struct.Struct("<qqBBIBBHfH32s")
 GAMMA = "https://gamma-api.polymarket.com/markets?"
 CLOB = "https://clob.polymarket.com/clob-markets/"
 PM_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
@@ -53,8 +57,9 @@ def slug(asset, tf, epoch):
     return f"{asset}-updown-{tf}m-{epoch}"
 
 
-def find_markets(tf, epoch):
-    """-> {up_token: (asset_idx, slug, condition_id)} for the tf-minute window starting at epoch."""
+def find_markets(tf, epoch, downs=None):
+    """-> {up_token: (asset_idx, slug, condition_id)} for the tf-minute window starting at epoch.
+    If `downs` is a dict it is filled with {up_token: down_token}."""
     want = {slug(a, tf, epoch): i for i, a in enumerate(ASSETS)}
     out = {}
     for m in http_json(GAMMA + "&".join(f"slug={s}" for s in want)):
@@ -62,6 +67,8 @@ def find_markets(tf, epoch):
             names = [n.upper() for n in json.loads(m["outcomes"])]
             toks = json.loads(m["clobTokenIds"])
             out[toks[names.index("UP")]] = (want[m["slug"]], m["slug"], m.get("conditionId", ""))
+            if downs is not None:
+                downs[toks[names.index("UP")]] = toks[names.index("DOWN")]
         except (KeyError, ValueError, TypeError):
             continue
     return out
@@ -69,7 +76,7 @@ def find_markets(tf, epoch):
 
 class Out:
     def __init__(self, root):
-        self.root, self.buf, self.n = root, {"pm": [], "bn": []}, {"pm": 0, "bn": 0}
+        self.root, self.buf, self.n = root, {"pm": [], "bn": [], "tr": []}, {"pm": 0, "bn": 0, "tr": 0}
 
     def add(self, kind, row):
         self.buf[kind].append(row)
@@ -90,13 +97,31 @@ def px(s):
     return int(round(float(s) * 10000))
 
 
-def on_msg(raw, lus, toks, tf, epoch, books, last, out, lag=None):
-    """Apply one market-channel message; write a row for each token whose top of book changed.
-    -> latest exchange ms seen (0 if none)."""
+def tx_bytes(h):
+    try:
+        return bytes.fromhex((h or "")[2:] if (h or "").startswith("0x") else (h or ""))[:32].ljust(32, b"\0")
+    except ValueError:
+        return b"\0" * 32
+
+
+def on_msg(raw, lus, toks, tf, epoch, books, last, out, lag=None, trk=None):
+    """Apply one market-channel message; write a row for each token whose top of book changed, and
+    (if trk = {token: (asset_idx, 0 UP / 1 DOWN)}) a tr row per last_trade_price.
+    -> latest exchange ms seen in book events (0 if none)."""
     ev = loads(raw)
     xmax = 0
     for e in ev if isinstance(ev, list) else (ev,):
         et = e.get("event_type")
+        if et == "last_trade_price":
+            t = trk.get(e.get("asset_id")) if trk else None
+            if t:
+                try:
+                    out.add("tr", TR_REC.pack(lus, int(e.get("timestamp") or 0), t[0], tf, epoch, t[1],
+                                              0 if e.get("side") == "BUY" else 1, px(e["price"]), float(e["size"]),
+                                              int(e.get("fee_rate_bps") or 0), tx_bytes(e.get("transaction_hash"))))  # fmt: skip
+                except (KeyError, TypeError, ValueError):
+                    pass
+            continue
         if et == "book":
             a = e.get("asset_id")
             if a not in books:
@@ -138,12 +163,13 @@ def on_msg(raw, lus, toks, tf, epoch, books, last, out, lag=None):
     return xmax
 
 
-async def pm_window(tf, epoch, out, st):
+async def pm_window(tf, epoch, out, st, trades=True):
     end = epoch + tf * 60 + 3
-    toks, deadline = {}, max(epoch + 60, time.time() + 15)
+    toks, downs, deadline = {}, {}, max(epoch + 60, time.time() + 15)
     while time.time() < deadline:
         try:
-            toks = await asyncio.to_thread(find_markets, tf, epoch)
+            downs = {}
+            toks = await asyncio.to_thread(find_markets, tf, epoch, downs)
         except Exception as e:  # noqa: BLE001
             st["err"] = f"gamma {tf}m {epoch}: {e!r}"[:160]
         # want all assets; settle for a partial set only once the open is about to pass
@@ -156,6 +182,14 @@ async def pm_window(tf, epoch, out, st):
     with (out.root / "markets.csv").open("a") as f:
         for t, (i, sl, cond) in toks.items():
             f.write(f"{tf},{epoch},{ASSETS[i]},{sl},{cond},{t}\n")
+    trk = None
+    if trades:
+        trk = {t: (i, 0) for t, (i, _, _) in toks.items()}
+        trk.update({downs[t]: (toks[t][0], 1) for t in toks if t in downs})
+        with (out.root / "markets_down.csv").open("a") as f:
+            for t in toks:
+                if t in downs:
+                    f.write(f"{tf},{epoch},{ASSETS[toks[t][0]]},{t},{downs[t]}\n")
     if tf == 5 and epoch % 3600 == 0:
         try:
             cond = next(c for i, _, c in toks.values() if i == 0)
@@ -167,7 +201,7 @@ async def pm_window(tf, epoch, out, st):
         books, last, xl, up = {t: ({}, {}) for t in toks}, {}, 0, False
         try:
             async with websockets.connect(PM_WS, open_timeout=10, ping_interval=None, max_size=None) as ws:
-                await ws.send(json.dumps({"assets_ids": list(toks), "type": "market"}))
+                await ws.send(json.dumps({"assets_ids": list(trk or toks), "type": "market"}))
                 st["conn"] += 1
                 up, nxt = True, time.time() + 10
                 while time.time() < end:
@@ -180,7 +214,7 @@ async def pm_window(tf, epoch, out, st):
                         await ws.send("PING")
                         nxt = lus / 1e6 + 10
                     if raw and raw not in ("PONG", b"PONG"):
-                        xl = max(xl, on_msg(raw, lus, toks, tf, epoch, books, last, out, st["lag"]))
+                        xl = max(xl, on_msg(raw, lus, toks, tf, epoch, books, last, out, st["lag"], trk))
         except Exception as e:  # noqa: BLE001
             st["err"] = f"pm {tf}m {epoch}: {e!r}"[:160]
         if up:
@@ -193,7 +227,7 @@ async def pm_window(tf, epoch, out, st):
             await asyncio.sleep(0.5)
 
 
-async def pm_sched(out, st):
+async def pm_sched(out, st, trades=True):
     seen, tasks = set(), set()
     while True:
         now = time.time()
@@ -203,7 +237,7 @@ async def pm_sched(out, st):
             for e in (cur, cur + w):
                 if (tf, e) not in seen and now >= e - LEAD_S:
                     seen.add((tf, e))
-                    t = asyncio.create_task(pm_window(tf, e, out, st))
+                    t = asyncio.create_task(pm_window(tf, e, out, st, trades))
                     tasks.add(t)
                     t.add_done_callback(tasks.discard)
         seen = {k for k in seen if k[1] > now - 7200}
@@ -249,7 +283,7 @@ async def housekeeping(out, st, keep):
         k += 1
         if k % 60 == 0:
             print(
-                f"rows pm={out.n['pm']} bn={out.n['bn']} conns={st['conn']} pm_lag_ms={pct(st['lag'])} "
+                f"rows pm={out.n['pm']} bn={out.n['bn']} tr={out.n['tr']} conns={st['conn']} pm_lag_ms={pct(st['lag'])} "
                 f"spot_lag={pct(st['bl'][0])} fut_lag={pct(st['bl'][1])} drops={st['drops']}/{st['bdrops']} "
                 f"no_market={st['nomkt']} last_err={st['err']}",
                 flush=True,
@@ -267,7 +301,7 @@ async def run(a):
     out = Out(a.out)
     st = {"lag": [], "bl": ([], []), "conn": 0, "drops": 0, "bdrops": 0, "nomkt": 0, "err": None}
     await asyncio.gather(
-        binance(0, out, st), binance(1, out, st), pm_sched(out, st), housekeeping(out, st, a.keep_days)
+        binance(0, out, st), binance(1, out, st), pm_sched(out, st, not a.no_trades), housekeeping(out, st, a.keep_days)
     )
 
 
@@ -291,6 +325,7 @@ def main():
     p = sp.add_parser("rec")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--keep-days", type=int, default=14, help="delete recorded day folders older than this")
+    p.add_argument("--no-trades", action="store_true", help="do not subscribe DOWN tokens / record trade prints")
     sp.add_parser("check")
     a = ap.parse_args()
     if a.cmd == "check":
