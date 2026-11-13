@@ -13,6 +13,7 @@ report   per-market books, PnL split (pair lock / direction / sells / merges), m
 import argparse
 import csv
 import json
+import math
 import re
 import time
 import urllib.error
@@ -316,8 +317,14 @@ def q(x, ps=(10, 25, 50, 75, 90)):
     return [round(float(np.percentile(x, p)), 3) for p in ps] if len(x) else []
 
 
+def in_range(acts, a):
+    lo = int(datetime.fromisoformat(a.date_from).replace(tzinfo=timezone.utc).timestamp()) if a.date_from else 0
+    hi = int(datetime.fromisoformat(a.date_to).replace(tzinfo=timezone.utc).timestamp()) if a.date_to else 1 << 40
+    return [r for r in acts if lo <= int(r["timestamp"]) < hi]
+
+
 def cmd_report(a):
-    acts = [json.loads(x) for x in (a.out / "act.jsonl").open()]
+    acts = in_range([json.loads(x) for x in (a.out / "act.jsonl").open()], a)
     wf = a.out / "winners.csv"
     winners = {r["slug"]: r["winner"] for r in csv.DictReader(wf.open())} if wf.exists() else {}
     rep = {}
@@ -474,15 +481,153 @@ def cmd_report(a):
     print(json.dumps(rep, indent=1, default=float))
 
 
+# ---------------------------------------------------------------- decision rule vs Binance 1s spot
+
+PHI = np.vectorize(lambda x: 0.5 * (1 + math.erf(x / math.sqrt(2))))
+
+
+def klines(day, d, sym="BTCUSDT"):
+    """Binance spot 1s klines for one UTC day -> (sec array, close array); cached as .npy."""
+    f = d / f"{sym}-{day}.npy"
+    if not f.exists():
+        import io
+        import zipfile
+
+        url = f"https://data.binance.vision/data/spot/daily/klines/{sym}/1s/{sym}-1s-{day}.zip"
+        req = urllib.request.Request(url, headers={"User-Agent": "research-wallet-dissect"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            z = zipfile.ZipFile(io.BytesIO(r.read()))
+        raw = np.genfromtxt(z.open(z.namelist()[0]), delimiter=",", usecols=(0, 4))
+        t = raw[:, 0]
+        t = np.where(t > 1e14, t / 1e6, np.where(t > 1e11, t / 1e3, t)).astype(np.int64)
+        np.save(f, np.stack([t, raw[:, 1]], 1))
+    x = np.load(f)
+    return x[:, 0].astype(np.int64), x[:, 1]
+
+
+def cell_table(rows, keys, edges, names):
+    out = {}
+    for k, e, nm in zip(keys, edges, names):
+        v = np.array([r[k] for r in rows], float)
+        b = np.digitize(v, e) - 1
+        for i in range(len(e) - 1):
+            sel = [r for r, bb in zip(rows, b) if bb == i]
+            if len(sel) < 30:
+                continue
+            usd = sum(r["usd"] for r in sel)
+            out[f"{nm} {e[i]:g}..{e[i + 1]:g}"] = dict(
+                fills=len(sel), usd=round(usd), win=round(float(np.mean([r["win"] for r in sel])), 3),
+                avg_px=round(float(np.mean([r["px"] for r in sel])), 3), avg_fair=round(float(np.mean([r["fair"] for r in sel])), 3),
+                net_c_per_usd=round(100 * sum(r["pnl"] for r in sel) / max(usd, 1e-9), 2),
+            )
+    return out
+
+
+def cmd_rule(a):
+    acts = in_range([json.loads(x) for x in (a.out / "act.jsonl").open()], a)
+    winners = {r["slug"]: r["winner"] for r in csv.DictReader((a.out / "winners.csv").open())}
+    kd = a.klines
+    kd.mkdir(parents=True, exist_ok=True)
+    fills = []
+    for r in acts:
+        m = SLUG.match(r.get("slug") or "")
+        if not m or m.group(1) != "btc" or r.get("type") != "TRADE" or r.get("side") != "BUY":
+            continue
+        k, W = side_of(r), winners.get(r["slug"])
+        if k is None or W is None:
+            continue
+        sz, px, usd = float(r["size"]), float(r["price"]), float(r.get("usdcSize") or 0)
+        fee = usd - sz * px
+        fills.append(dict(ep=int(m.group(3)), L=LEN[m.group(2)], kind=m.group(2), ts=int(r["timestamp"]), k=k, px=px, sz=sz, usd=usd,
+                          taker=fee > 0.5 * 0.07 * px * (1 - px) * sz, win=int((W == "UP") == (k == 0)), pnl=sz * int((W == "UP") == (k == 0)) - usd))
+    days = sorted({datetime.fromtimestamp(f["ep"], timezone.utc).date().isoformat() for f in fills} | {datetime.fromtimestamp(f["ts"], timezone.utc).date().isoformat() for f in fills})
+    T, C = [], []
+    for i, d in enumerate(days):
+        try:
+            t, c = klines(d, kd)
+            T.append(t)
+            C.append(c)
+        except Exception as e:  # noqa: BLE001
+            print("klines failed", d, repr(e), flush=True)
+        if i % 10 == 0:
+            print(f"klines {i + 1}/{len(days)}", flush=True)
+    T, C = np.concatenate(T), np.concatenate(C)
+    o = np.argsort(T)
+    T, C = T[o], C[o]
+    LR = np.r_[0, np.diff(np.log(C))]
+
+    def px_at(sec):
+        i = np.searchsorted(T, sec, "right") - 1
+        return np.where(i >= 0, C[np.maximum(i, 0)], np.nan)
+
+    rep = dict(range=[a.date_from, a.date_to], lag_s=a.lag)
+    ep = np.array([f["ep"] for f in fills])
+    ts = np.array([f["ts"] for f in fills])
+    Ls = np.array([f["L"] for f in fills])
+    k = np.array([f["k"] for f in fills])
+    p0 = px_at(ep - 1)
+    sens = {}
+    for lag in range(0, 7):
+        td = ts - lag
+        cur = px_at(td)
+        i1 = np.searchsorted(T, td, "right")
+        sig = np.array([LR[max(j - 300, 0):j].std() if j > 30 else np.nan for j in i1])
+        tl = np.maximum(ep + Ls - td, 1)
+        z = np.log(cur / p0) / (sig * np.sqrt(tl))
+        fair = PHI(np.nan_to_num(z))
+        fair = np.where(k == 0, fair, 1 - fair)
+        px = np.array([f["px"] for f in fills])
+        tk = np.array([f["taker"] for f in fills])
+        sens[lag] = dict(taker_frac_fair_gt_px=round(float((fair[tk] > px[tk]).mean()), 3) if tk.any() else None, taker_mean_fair_minus_px=round(float(np.nanmean(fair[tk] - px[tk])), 4) if tk.any() else None)
+        if lag == a.lag:
+            m5 = np.log(cur / px_at(td - 5)) * 1e4
+            for f, zz, fa, tlv, mm in zip(fills, z, fair, tl, m5):
+                f["z_side"] = float(zz if f["k"] == 0 else -zz) if zz == zz else np.nan
+                f["fair"] = float(fa)
+                f["edge"] = float(fa) - f["px"]
+                f["tleft"] = float(tlv)
+                f["mom5_side"] = float(mm if f["k"] == 0 else -mm) if mm == mm else np.nan
+    rep["lag_sensitivity"] = sens
+    for role in ("taker", "maker"):
+        R = [f for f in fills if f["taker"] == (role == "taker") and f.get("fair") == f.get("fair")]
+        if not R:
+            continue
+        usd = sum(f["usd"] for f in R)
+        rep[role] = dict(
+            fills=len(R), usd=round(usd), pnl=round(sum(f["pnl"] for f in R), 2), net_c_per_usd=round(100 * sum(f["pnl"] for f in R) / usd, 2),
+            kinds=dict(Counter(f["kind"] for f in R)),
+            share_mom5_toward_side=round(float(np.mean([f["mom5_side"] > 0 for f in R if f["mom5_side"] == f["mom5_side"]])), 3),
+            z_side_q=q([f["z_side"] for f in R]), edge_q=q([f["edge"] for f in R]), tleft_q=q([f["tleft"] for f in R]), px_q=q([f["px"] for f in R]),
+            by_tleft=cell_table(R, ["tleft"], [[0, 5, 10, 20, 30, 60, 120, 300, 900]], ["secs_left"]),
+            by_price=cell_table(R, ["px"], [[0, 0.2, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0]], ["px"]),
+            by_edge=cell_table(R, ["edge"], [[-1, -0.2, -0.1, -0.05, 0, 0.05, 0.1, 0.2, 0.3, 1]], ["fair-px"]),
+            by_z_side=cell_table(R, ["z_side"], [[-9, -1, -0.5, 0, 0.5, 1, 1.5, 2, 3, 99]], ["z_side"]),
+            by_mom5=cell_table(R, ["mom5_side"], [[-1e9, -5, -2, 0, 2, 5, 10, 1e9]], ["mom5_bps"]),
+        )
+    # model sanity: is our spot fair calibrated on these fills?
+    allf = [f for f in fills if f.get("fair") == f.get("fair")]
+    if allf:
+        fa = np.array([f["fair"] for f in allf])
+        w = np.array([f["win"] for f in allf])
+        b = np.digitize(fa, np.linspace(0, 1, 11)) - 1
+        rep["fair_calibration"] = {f"{i / 10:.1f}": [int((b == i).sum()), round(float(w[b == i].mean()), 3)] for i in range(10) if (b == i).sum() >= 30}
+    (a.out / f"rule_{a.date_from or 'all'}.json").write_text(json.dumps(rep, indent=1, default=float))
+    print(json.dumps(rep, indent=1, default=float))
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     sp = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("probe", "fetch", "taker", "settle", "report"):
+    for name in ("probe", "fetch", "taker", "settle", "report", "rule"):
         p = sp.add_parser(name)
         p.add_argument("--wallet", default=WALLET)
         p.add_argument("--out", type=Path, default=Path.home() / "ohioai")
         p.add_argument("--cache", type=Path, default=None)
         p.add_argument("--since", type=int, default=0)
         p.add_argument("--sleep", type=float, default=0.25)
+        p.add_argument("--from", dest="date_from", default="")
+        p.add_argument("--to", dest="date_to", default="")
+        p.add_argument("--klines", type=Path, default=Path.home() / "binance_1s")
+        p.add_argument("--lag", type=int, default=3)
     a = ap.parse_args()
-    {"probe": cmd_probe, "fetch": cmd_fetch, "taker": cmd_taker, "settle": cmd_settle, "report": cmd_report}[a.cmd](a)
+    {"probe": cmd_probe, "fetch": cmd_fetch, "taker": cmd_taker, "settle": cmd_settle, "report": cmd_report, "rule": cmd_rule}[a.cmd](a)

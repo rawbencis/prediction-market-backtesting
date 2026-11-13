@@ -67,7 +67,7 @@ class T(unittest.TestCase):
                 w = csv.writer(f)
                 w.writerow(["slug", "winner"])
                 w.writerows([(f"btc-updown-5m-{EP + 300 * j}", "UP" if j % 2 else "DOWN") for j in range(30)])
-            wd.cmd_report(Namespace(out=out, cache=None, wallet=wd.WALLET))
+            wd.cmd_report(Namespace(out=out, cache=None, wallet=wd.WALLET, date_from="", date_to=""))
             rep = json.loads((out / "report.json").read_text())
             self.assertAlmostEqual(rep["pnl_usd"], 30 * 20 * (1 - 0.96), places=4)
             self.assertEqual(rep["structure"]["btc-5m"]["pct_both_sides"], 1.0)
@@ -104,7 +104,7 @@ class T(unittest.TestCase):
                     w = csv.writer(f)
                     w.writerow(["slug", "winner"])
                     w.writerows([(f"btc-updown-5m-{EP + 300 * j}", "UP") for j in range(4)])
-                wd.cmd_report(Namespace(out=out, cache=None, wallet=wd.WALLET))
+                wd.cmd_report(Namespace(out=out, cache=None, wallet=wd.WALLET, date_from="", date_to=""))
                 rep = json.loads((out / "report.json").read_text())
                 self.assertAlmostEqual(rep["pnl_usd"], 4 * (10 - 4.7 - 5.0), places=4)
                 self.assertEqual(rep["maker_taker"]["taker_fill_share"], 0.125)
@@ -112,6 +112,39 @@ class T(unittest.TestCase):
                 self.assertEqual(len(rep["official_monthly"]), 2)
         finally:
             wd.get = orig
+
+    def test_rule_with_local_klines(self):
+        from datetime import datetime, timezone
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out, kd = Path(tmp), Path(tmp) / "k"
+            kd.mkdir()
+            rng = np.random.default_rng(0)
+            day0 = EP - EP % 86400
+            for d in range(2):
+                t = np.arange(day0 + 86400 * d, day0 + 86400 * (d + 1))
+                c = 60000 * np.exp(np.cumsum(rng.normal(0, 2e-4, len(t))))
+                np.save(kd / f"BTCUSDT-{datetime.fromtimestamp(int(t[0]), timezone.utc).date().isoformat()}.npy", np.stack([t, c], 1))
+            rows, win = [], []
+            for j in range(60):
+                e = EP + 300 * j
+                # taker buy of Up at 0.55 at 280 s with fee
+                rows.append(dict(type="TRADE", timestamp=e + 283, side="BUY", outcome="Up", price=0.55, size=10, usdcSize=5.5 + 0.07 * 0.55 * 0.45 * 10,
+                                 slug=f"btc-updown-5m-{e}", conditionId=f"0x{j}", asset=f"u{j}", transactionHash=f"0x{j}"))
+                win.append((f"btc-updown-5m-{e}", "UP" if j % 3 else "DOWN"))
+            with (out / "act.jsonl").open("w") as f:
+                for r in rows:
+                    f.write(json.dumps(r) + "\n")
+            with (out / "winners.csv").open("w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["slug", "winner"])
+                w.writerows(win)
+            wd.cmd_rule(Namespace(out=out, klines=kd, lag=3, date_from="", date_to=""))
+            rep = json.loads((out / "rule_all.json").read_text())
+            self.assertEqual(rep["taker"]["fills"], 60)
+            self.assertNotIn("maker", rep)
+            self.assertIn("lag_sensitivity", rep)
+            self.assertAlmostEqual(rep["taker"]["pnl"], sum(10 * (j % 3 != 0) - (5.5 + 0.07 * 0.55 * 0.45 * 10) for j in range(60)), places=1)
 
 
 if __name__ == "__main__":
