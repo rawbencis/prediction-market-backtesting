@@ -435,6 +435,21 @@ def cmd_report(a):
             unmatched_taker_rows=int(sum(v for v in tkeys.values() if v > 0)),
             taker_usd_share_by_month={m: round(float(usd[(mon == m) & it].sum() / max(usd[mon == m].sum(), 1)), 3) for m in sorted(set(mon))},
         )
+    # fee-implied role: usdc_size includes the taker fee (0.07*p*(1-p) per share); makers pay none
+    tr_ = [r for r in acts if r.get("type") == "TRADE" and r.get("side") == "BUY"]
+    if tr_:
+        sz = np.array([float(r.get("size") or 0) for r in tr_])
+        px = np.array([float(r.get("price") or 0) for r in tr_])
+        usd = np.array([float(r.get("usdcSize") or 0) for r in tr_])
+        fee = usd - sz * px
+        exp = 0.07 * px * (1 - px) * sz
+        tk = fee > 0.5 * exp
+        mon = np.array([datetime.fromtimestamp(int(r["timestamp"]), timezone.utc).strftime("%Y-%m") for r in tr_])
+        rep["fee_implied_buys"] = dict(
+            buys=len(tr_), taker_share=round(float(tk.mean()), 3), taker_usd_share=round(float(usd[tk].sum() / max(usd.sum(), 1)), 3),
+            fees_paid_usd=round(float(fee[tk].sum()), 2), fee_over_expected_q=q(fee[exp > 0] / exp[exp > 0]),
+            taker_usd_share_by_month={m: round(float(usd[(mon == m) & tk].sum() / max(usd[mon == m].sum(), 1)), 3) for m in sorted(set(mon))},
+        )
     # official cumulative pnl series
     pf = a.out / "pnl.json"
     if pf.exists():
