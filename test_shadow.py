@@ -94,12 +94,45 @@ def run_eval(td, delay):
 
 
 class TestEval(unittest.TestCase):
+    def test_tokyo_sees_late_feed(self):
+        # same world, but the repriced book reaches the recorder 2 s late: tokyo still sees 50/52 and fires,
+        # its order lands after the reprice at 100.27 s -> no fill; with a punctual feed nothing changes
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            record(td, reprice_s=101.0)
+            _, _, O = run_eval(td, 50.0)
+            on_time = O[(O.theta == 0.08) & (O.scen == "tokyo")].filled.tolist()
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            record(td, reprice_s=100.0)  # reprice before the decision ...
+            f = td / DAY / "pm-01.bin"
+            r = np.fromfile(f, se.PM_DT)
+            r["l"][1] += 2_000_000  # ... but received 2 s late
+            r.tofile(f)
+            _, _, O2 = run_eval(td, 50.0)
+            late = O2[(O2.theta == 0.08) & (O2.scen == "tokyo")]
+            self.assertEqual(on_time, [1])  # reprice after arrival: tokyo fills at 0.52
+            self.assertEqual(late.filled.tolist(), [0])  # stale view fires, arrival sees 95/97 -> no fill
+
+    def test_hour_files_and_neighbours(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            record(td)
+            # move the pre-open row into the previous hour's file: it must still be used
+            f = td / DAY / "pm-01.bin"
+            r = np.fromfile(f, se.PM_DT)
+            r[:1].tofile(td / DAY / "pm-00.bin")
+            r[1:].tofile(f)
+            got = se.pm_hour(td, DAY, 1)
+            self.assertEqual(len(got), 2)
+            self.assertEqual(len(se.pm_hour(td, DAY, 0)), 0)  # rows belong to the 01:00 market only
+
     def test_timing_decides_who_fills(self):
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
             record(td)
             a, lat, O = run_eval(td, 50.0)
-            self.assertEqual(lat["pm_ms"], [120.0, 120.0, 120.0])
+            self.assertEqual(lat["pm_ms"], [120.0, 120.0, 120.0, 120.0])
             self.assertEqual(lat["spot_ms"][1], 4.0)
             self.assertEqual(lat["markets"], 1)
             o = O[O.theta == 0.08].set_index("scen")

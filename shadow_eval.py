@@ -4,7 +4,8 @@ eval:   per recorded day and market. Decision times every 100 ms on the recorder
         p_up = N(k * ln(S/S0) / (sig * sqrt(tau))) from the Binance price the recorder had RECEIVED by then
         (spot and USD-M evaluated separately; S0 = last trade before the open, sig = trailing 30 min).
         Scenarios, all in Polymarket exchange time:
-          tokyo   decide on receipt, seeing a book d50 ms old; order reaches the CLOB d10 + proc ms later.
+          tokyo   decide on receipt, seeing the book exactly as the recorder had received it (so Polymarket
+                  feed bursts count); order reaches the CLOB d10 + proc ms later.
           colo-X  a box next to the CLOB fed by a relay from Tokyo that is X ms faster than the public
                   path (relay = d10 - X): decides relay ms later on a 1 ms old book, order lands 1 + proc
                   ms after that.
@@ -52,14 +53,24 @@ def read(root, day, kind, dt):
     return np.concatenate(parts) if parts else np.zeros(0, dt)
 
 
-def book_at(M, q):
-    """Book at exchange times q (us) -> UP ask, UP ask size, DOWN ask (1 - UP bid), DOWN ask size."""
-    i = np.searchsorted(M["xu"], q, "right") - 1
+def book_rows(M, i):
+    """Book state after rows i (-1 = none) -> UP ask, UP ask size, DOWN ask (1 - UP bid), DOWN ask size."""
     j = np.maximum(i, 0)
     b, k = M["b"][j].astype(float), M["k"][j].astype(float)
     ok = (i >= 0) & (b < k)
     return (np.where(ok & (k > 0), k / 1e4, np.nan), M["ks"][j],
             np.where(ok & (b > 0), 1 - b / 1e4, np.nan), M["bs"][j])  # fmt: skip
+
+
+def book_at(M, q):
+    """Book standing at Polymarket exchange times q (us)."""
+    return book_rows(M, np.searchsorted(M["xu"], q, "right") - 1)
+
+
+def book_seen(M, q):
+    """Book as the recorder had received it by local times q (us): includes Polymarket's feed bursts."""
+    i = np.searchsorted(M["lr"], q, "right") - 1
+    return book_rows(M, np.where(i >= 0, M["ol"][np.maximum(i, 0)], -1))
 
 
 def first_fill(fair, view, arr, asz, theta, rate):
@@ -69,17 +80,36 @@ def first_fill(fair, view, arr, asz, theta, rate):
     return bool(sig.any()), (int(np.argmax(ok)) if ok.any() else -1)
 
 
+def pm_hour(root, day, h):
+    """Polymarket rows of markets opening in hour h of day (their rows sit in files h-1, h, h+1)."""
+    t0 = datetime.fromisoformat(day).replace(tzinfo=timezone.utc) + timedelta(hours=h)
+    e0 = int(t0.timestamp())
+    parts = []
+    for k in (-1, 0, 1):
+        t = t0 + timedelta(hours=k)
+        f = root / t.date().isoformat() / f"pm-{t.hour:02d}.bin"
+        if f.exists():
+            x = np.fromfile(f, dtype=PM_DT, count=f.stat().st_size // PM_DT.itemsize)
+            parts.append(x[(x["e"] >= e0) & (x["e"] < e0 + 3600)])
+    return np.concatenate(parts) if parts else np.zeros(0, PM_DT)
+
+
 def eval_day(root, day, a):
-    pm = read(root, day, "pm-", PM_DT)
+    own = [root / day / f"pm-{h:02d}.bin" for h in range(24)]
+    samp = [np.fromfile(f, dtype=PM_DT)[::20] for f in own if f.exists()]
+    samp = np.concatenate(samp) if samp else np.zeros(0, PM_DT)
     prev = (date.fromisoformat(day) - timedelta(1)).isoformat()
     bn = np.concatenate([read(root, prev, "bn-23", BN_DT), read(root, day, "bn-", BN_DT)])
-    if not len(pm) or not len(bn):
+    live = (samp["x"] > 0) & (samp["k"] > 0)
+    if not live.any() or not len(bn):
         return None
-    live = (pm["x"] > 0) & (pm["k"] > 0)
-    d10, d50, d90 = np.percentile(pm["l"][live] / 1000 - pm["x"][live], [10, 50, 90])
-    scen = [("tokyo", 0.0, d50, d10 + a.proc_ms)]
+    lagd = samp["l"][live] / 1000 - samp["x"][live]
+    d10, d50, d90, d99 = np.percentile(lagd, [10, 50, 90, 99])
+    scen = [("tokyo", 0.0, None, d10 + a.proc_ms)]
     scen += [(f"colo-{int(s)}", d10 - s, 1.0, 1.0 + a.proc_ms) for s in a.relay_save_ms]
-    B, lat = {}, {"pm_ms": [round(float(v), 1) for v in (d10, d50, d90)]}
+    B = {}
+    lat = {"pm_ms": [round(float(v), 1) for v in (d10, d50, d90, d99)],
+           "pm_over_500ms": round(float((lagd > 500).mean()), 4)}  # fmt: skip
     for s in (0, 1):
         m = bn["src"] == s
         if m.any():
@@ -90,58 +120,72 @@ def eval_day(root, day, a):
             x = bn[m & (bn["a"] == i)]
             x = x[np.argsort(x["l"], kind="stable")]
             B[s, i] = (x["l"], np.maximum.accumulate(x["T"]) if len(x) else x["T"], x["p"])
-    key = (pm["a"].astype(np.int64) << 40) | (pm["tf"].astype(np.int64) << 32) | pm["e"]
-    o = np.lexsort((pm["x"], key))
-    pm, key = pm[o], key[o]
-    cuts = np.r_[0, np.flatnonzero(np.diff(key)) + 1, len(pm)]
-    orders, zrows, nm = [], [], 0
-    for c0, c1 in zip(cuts[:-1], cuts[1:]):
-        r = pm[c0:c1]
-        i, tf, ep = int(r["a"][0]), int(r["tf"][0]), int(r["e"][0])
-        W, e_us = tf * 60, ep * 1_000_000
-        M = {"xu": r["x"] * 1000, "b": r["b"], "k": r["k"], "bs": r["bs"], "ks": r["ks"]}
-        g = np.arange(5 * 1_000_000, (W - 4) * 1_000_000, STEP_US)
-        t, tau = e_us + g, W - g / 1e6
-        books = {n: (book_at(M, t + int((ad - s) * 1000)), book_at(M, t + int((ad + b + a.taker_delay_ms) * 1000)))
-                 for n, ad, s, b in scen}  # fmt: skip
-        used = False
-        for s in (0, 1):
-            L, T, P = B[s, i]
-            if not len(L) or L[0] > e_us - VOL_WIN * 1_000_000:
-                continue
-            j0 = np.searchsorted(T, ep * 1000, "right") - 1
-            vg = np.arange(e_us - VOL_WIN * 1_000_000, e_us, STEP_US)
-            lr = np.diff(np.log(P[np.searchsorted(L, vg, "right") - 1]))
-            sig = float(np.sqrt(np.sum(lr**2) / (len(lr) * STEP_US / 1e6)))
-            if j0 < 0 or not sig > 0:
-                continue
-            used = True
-            z = np.log(P[np.searchsorted(L, t, "right") - 1] / P[j0]) / (sig * np.sqrt(tau))
-            fu = ndtr(a.k * z)
-            ua, _, da, _ = books["tokyo"][0]
-            for fr in ZFRAC:
-                n = int(np.searchsorted(g, fr * W * 1e6))
-                zrows.append((day, i, tf, ep, s, fr, float(z[n]), float((ua[n] + 1 - da[n]) / 2)))
-            for name, (view, arr) in books.items():
-                for th in THETAS:
-                    best, anysig = None, False
-                    for side, f, v, av, sz in (("UP", fu, view[0], arr[0], arr[1]),
-                                               ("DOWN", 1 - fu, view[2], arr[2], arr[3])):  # fmt: skip
-                        sg, n = first_fill(f, v, av, sz, th, a.fee_rate)
-                        anysig |= sg
-                        if n >= 0 and (best is None or n < best[0]):
-                            best = (n, side, float(f[n]), float(av[n]), float(sz[n]))
-                    if best:
-                        orders.append((day, i, tf, ep, s, name, th, 1, best[1], g[best[0]] / 1e6, *best[2:]))
-                    elif anysig:
-                        orders.append((day, i, tf, ep, s, name, th, 0, "", np.nan, np.nan, np.nan, np.nan))
-        nm += used
+    del bn, samp
+    orders, zrows, nm, nrows, hours = [], [], 0, 0, 0
+    for h in range(24):
+        pm = pm_hour(root, day, h)
+        if not len(pm):
+            continue
+        hours += 1
+        nrows += len(pm)
+        key = (pm["a"].astype(np.int64) << 40) | (pm["tf"].astype(np.int64) << 32) | pm["e"]
+        o = np.lexsort((pm["x"], key))
+        pm, key = pm[o], key[o]
+        cuts = np.r_[0, np.flatnonzero(np.diff(key)) + 1, len(pm)]
+        for c0, c1 in zip(cuts[:-1], cuts[1:]):
+            nm += eval_market(pm[c0:c1], day, scen, B, a, orders, zrows)
+        del pm, key
     pd.DataFrame(orders, columns=OCOLS).to_csv(a.res / f"orders-{day}.csv", index=False)
     pd.DataFrame(zrows, columns=ZCOLS).to_csv(a.res / f"z-{day}.csv", index=False)
-    lat.update(markets=nm, pm_rows=int(len(pm)), bn_rows=int(len(bn)), taker_delay_ms=a.taker_delay_ms,
+    lat.update(markets=nm, hours=hours, pm_rows=int(nrows), taker_delay_ms=a.taker_delay_ms,
                proc_ms=a.proc_ms, k=a.k)  # fmt: skip
     (a.res / f"lat-{day}.json").write_text(json.dumps(lat))
     return lat
+
+
+def eval_market(r, day, scen, B, a, orders, zrows):
+    i, tf, ep = int(r["a"][0]), int(r["tf"][0]), int(r["e"][0])
+    W, e_us = tf * 60, ep * 1_000_000
+    ol = np.argsort(r["l"], kind="stable")
+    M = {"xu": r["x"] * 1000, "b": r["b"], "k": r["k"], "bs": r["bs"], "ks": r["ks"], "lr": r["l"][ol], "ol": ol}
+    g = np.arange(5 * 1_000_000, (W - 4) * 1_000_000, STEP_US)
+    t, tau = e_us + g, W - g / 1e6
+    books = {}
+    for n, ad, age, b in scen:
+        view = book_seen(M, t) if age is None else book_at(M, t + int((ad - age) * 1000))
+        books[n] = (view, book_at(M, t + int((ad + b + a.taker_delay_ms) * 1000)))
+    used = False
+    for s in (0, 1):
+        L, T, P = B[s, i]
+        if not len(L) or L[0] > e_us - VOL_WIN * 1_000_000:
+            continue
+        j0 = np.searchsorted(T, ep * 1000, "right") - 1
+        vg = np.arange(e_us - VOL_WIN * 1_000_000, e_us, STEP_US)
+        lr = np.diff(np.log(P[np.searchsorted(L, vg, "right") - 1]))
+        sig = float(np.sqrt(np.sum(lr**2) / (len(lr) * STEP_US / 1e6)))
+        if j0 < 0 or not sig > 0:
+            continue
+        used = True
+        z = np.log(P[np.searchsorted(L, t, "right") - 1] / P[j0]) / (sig * np.sqrt(tau))
+        fu = ndtr(a.k * z)
+        ua, _, da, _ = books["tokyo"][0]
+        for fr in ZFRAC:
+            n = int(np.searchsorted(g, fr * W * 1e6))
+            zrows.append((day, i, tf, ep, s, fr, float(z[n]), float((ua[n] + 1 - da[n]) / 2)))
+        for name, (view, arr) in books.items():
+            for th in THETAS:
+                best, anysig = None, False
+                for side, f, v, av, sz in (("UP", fu, view[0], arr[0], arr[1]),
+                                           ("DOWN", 1 - fu, view[2], arr[2], arr[3])):  # fmt: skip
+                    sg, n = first_fill(f, v, av, sz, th, a.fee_rate)
+                    anysig |= sg
+                    if n >= 0 and (best is None or n < best[0]):
+                        best = (n, side, float(f[n]), float(av[n]), float(sz[n]))
+                if best:
+                    orders.append((day, i, tf, ep, s, name, th, 1, best[1], g[best[0]] / 1e6, *best[2:]))
+                elif anysig:
+                    orders.append((day, i, tf, ep, s, name, th, 0, "", np.nan, np.nan, np.nan, np.nan))
+    return used
 
 
 def cmd_eval(a):
@@ -226,6 +270,10 @@ def cmd_report(a):
         print("share of signalled markets that fill\n", fr.round(3).to_string())
         D = H.pivot_table(index="day", columns="scen", values="p5", aggfunc="sum")
         D = D.reindex(index=days, columns=scens).fillna(0)
+        print(f"$ per day at {SIZE:g} shares, by day\n", D.round(2).to_string())
+        for c in scens:
+            m, lo, hi = boot(D[c].to_numpy())
+            print(f"  {c}: mean {m:+.2f} $/day, 90% CI {lo:+.2f} to {hi:+.2f}, positive days {int((D[c] > 0).sum())}/{nd}")
         for c in scens[1:]:
             m, lo, hi = boot((D[c] - D["tokyo"]).to_numpy())
             print(f"uplift {c} vs tokyo: {m:+.2f} $/day at {SIZE:g} shares" + (f" (90% CI {lo:+.2f} to {hi:+.2f})" if nd >= 5 else ""))
