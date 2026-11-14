@@ -6,7 +6,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VENV=/home/ubuntu/shadow-venv/bin/python
 $VENV -c "import websockets" || { echo "websockets missing in shadow-venv"; exit 1; }
-(cd "$DIR" && $VENV -m pytest -q -p no:cacheprovider test_act_rec.py 2>&1 | tail -1)
+(cd "$DIR" && $VENV -m unittest -q test_act_rec 2>&1 | tail -1)
 sudo tee /etc/systemd/system/updown-act.service >/dev/null <<UNIT
 [Unit]
 Description=Up/down taker census from Polymarket RTDS activity (read-only, no keys)
