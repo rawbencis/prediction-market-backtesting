@@ -73,7 +73,8 @@ def match_day(root, day, acts, a):
         sgn = 1 if tok == 0 else -1
         row = dict(matched=1, slug=r.get("slug"), asset=rec.ASSETS[ai], tf=tf, epoch=ep, x_ms=x, t_s=x / 1000 - ep, side=tok,
                    px=pr, size=sz, taker=int(usd - sz * pr > 0.5 * 0.07 * pr * (1 - pr) * sz), block_lag_s=int(r["timestamp"]) - x / 1000,
-                   tr_side=int(tr["sd"][j]), rx_delay_ms=tr["l"][j] / 1000 - x)  # fmt: skip
+                   tr_side=int(tr["sd"][j]), rx_delay_ms=tr["l"][j] / 1000 - x,
+                   tx=r["transaction_hash"][2:].lower())  # fmt: skip
         # book just before the match (exchange time)
         m = (pm["a"] == ai) & (pm["tf"] == tf) & (pm["e"] == ep)
         P = pm[m]
