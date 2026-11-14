@@ -86,7 +86,7 @@ def match_day(root, day, acts, a):
         b = bn[(bn["src"] == 0) & (bn["a"] == ai)]
         if len(b) > 10:
             o = np.argsort(b["T"], kind="stable")
-            T, Pp, Lr = b["T"][o], b["p"][o], b["l"][o]
+            T, Pp, Lr = b["T"][o], b["p"][o], b["l"][o]  # noqa: N806
 
             def s_at(ms):
                 k = np.searchsorted(T, ms, "right") - 1
@@ -95,6 +95,20 @@ def match_day(root, day, acts, a):
             ref = s_at(x - 10_000)
             for d in DELTAS:
                 row[f"mv{d}"] = sgn * 1e4 * np.log(s_at(x - d) / ref)
+            # Same-move race: the Binance tick at which the 10 s move toward the side first reached 50% / 90% of its
+            # size at the match. react = their match - that tick's Binance time (both exchange clocks). ev_land = when
+            # we would land on that same tick: this box's receipt + processing + taker hold + one-way to Polymarket.
+            tot = row["mv0"]
+            if tot >= 1.0:
+                k0, k1 = np.searchsorted(T, x - 10_000, "right"), np.searchsorted(T, x, "right")
+                if k1 > k0:
+                    cum = sgn * 1e4 * np.log(Pp[k0:k1] / ref)
+                    for frac, tag in ((0.5, "50"), (0.9, "90")):
+                        hit = np.flatnonzero(cum >= frac * tot)
+                        if len(hit):
+                            k = k0 + hit[0]
+                            row[f"react{tag}_ms"] = x - int(T[k])
+                            row[f"ev_land{tag}_minus_match_ms"] = Lr[k] / 1000 + a.proc_ms + a.taker_delay_ms + d10 - x
             # our rule: first time the recorder had RECEIVED a >= M bp 5 s move toward the side (10 s before .. 3 s after)
             o2 = np.argsort(b["l"], kind="stable")
             Ls, Ps = b["l"][o2], b["p"][o2]
@@ -149,6 +163,28 @@ def cmd_run(a):
                     dd = [d for d in DELTAS if r[f"mv{d}"] <= 0.5 * tot]
                     half.append(min(dd) if dd else np.nan)
                 rep["ms_since_half_of_move_q"] = q(half)
+        for tag in ("50", "90"):
+            c = f"react{tag}_ms"
+            if c in T:
+                for lo, hi in ((1, 2), (2, 5), (5, 1e9)):
+                    S = T[(T.mv0 >= lo) & (T.mv0 < hi)]
+                    if len(S):
+                        e = S[f"ev_land{tag}_minus_match_ms"]
+                        rep[f"move {lo}-{hi:g}bp: n={len(S)} react{tag}_ms_q"] = q(S[c])
+                        rep[f"move {lo}-{hi:g}bp: ev_land{tag}_minus_their_match_ms_q"] = q(e)
+                        rep[f"move {lo}-{hi:g}bp: share_we_first_{tag}"] = round(float((e < 0).mean()), 3)
+        rep["taker_fills_by_move_bp"] = {
+            str(k): int(v) for k, v in pd.cut(T.mv0, [-1e9, -2, 0, 1, 2, 5, 1e9]).value_counts(sort=False).items()
+        } if "mv0" in T else {}
+        rep["taker_share_by_market"] = {
+            f"{a}-{int(tf)}m": round(float(g.taker.mean()), 2) for (a, tf), g in M.groupby(["asset", "tf"])
+        }
+        rep["taker_t_left_s_q"] = q(T.tf.astype(float) * 60 - T.t_s) if len(T) else []
+        rep["taker_ask_before_q"] = q(T.ask_before) if "ask_before" in T else []
+        un = D[D.matched == 0]
+        if len(un):
+            pre = un.slug.fillna("").str.replace(r"-\d+$", "", regex=True).value_counts().head(8)
+            rep["unmatched_by_market"] = {k: int(v) for k, v in pre.items()}
         if "our_land_minus_match_ms" in T:
             v = T.our_land_minus_match_ms
             rep["our_rule_fired_share"] = round(float(v.notna().mean()), 3)

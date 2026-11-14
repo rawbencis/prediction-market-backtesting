@@ -134,6 +134,18 @@ class TestMatch(unittest.TestCase):
             self.assertAlmostEqual(r["mv500"], 0.0, places=3)
             # we receive the jump at 100.03 s, land at +120 + 10 + 50 -> 100.21 s: 10 ms after their match
             self.assertAlmostEqual(r["our_land_minus_match_ms"], 10.0)
+            # same-move race: the whole jump is one Binance tick (exchange time 100.026 s), so 50% and 90% are the same tick
+            self.assertEqual((r["react50_ms"], r["react90_ms"]), (174, 174))  # Binance time = receipt - 4 ms
+            self.assertAlmostEqual(r["ev_land90_minus_match_ms"], 10.0)
+            # report: breakdown keys exist and the race lands in the 5+ bp bucket
+            a = Namespace(rec=td, out=td / "o", days=[DAY], wallet="w", M=2.0, proc_ms=10.0, taker_delay_ms=50.0)
+            om.activity = lambda *_: acts
+            with contextlib.redirect_stdout(io.StringIO()):
+                om.cmd_run(a)
+            rep = json.loads((td / "o" / "ohioai_ms.json").read_text())
+            self.assertEqual(rep["move 5-1e+09bp: share_we_first_90"], 0.0)
+            self.assertEqual(rep["taker_share_by_market"], {"btc-5m": 1.0})
+            self.assertEqual(rep["unmatched_by_market"], {"": 1})
 
 
 if __name__ == "__main__":
