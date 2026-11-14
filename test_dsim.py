@@ -46,6 +46,16 @@ class Taker(unittest.TestCase):
         self.assertIsNone(d.taker(mkt([(0, 0, 0, 0, 0)]), 10, 0, 9900))  # dropped book
 
 
+    def test_taker_sell(self):
+        m = mkt([(0, 4900, 5100, 100, 3)])
+        f = d.taker(m, 10, 0, 4800, sell=True)  # SELL UP hits the UP bid 0.49
+        self.assertEqual((f["px"], f["size"]), (4900, 5))
+        self.assertIsNone(d.taker(m, 10, 0, 4950, sell=True))  # bid below limit
+        self.assertIsNone(d.taker(m, 10, 1, 4800, sell=True))  # SELL DOWN: DOWN bid 0.49 but only 3 shown
+        f = d.taker(m, 10, 1, 4800, size=3, min_show=3, sell=True)
+        self.assertEqual((f["px"], f["size"]), (4900, 3))
+
+
 class Maker(unittest.TestCase):
     def stale(self):
         # bid 0.50 x 20 shown; spot drops at t=1000; takers sell 50 into the stale bid at 1010..1100, bid then 0.30

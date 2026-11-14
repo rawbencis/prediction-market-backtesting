@@ -131,7 +131,7 @@ def fee(px, size):
 # ---------------------------------------------------------------- taker
 
 
-def taker(m, t_match, tok, limit, size=5.0, min_show=MIN_SHOW, exclude_tx=None):
+def taker(m, t_match, tok, limit, size=5.0, min_show=MIN_SHOW, exclude_tx=None, sell=False):
     """BUY `tok` (0 UP / 1 DOWN) FAK with limit (1e-4) matching at t_match. Top level only.
     -> fill dict or None. Same-ms ties: other takers go first (book row at t_match used if present, else the book
     before t_match minus same-ms prints on that level). exclude_tx (validation only): book strictly before, minus
@@ -143,13 +143,12 @@ def taker(m, t_match, tok, limit, size=5.0, min_show=MIN_SHOW, exclude_tx=None):
         i = i2
     if i < 0 or (B["b"][i] == 0 and B["k"][i] == 0):  # nothing recorded yet / dropped connection
         return None
-    if tok == 0:
+    if (tok == 0) != sell:  # BUY UP / SELL DOWN lift the UP ask
         lvl, shown, hit_bid = int(B["k"][i]), float(B["ks"][i]), False
-        px = lvl
-    else:
+    else:  # BUY DOWN / SELL UP hit the UP bid
         lvl, shown, hit_bid = int(B["b"][i]), float(B["bs"][i]), True
-        px = 10000 - lvl
-    if lvl == 0 or px > limit:
+    px = lvl if tok == 0 else 10000 - lvl
+    if lvl == 0 or (px < limit if sell else px > limit):
         return None
     P = m["pr"]
     j0, j1 = np.searchsorted(P["x"], t_match, "left"), np.searchsorted(P["x"], t_match, "right")
@@ -160,7 +159,8 @@ def taker(m, t_match, tok, limit, size=5.0, min_show=MIN_SHOW, exclude_tx=None):
     if shown < min_show - 1e-9:
         return None
     q = min(size, shown)
-    return dict(x=t_match, tok=tok, px=px, size=q, fee=fee(px, q), rebate=0.0, maker=0, ahead=0.0, book_age=t_match - int(B["x"][i]))
+    return dict(x=t_match, tok=tok, px=px, size=q, fee=fee(px, q), rebate=0.0, maker=0, ahead=0.0, book_age=t_match - int(B["x"][i]),
+                sell=int(sell))
 
 
 # ---------------------------------------------------------------- maker
