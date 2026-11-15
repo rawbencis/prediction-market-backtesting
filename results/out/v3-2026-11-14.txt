@@ -1,0 +1,3 @@
+V3 2026-11-14: OhioAI maker fills n=1080; our post-only at their price, arrive x-1s (or the first later book state where it would not cross), cancel x+1s. arrival ms before x q10/50/90: [ 102.  416. 1000.]
+  status: {'ok': 1080}
+  filled share (all): {'pess': 0.958, 'prop': 0.961, 'front': 0.971}  (not rejected): {'pess': 0.958, 'prop': 0.961, 'front': 0.971}

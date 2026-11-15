@@ -1,0 +1,3 @@
+173 windows btc 5m days ['2026-11-14']; scenarios {"dublin": {"book": 10.55810546875, "bn": 108.903076171875, "order": 24.8984375, "cancel": 19.6256103515625, "hold": 50}, "tokyo": {"book": 116.0, "bn": 2.0, "order": 120.0, "cancel": 120.0, "hold": 50}, "colo": {"book": 1.0, "bn": 108.903076171875, "order": 1.0, "cancel": 1.0, "hold": 50}}; load 7s
+done 256 configs in 259s
+bash: line 5: 14505 Killed                  ~/shadow-venv/bin/python fav_hedge.py stage3 --all-cells

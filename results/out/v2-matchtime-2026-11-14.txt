@@ -1,0 +1,8 @@
+V2 2026-11-14: OhioAI taker fills matched to prints n=1786
+  FAK at exact match time, limit = their price: fills 45.2% (exact same price 42.9%), with >= min(5, their size) shown 40.9%
+  miss reasons: {'price': 971, 'hit': 807, 'size': 8}
+  per-print match time: all prints of the day n=437553, matched to a book row 94.3%; lag print - match ms: share 0 0.008, q10/25/50/75/90/99 [15. 18. 21. 27. 41. 81.], median 21 (fallback used 21)
+  OhioAI prints matched to a book row 79.7%; V2 FAK at the per-print match time: hits 69.5% (matched prints 80.8%, fallback 25.4%); level visible at the match time (same-ms prints not given priority) 86.0% (matched 100.0%, fallback 30.9%)
+  V2 hit rate by book offset before the print (ms): {0: 0.452, 5: 0.474, 10: 0.508, 15: 0.569, 20: 0.71, 30: 0.871, 50: 0.929}
+  smallest flat offset with >= 90% hits: 50 ms
+  misses: book_px - their px (c) quantiles [0.68 1.43 4.  ]  book_age ms q [ 2.  8. 24.]

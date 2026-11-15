@@ -1,0 +1,40 @@
+== src=spot: events x live windows n=48660 (>= 2 bp in 500 ms, 2 s debounce)
+(a)+(b) per asset x tf: reprice delay ms (Binance trade time -> PM book exchange time) and share of events where the stale ask toward the move is still hittable (>= 5 shown) at t0 + d
+             n  repriced_10s  delay_p25  delay_p50  delay_p75  stale@130  stale@160  stale@200
+asset tf                                                                                      
+btc   5   3210           1.0      108.0      296.0      623.0        0.8        0.8        0.7
+      15  3343           1.0      102.0      233.0      491.0        0.8        0.7        0.6
+doge  5   3779           1.0       28.0       78.0      151.0        0.5        0.4        0.4
+      15  4183           1.0       42.0       95.0      199.5        0.6        0.5        0.5
+eth   5   4578           1.0       38.0      104.0      236.0        0.5        0.5        0.4
+      15  4784           1.0       61.0      120.0      359.2        0.6        0.5        0.5
+sol   5   5125           1.0       28.0       72.0      136.0        0.4        0.4        0.3
+      15  5908           1.0       47.0       99.0      245.0        0.6        0.5        0.5
+xrp   5   6350           1.0       33.0       87.0      146.0        0.5        0.4        0.3
+      15  7400           1.0       55.0      102.0      219.0        0.6        0.5        0.5
+all: delay p50 102 ms, {'stale@130': 0.574, 'stale@160': 0.501, 'stale@200': 0.444}
+(c1) 5m vs 15m same asset+event: n=17618, 5m first 0.55, tie 0.01, median(15m - 5m) 11 ms
+(c2) BTC vs ETH 5m books, same move (Binance events within 300 ms): n=1431, BTC book reprices first 0.24, median(alt - BTC) reprice time -211 ms
+(c2) BTC vs SOL 5m books, same move (Binance events within 300 ms): n=1229, BTC book reprices first 0.19, median(alt - BTC) reprice time -266 ms
+(c2) BTC vs XRP 5m books, same move (Binance events within 300 ms): n=1147, BTC book reprices first 0.20, median(alt - BTC) reprice time -260 ms
+(c2) BTC vs DOGE 5m books, same move (Binance events within 300 ms): n=1067, BTC book reprices first 0.22, median(alt - BTC) reprice time -268 ms
+== src=fut: events x live windows n=60078 (>= 2 bp in 500 ms, 2 s debounce)
+(a)+(b) per asset x tf: reprice delay ms (Binance trade time -> PM book exchange time) and share of events where the stale ask toward the move is still hittable (>= 5 shown) at t0 + d
+             n  repriced_10s  delay_p25  delay_p50  delay_p75  stale@130  stale@160  stale@200
+asset tf                                                                                      
+btc   5   3444           1.0      103.8      304.0      652.0        0.8        0.7        0.7
+      15  3552           1.0      103.0      238.0      509.0        0.8        0.7        0.6
+doge  5   4713           1.0       32.0       85.0      153.0        0.5        0.4        0.4
+      15  5283           1.0       48.0      102.0      218.0        0.7        0.6        0.5
+eth   5   5941           1.0       42.0      106.0      239.0        0.6        0.5        0.4
+      15  6298           1.0       64.0      120.0      408.0        0.6        0.5        0.5
+sol   5   6394           1.0       35.0       85.0      169.0        0.5        0.4        0.4
+      15  7383           1.0       62.0      109.0      294.0        0.6        0.5        0.5
+xrp   5   7881           1.0       35.0       91.0      153.0        0.5        0.4        0.4
+      15  9189           1.0       57.0      105.0      245.8        0.6        0.5        0.5
+all: delay p50 106 ms, {'stale@130': 0.597, 'stale@160': 0.521, 'stale@200': 0.463}
+(c1) 5m vs 15m same asset+event: n=21700, 5m first 0.55, tie 0.01, median(15m - 5m) 11 ms
+(c2) BTC vs ETH 5m books, same move (Binance events within 300 ms): n=1611, BTC book reprices first 0.23, median(alt - BTC) reprice time -240 ms
+(c2) BTC vs SOL 5m books, same move (Binance events within 300 ms): n=1328, BTC book reprices first 0.22, median(alt - BTC) reprice time -264 ms
+(c2) BTC vs XRP 5m books, same move (Binance events within 300 ms): n=1242, BTC book reprices first 0.20, median(alt - BTC) reprice time -280 ms
+(c2) BTC vs DOGE 5m books, same move (Binance events within 300 ms): n=1211, BTC book reprices first 0.21, median(alt - BTC) reprice time -268 ms

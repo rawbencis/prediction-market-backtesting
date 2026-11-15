@@ -1,0 +1,721 @@
+{
+ "frozen_utc": "2026-11-15T00:40:56Z",
+ "dev_days": [
+  "2026-11-14"
+ ],
+ "print_shift_ms": 50,
+ "queue_model_judged": "pess",
+ "scenario_judged": "dublin",
+ "rule": "stage 1 config with the highest 90% market-bootstrap lower bound of total PnL ($, 5 shares) among configs with >= 40 entries; ties -> more entries. Runners-up: next two by the same score.",
+ "pick_and_runners_up": [
+  {
+   "cfg": 1392,
+   "label": "fav | fixed t=240 X=0.6 | leg1 maker | o=2c | leg2 reprice | naked hold",
+   "dev": {
+    "entries": 49,
+    "usd_day": 5.68,
+    "usd_day_lo90": 4.83,
+    "net_c_per_usd": 2.37
+   },
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 240,
+     "X": 0.6
+    },
+    "leg1": "maker",
+    "o": 2,
+    "leg2": "reprice",
+    "naked": {
+     "rule": "hold"
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1386,
+   "label": "fav | fixed t=240 X=0.6 | leg1 maker | o=2c | leg2 static | naked hold",
+   "dev": {
+    "entries": 49,
+    "usd_day": 5.03,
+    "usd_day_lo90": 4.64,
+    "net_c_per_usd": 2.1
+   },
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 240,
+     "X": 0.6
+    },
+    "leg1": "maker",
+    "o": 2,
+    "leg2": "static",
+    "naked": {
+     "rule": "hold"
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1398,
+   "label": "fav | fixed t=240 X=0.6 | leg1 maker | o=2c | leg2 pull | naked hold",
+   "dev": {
+    "entries": 49,
+    "usd_day": 5.03,
+    "usd_day_lo90": 4.64,
+    "net_c_per_usd": 2.1
+   },
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 240,
+     "X": 0.6
+    },
+    "leg1": "maker",
+    "o": 2,
+    "leg2": "pull",
+    "naked": {
+     "rule": "hold"
+    },
+    "variant": "fav"
+   }
+  }
+ ],
+ "family_best": [
+  {
+   "cfg": 1411,
+   "family": "fixed|reprice|cut30",
+   "label": "fav | fixed t=240 X=0.6 | leg1 maker | o=5c | leg2 reprice | naked cut30",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 240,
+     "X": 0.6
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "reprice",
+    "naked": {
+     "rule": "cut",
+     "c": 30
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1417,
+   "family": "fixed|pull|cut30",
+   "label": "fav | fixed t=240 X=0.6 | leg1 maker | o=5c | leg2 pull | naked cut30",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 240,
+     "X": 0.6
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "pull",
+    "naked": {
+     "rule": "cut",
+     "c": 30
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1405,
+   "family": "fixed|static|cut30",
+   "label": "fav | fixed t=240 X=0.6 | leg1 maker | o=5c | leg2 static | naked cut30",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 240,
+     "X": 0.6
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "static",
+    "naked": {
+     "rule": "cut",
+     "c": 30
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1661,
+   "family": "fixed|static|bnstop",
+   "label": "fav | fixed t=240 X=0.8 | leg1 maker | o=0c | leg2 static | naked bnstop",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 240,
+     "X": 0.8
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "static",
+    "naked": {
+     "rule": "bnstop"
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 362,
+   "family": "fixed|static|cut60",
+   "label": "fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 static | naked cut60",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 60,
+     "X": 0.8
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "static",
+    "naked": {
+     "rule": "cut",
+     "c": 60
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 374,
+   "family": "fixed|pull|cut60",
+   "label": "fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 pull | naked cut60",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 60,
+     "X": 0.8
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "pull",
+    "naked": {
+     "rule": "cut",
+     "c": 60
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 368,
+   "family": "fixed|reprice|cut60",
+   "label": "fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 reprice | naked cut60",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 60,
+     "X": 0.8
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "reprice",
+    "naked": {
+     "rule": "cut",
+     "c": 60
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1667,
+   "family": "fixed|reprice|bnstop",
+   "label": "fav | fixed t=240 X=0.8 | leg1 maker | o=0c | leg2 reprice | naked bnstop",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 240,
+     "X": 0.8
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "reprice",
+    "naked": {
+     "rule": "bnstop"
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 363,
+   "family": "fixed|static|stop5",
+   "label": "fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 static | naked stop5",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 60,
+     "X": 0.8
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "static",
+    "naked": {
+     "rule": "stop",
+     "d": 5
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 369,
+   "family": "fixed|reprice|stop5",
+   "label": "fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 reprice | naked stop5",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 60,
+     "X": 0.8
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "reprice",
+    "naked": {
+     "rule": "stop",
+     "d": 5
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 375,
+   "family": "fixed|pull|stop5",
+   "label": "fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 pull | naked stop5",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 60,
+     "X": 0.8
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "pull",
+    "naked": {
+     "rule": "stop",
+     "d": 5
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 364,
+   "family": "fixed|static|stop10",
+   "label": "fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 static | naked stop10",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 60,
+     "X": 0.8
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "static",
+    "naked": {
+     "rule": "stop",
+     "d": 10
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 370,
+   "family": "fixed|reprice|stop10",
+   "label": "fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 reprice | naked stop10",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 60,
+     "X": 0.8
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "reprice",
+    "naked": {
+     "rule": "stop",
+     "d": 10
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 376,
+   "family": "fixed|pull|stop10",
+   "label": "fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 pull | naked stop10",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 60,
+     "X": 0.8
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "pull",
+    "naked": {
+     "rule": "stop",
+     "d": 10
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1673,
+   "family": "fixed|pull|bnstop",
+   "label": "fav | fixed t=240 X=0.8 | leg1 maker | o=0c | leg2 pull | naked bnstop",
+   "config": {
+    "trigger": {
+     "kind": "fixed",
+     "t": 240,
+     "X": 0.8
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "pull",
+    "naked": {
+     "rule": "bnstop"
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1853,
+   "family": "cross|pull|bnstop",
+   "label": "fav | cross X=0.55 | leg1 maker | o=5c | leg2 pull | naked bnstop",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.55
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "pull",
+    "naked": {
+     "rule": "bnstop"
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1847,
+   "family": "cross|reprice|bnstop",
+   "label": "fav | cross X=0.55 | leg1 maker | o=5c | leg2 reprice | naked bnstop",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.55
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "reprice",
+    "naked": {
+     "rule": "bnstop"
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 2242,
+   "family": "cross|reprice|stop10",
+   "label": "fav | cross X=0.85 | leg1 maker | o=0c | leg2 reprice | naked stop10",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.85
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "reprice",
+    "naked": {
+     "rule": "stop",
+     "d": 10
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1849,
+   "family": "cross|pull|cut30",
+   "label": "fav | cross X=0.55 | leg1 maker | o=5c | leg2 pull | naked cut30",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.55
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "pull",
+    "naked": {
+     "rule": "cut",
+     "c": 30
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1841,
+   "family": "cross|static|bnstop",
+   "label": "fav | cross X=0.55 | leg1 maker | o=5c | leg2 static | naked bnstop",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.55
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "static",
+    "naked": {
+     "rule": "bnstop"
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1843,
+   "family": "cross|reprice|cut30",
+   "label": "fav | cross X=0.55 | leg1 maker | o=5c | leg2 reprice | naked cut30",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.55
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "reprice",
+    "naked": {
+     "rule": "cut",
+     "c": 30
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1852,
+   "family": "cross|pull|stop10",
+   "label": "fav | cross X=0.55 | leg1 maker | o=5c | leg2 pull | naked stop10",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.55
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "pull",
+    "naked": {
+     "rule": "stop",
+     "d": 10
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1840,
+   "family": "cross|static|stop10",
+   "label": "fav | cross X=0.55 | leg1 maker | o=5c | leg2 static | naked stop10",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.55
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "static",
+    "naked": {
+     "rule": "stop",
+     "d": 10
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1837,
+   "family": "cross|static|cut30",
+   "label": "fav | cross X=0.55 | leg1 maker | o=5c | leg2 static | naked cut30",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.55
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "static",
+    "naked": {
+     "rule": "cut",
+     "c": 30
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 2253,
+   "family": "cross|static|stop5",
+   "label": "fav | cross X=0.85 | leg1 maker | o=2c | leg2 static | naked stop5",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.85
+    },
+    "leg1": "maker",
+    "o": 2,
+    "leg2": "static",
+    "naked": {
+     "rule": "stop",
+     "d": 5
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 2241,
+   "family": "cross|reprice|stop5",
+   "label": "fav | cross X=0.85 | leg1 maker | o=0c | leg2 reprice | naked stop5",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.85
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "reprice",
+    "naked": {
+     "rule": "stop",
+     "d": 5
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1848,
+   "family": "cross|pull|hold",
+   "label": "fav | cross X=0.55 | leg1 maker | o=5c | leg2 pull | naked hold",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.55
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "pull",
+    "naked": {
+     "rule": "hold"
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1842,
+   "family": "cross|reprice|hold",
+   "label": "fav | cross X=0.55 | leg1 maker | o=5c | leg2 reprice | naked hold",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.55
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "reprice",
+    "naked": {
+     "rule": "hold"
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 2247,
+   "family": "cross|pull|stop5",
+   "label": "fav | cross X=0.85 | leg1 maker | o=0c | leg2 pull | naked stop5",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.85
+    },
+    "leg1": "maker",
+    "o": 0,
+    "leg2": "pull",
+    "naked": {
+     "rule": "stop",
+     "d": 5
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1836,
+   "family": "cross|static|hold",
+   "label": "fav | cross X=0.55 | leg1 maker | o=5c | leg2 static | naked hold",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.55
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "static",
+    "naked": {
+     "rule": "hold"
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1850,
+   "family": "cross|pull|cut60",
+   "label": "fav | cross X=0.55 | leg1 maker | o=5c | leg2 pull | naked cut60",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.55
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "pull",
+    "naked": {
+     "rule": "cut",
+     "c": 60
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1844,
+   "family": "cross|reprice|cut60",
+   "label": "fav | cross X=0.55 | leg1 maker | o=5c | leg2 reprice | naked cut60",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.55
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "reprice",
+    "naked": {
+     "rule": "cut",
+     "c": 60
+    },
+    "variant": "fav"
+   }
+  },
+  {
+   "cfg": 1838,
+   "family": "cross|static|cut60",
+   "label": "fav | cross X=0.55 | leg1 maker | o=5c | leg2 static | naked cut60",
+   "config": {
+    "trigger": {
+     "kind": "cross",
+     "X": 0.55
+    },
+    "leg1": "maker",
+    "o": 5,
+    "leg2": "static",
+    "naked": {
+     "rule": "cut",
+     "c": 60
+    },
+    "variant": "fav"
+   }
+  }
+ ],
+ "holdout_command": "cd ~/dublin-retest/repo && nice -n 19 ~/shadow-venv/bin/python fav_hedge.py stage3 --all-cells --out-prefix holdout --days 2026-11-21 2026-11-22 2026-11-23 2026-11-24 2026-11-25 2026-11-26 2026-11-27",
+ "pass_rule": "dev pick under dublin+pess: holdout net c/$ with market-bootstrap 90% CI lower bound > 0, >= $3/day at 5 shares, >= 300 entries, still >= 0 under prop, and clearly worse under tokyo"
+}

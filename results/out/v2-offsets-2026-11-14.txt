@@ -1,0 +1,6 @@
+V2 2026-11-14: OhioAI taker fills matched to prints n=1446
+  FAK at exact match time, limit = their price: fills 44.5% (exact same price 42.6%), with >= min(5, their size) shown 40.4%
+  miss reasons: {'price': 801, 'hit': 643, 'size': 2}
+  V2 hit rate by book offset before the print (ms): {0: 0.445, 5: 0.465, 10: 0.506, 15: 0.575, 20: 0.728, 30: 0.896, 50: 0.936}
+  smallest offset with >= 90% hits: 50 ms (PRINT_SHIFT_MS is 20)
+  misses: book_px - their px (c) quantiles [0.74 1.5  4.05]  book_age ms q [ 2.  8. 23.]

@@ -1,0 +1,4 @@
+n 1446 never hittable in prior 1 s 0
+lag print_x - level_gone_x (ms): share 0 0.446 q10..q99 [ 0.   0.   9.  21.  28.5 38.8 92.4]
+nonzero q [  9.  15.  20.  25.  37. 131.] max 485.0
+all prints: ms since last book row q [ 1.  3. 10. 20. 28.] share same ms 0.094

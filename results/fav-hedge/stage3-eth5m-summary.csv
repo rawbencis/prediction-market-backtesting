@@ -1,0 +1,37 @@
+cfg,entries,hedge_rate,t_hedge_p50_s,locked_pnl,naked_pnl,naked_exit_share,leg1_pnl,leg2_pnl,pnl,net_c_per_usd,usd_day,usd_day_lo90,usd_day_hi90,rebate_est,scn,model,label,family
+0,45,0.867,2.4,4.4,-7.91,0.0,4.4,-7.9,-3.5,-1.6,-3.5,-13.44,5.04,0.76,dublin,pess,fav | fixed t=240 X=0.6 | leg1 maker | o=2c | leg2 reprice | naked hold,fixed|reprice|hold
+1,45,0.867,2.3,3.9,-7.91,0.0,4.4,-8.4,-4.0,-1.83,-4.0,-15.35,4.46,0.76,dublin,pess,fav | fixed t=240 X=0.6 | leg1 maker | o=2c | leg2 static | naked hold,fixed|static|hold
+2,45,0.867,2.3,3.9,-7.91,0.0,4.4,-8.4,-4.0,-1.83,-4.0,-15.4,4.46,0.76,dublin,pess,fav | fixed t=240 X=0.6 | leg1 maker | o=2c | leg2 pull | naked hold,fixed|pull|hold
+3,45,0.689,3.6,8.65,-12.44,0.86,5.32,-9.1,-3.78,-1.8,-3.78,-17.46,6.17,0.68,dublin,pess,fav | fixed t=240 X=0.6 | leg1 maker | o=5c | leg2 reprice | naked cut30,fixed|reprice|cut30
+4,45,0.689,3.6,7.75,-12.44,0.86,5.32,-10.0,-4.68,-2.22,-4.68,-16.93,5.21,0.68,dublin,pess,fav | fixed t=240 X=0.6 | leg1 maker | o=5c | leg2 pull | naked cut30,fixed|pull|cut30
+5,45,0.689,3.6,7.75,-12.44,0.86,5.32,-10.0,-4.68,-2.22,-4.68,-16.94,5.33,0.68,dublin,pess,fav | fixed t=240 X=0.6 | leg1 maker | o=5c | leg2 static | naked cut30,fixed|static|cut30
+6,26,0.846,1.6,0.45,-4.53,0.75,1.07,-5.15,-4.08,-3.16,-4.08,-13.14,0.63,0.26,dublin,pess,fav | fixed t=240 X=0.8 | leg1 maker | o=0c | leg2 static | naked bnstop,fixed|static|bnstop
+7,20,0.95,1.3,0.1,0.9,1.0,-1.5,2.5,1.0,1.01,1.0,0.05,2.79,0.31,dublin,pess,fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 static | naked cut60,fixed|static|cut60
+8,20,1.0,5.1,0.05,0.0,,-1.45,1.5,0.05,0.05,0.05,-0.0,0.15,0.32,dublin,pess,fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 pull | naked cut60,fixed|pull|cut60
+9,20,1.0,8.1,0.36,0.0,,-1.45,1.81,0.36,0.36,0.36,0.2,0.55,0.32,dublin,pess,fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 reprice | naked cut60,fixed|reprice|cut60
+10,26,0.808,1.3,0.7,-4.38,0.6,1.07,-4.75,-3.68,-2.86,-3.68,-12.72,1.19,0.26,dublin,pess,fav | fixed t=240 X=0.8 | leg1 maker | o=0c | leg2 reprice | naked bnstop,fixed|reprice|bnstop
+11,20,0.6,0.6,0.05,-2.12,1.0,0.58,-2.65,-2.07,-2.2,-2.07,-3.13,-1.07,0.25,dublin,pess,fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 static | naked stop5,fixed|static|stop5
+12,20,0.55,1.1,0.25,-2.47,1.0,-0.32,-1.9,-2.22,-2.38,-2.22,-3.39,-1.06,0.24,dublin,pess,fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 reprice | naked stop5,fixed|reprice|stop5
+13,20,0.55,0.7,0.05,-2.47,1.0,-0.32,-2.1,-2.42,-2.59,-2.42,-3.57,-1.36,0.24,dublin,pess,fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 pull | naked stop5,fixed|pull|stop5
+14,20,0.75,0.7,0.05,-3.19,1.0,1.56,-4.7,-3.14,-3.26,-3.14,-5.45,-1.06,0.27,dublin,pess,fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 static | naked stop10,fixed|static|stop10
+15,20,0.75,2.4,0.25,-3.19,1.0,1.56,-4.5,-2.94,-3.06,-2.94,-5.29,-0.88,0.27,dublin,pess,fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 reprice | naked stop10,fixed|reprice|stop10
+16,20,0.75,1.3,0.05,-3.19,1.0,1.56,-4.7,-3.14,-3.26,-3.14,-5.31,-1.08,0.27,dublin,pess,fav | fixed t=60 X=0.8 | leg1 maker | o=0c | leg2 pull | naked stop10,fixed|pull|stop10
+17,26,0.808,1.9,0.25,-3.73,0.8,1.02,-4.5,-3.48,-2.71,-3.48,-12.79,1.93,0.26,dublin,pess,fav | fixed t=240 X=0.8 | leg1 maker | o=0c | leg2 pull | naked bnstop,fixed|pull|bnstop
+18,83,0.422,8.0,8.75,-24.12,1.0,-24.37,9.0,-15.37,-5.3,-15.37,-23.3,-8.09,2.05,dublin,pess,fav | cross X=0.55 | leg1 maker | o=5c | leg2 pull | naked bnstop,cross|pull|bnstop
+19,83,0.434,7.8,9.0,-24.48,1.0,-22.03,6.55,-15.48,-5.3,-15.48,-23.32,-7.87,2.07,dublin,pess,fav | cross X=0.55 | leg1 maker | o=5c | leg2 reprice | naked bnstop,cross|reprice|bnstop
+20,77,0.649,1.7,1.55,-17.55,1.0,-28.25,12.25,-16.0,-4.46,-16.0,-21.45,-10.95,1.29,dublin,pess,fav | cross X=0.85 | leg1 maker | o=0c | leg2 reprice | naked stop10,cross|reprice|stop10
+21,83,0.855,20.9,18.25,-29.42,0.08,-12.57,1.4,-11.17,-3.04,-11.17,-25.95,3.04,2.67,dublin,pess,fav | cross X=0.55 | leg1 maker | o=5c | leg2 pull | naked cut30,cross|pull|cut30
+22,83,0.434,7.8,9.0,-24.48,1.0,-22.03,6.55,-15.48,-5.3,-15.48,-23.31,-7.63,2.07,dublin,pess,fav | cross X=0.55 | leg1 maker | o=5c | leg2 static | naked bnstop,cross|static|bnstop
+23,83,0.855,20.7,18.2,-29.42,0.08,-12.57,1.35,-11.22,-3.05,-11.22,-27.07,2.18,2.67,dublin,pess,fav | cross X=0.55 | leg1 maker | o=5c | leg2 reprice | naked cut30,cross|reprice|cut30
+24,83,0.47,8.0,9.75,-27.05,1.0,-13.6,-3.7,-17.3,-5.81,-17.3,-24.6,-10.74,2.12,dublin,pess,fav | cross X=0.55 | leg1 maker | o=5c | leg2 pull | naked stop10,cross|pull|stop10
+25,83,0.482,7.8,10.0,-26.42,1.0,-10.27,-6.15,-16.42,-5.47,-16.42,-23.36,-9.53,2.13,dublin,pess,fav | cross X=0.55 | leg1 maker | o=5c | leg2 static | naked stop10,cross|static|stop10
+26,83,0.855,20.7,17.75,-29.42,0.08,-12.57,0.9,-11.67,-3.17,-11.67,-26.97,2.03,2.67,dublin,pess,fav | cross X=0.55 | leg1 maker | o=5c | leg2 static | naked cut30,cross|static|cut30
+27,77,0.364,2.0,2.9,-17.52,1.0,-18.6,3.98,-14.62,-4.33,-14.62,-18.58,-10.64,1.05,dublin,pess,fav | cross X=0.85 | leg1 maker | o=2c | leg2 static | naked stop5,cross|static|stop5
+28,77,0.494,1.1,1.45,-14.59,1.0,-21.14,8.0,-13.14,-3.77,-13.14,-16.96,-9.4,1.16,dublin,pess,fav | cross X=0.85 | leg1 maker | o=0c | leg2 reprice | naked stop5,cross|reprice|stop5
+29,83,0.855,20.9,18.25,-30.7,0.0,-13.85,1.4,-12.45,-3.39,-12.45,-27.45,1.85,2.67,dublin,pess,fav | cross X=0.55 | leg1 maker | o=5c | leg2 pull | naked hold,cross|pull|hold
+30,83,0.855,20.7,18.2,-30.7,0.0,-13.85,1.35,-12.5,-3.4,-12.5,-27.95,1.8,2.67,dublin,pess,fav | cross X=0.55 | leg1 maker | o=5c | leg2 reprice | naked hold,cross|reprice|hold
+31,77,0.494,0.7,0.5,-13.72,1.0,-10.76,-2.46,-13.22,-3.78,-13.22,-16.24,-10.36,1.17,dublin,pess,fav | cross X=0.85 | leg1 maker | o=0c | leg2 pull | naked stop5,cross|pull|stop5
+32,83,0.855,20.7,17.75,-30.7,0.0,-13.85,0.9,-12.95,-3.52,-12.95,-27.4,0.85,2.67,dublin,pess,fav | cross X=0.55 | leg1 maker | o=5c | leg2 static | naked hold,cross|static|hold
+33,83,0.843,20.8,18.0,-29.26,0.31,-9.76,-1.5,-11.26,-3.08,-11.26,-27.08,2.03,2.65,dublin,pess,fav | cross X=0.55 | leg1 maker | o=5c | leg2 pull | naked cut60,cross|pull|cut60
+34,83,0.843,18.4,17.95,-29.26,0.31,-9.76,-1.55,-11.31,-3.09,-11.31,-25.99,2.1,2.65,dublin,pess,fav | cross X=0.55 | leg1 maker | o=5c | leg2 reprice | naked cut60,cross|reprice|cut60
+35,83,0.843,18.4,17.5,-29.26,0.31,-9.76,-2.0,-11.76,-3.21,-11.76,-26.81,2.27,2.65,dublin,pess,fav | cross X=0.55 | leg1 maker | o=5c | leg2 static | naked cut60,cross|static|cut60

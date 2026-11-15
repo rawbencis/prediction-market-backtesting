@@ -1,0 +1,18 @@
+V2 2026-11-14: OhioAI taker fills matched to prints n=1446
+  FAK at exact match time, limit = their price: fills 44.5% (exact same price 42.6%), with >= min(5, their size) shown 40.4%
+  miss reasons: {'price': 801, 'hit': 643, 'size': 2}
+  hit share if matched at x+dt: {'hit_at-50': 0.934, 'hit_at-10': 0.497, 'hit_at+1': 0.434, 'hit_at+10': 0.4, 'hit_at+50': 0.333}
+  misses: book_px - their px (c) quantiles [0.74 1.5  4.05]  book_age ms q [ 2.  8. 23.]
+                x                      slug  tok    px   size    hit   hit5  exact    why  book_px  book_age  hit_at-50  hit_at-10  hit_at+1  hit_at+10  hit_at+50
+0   1794648308484  btc-updown-5m-1794648300    1  6800   4.19  False  False  False  price     7100        12       True      False     False      False      False
+1   1794648339219  btc-updown-5m-1794648300    0  2600  12.00  False  False  False  price     2700         3       True       True     False      False      False
+2   1794648347025  btc-updown-5m-1794648300    0  3817  12.00  False  False  False  price     4000         3       True      False     False      False      False
+3   1794648356025  btc-updown-5m-1794648300    0  4400   5.00  False  False  False  price     4500         1      False      False     False      False      False
+4   1794648360835  btc-updown-5m-1794648300    0  6400  10.00  False  False  False  price     6600         4       True      False     False      False      False
+5   1794648370629  btc-updown-5m-1794648300    1  4500  12.00  False  False  False  price     4700         6       True       True     False      False      False
+6   1794648377713  btc-updown-5m-1794648300    1  5150  10.00  False  False  False  price     5600         7       True      False     False      False      False
+10  1794648431287  btc-updown-5m-1794648300    0  2500  10.00  False  False  False  price     2800        12       True      False     False      False      False
+12  1794648441687  btc-updown-5m-1794648300    0  3300  10.00  False  False  False  price     3500        13       True      False     False      False      False
+13  1794648447643  btc-updown-5m-1794648300    1  5900  12.00  False  False  False  price     6100         4       True       True     False      False      False
+14  1794648458470  btc-updown-5m-1794648300    1  7200  12.00  False  False  False  price     7300         5       True      False     False      False      False
+15  1794648482414  btc-updown-5m-1794648300    0  3000   5.00  False  False  False  price     3900        16       True      False     False      False      False

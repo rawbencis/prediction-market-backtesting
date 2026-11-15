@@ -1,0 +1,13 @@
+feeds cover 8.77 h; BTC windows fully covered: 140
+  twap@start vs twap@end     agree 83/83 (100.0%)
+
+  spot@start vs twap@end     agree 80/83 (96.4%)
+    5m 1794729900 gamma=UP open=64036.7883 close=64036.6055 diff=-0.1828
+    5m 1794730500 gamma=DOWN open=63850.6386 close=63901.2344 diff=+50.5959
+    15m 1794702600 gamma=DOWN open=63724.0233 close=63771.0570 diff=+47.0337
+  spot@start vs spot@end     agree 78/83 (94.0%)
+    5m 1794702900 gamma=DOWN open=63726.4603 close=63748.7685 diff=+22.3082
+    5m 1794716400 gamma=DOWN open=64804.2286 close=64820.0756 diff=+15.8470
+    5m 1794729900 gamma=UP open=64036.7883 close=64034.1109 diff=-2.6774
+    5m 1794730500 gamma=DOWN open=63850.6386 close=63873.7658 diff=+23.1272
+    15m 1794702600 gamma=DOWN open=63724.0233 close=63771.1574 diff=+47.1341

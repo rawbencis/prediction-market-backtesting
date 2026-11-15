@@ -1,0 +1,15 @@
+173 windows btc 5m days ['2026-11-14']; scenarios {"dublin": {"book": 10.56005859375, "bn": 108.89990234375, "order": 24.9979248046875, "cancel": 18.8359375, "hold": 50}, "tokyo": {"book": 116.0, "bn": 2.0, "order": 120.0, "cancel": 120.0, "hold": 50}, "colo": {"book": 1.0, "bn": 108.89990234375, "order": 1.0, "cancel": 1.0, "hold": 50}}; load 1s
+cell dublin/pess done 14s
+cell dublin/prop done 26s
+cell dublin/front done 38s
+cell tokyo/pess done 50s
+cell tokyo/prop done 63s
+cell tokyo/front done 75s
+cell colo/pess done 87s
+cell colo/prop done 100s
+cell colo/front done 111s
+58 windows btc 15m days ['2026-11-14']; scenarios {"dublin": {"book": 10.56005859375, "bn": 108.89990234375, "order": 24.9979248046875, "cancel": 18.8359375, "hold": 50}, "tokyo": {"book": 116.0, "bn": 2.0, "order": 120.0, "cancel": 120.0, "hold": 50}, "colo": {"book": 1.0, "bn": 108.89990234375, "order": 1.0, "cancel": 1.0, "hold": 50}}; load 1s
+cell dublin/pess done 7s
+173 windows eth 5m days ['2026-11-14']; scenarios {"dublin": {"book": 10.56005859375, "bn": 108.89990234375, "order": 24.9979248046875, "cancel": 18.8359375, "hold": 50}, "tokyo": {"book": 116.0, "bn": 2.0, "order": 120.0, "cancel": 120.0, "hold": 50}, "colo": {"book": 1.0, "bn": 108.89990234375, "order": 1.0, "cancel": 1.0, "hold": 50}}; load 1s
+cell dublin/pess done 12s
+ALLDONE
