@@ -322,7 +322,37 @@ def main(a):
         S.to_csv(OUTD / f"{a.out_prefix or 'stage3'}-{tag}-summary.csv", index=False)
 
 
+def freeze():
+    """Apply the pre-set pick rule from grid.json to stage-1 dev results -> frozen.json (never overwritten)."""
+    G = json.load(open(OUTD / "grid.json"))
+    fz = OUTD / "frozen.json"
+    if fz.exists():
+        raise SystemExit("frozen.json exists: not re-freezing")
+    S = pd.read_csv(OUTD / "stage1-btc5m-summary.csv")
+    cfgs = G["stage1"]["configs"]
+    ok = S[S.entries >= 40].sort_values(["usd_day_lo90", "entries"], ascending=[False, False])
+    top = ok.head(3)
+    fam = S.sort_values(["usd_day_lo90", "entries"], ascending=[False, False]).groupby("family").head(1)
+    fam = fam[~fam.cfg.isin(top.cfg)]
+    out = dict(frozen_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), dev_days=["2026-11-14"],
+               rule=G["pick_rule"],
+               pick_and_runners_up=[dict(cfg=int(r.cfg), label=r.label, dev=dict(entries=int(r.entries), usd_day=r.usd_day,
+                                         usd_day_lo90=r.usd_day_lo90, net_c_per_usd=r.net_c_per_usd), config=cfgs[int(r.cfg)])
+                                    for r in top.itertuples()],
+               family_best=[dict(cfg=int(r.cfg), family=r.family, label=r.label, config=cfgs[int(r.cfg)]) for r in fam.itertuples()],
+               holdout_command="cd ~/dublin-retest/repo && nice -n 19 ~/shadow-venv/bin/python fav_hedge.py stage3 --all-cells "
+                               "--out-prefix holdout --days " + " ".join(f"2026-11-{d}" for d in range(21, 28)),
+               pass_rule="dev pick under dublin+pess: holdout net c/$ with market-bootstrap 90% CI lower bound > 0, >= $3/day at"
+                         " 5 shares, >= 300 entries, still >= 0 under prop, and clearly worse under tokyo")
+    json.dump(out, open(fz, "w"), indent=1)
+    print(json.dumps(out["pick_and_runners_up"], indent=1)[:3000])
+
+
 if __name__ == "__main__":
+    import sys
+    if sys.argv[1:] == ["freeze"]:
+        freeze()
+        raise SystemExit
     ap = argparse.ArgumentParser()
     ap.add_argument("stage", choices=("stage1", "stage2", "stage3"))
     ap.add_argument("--days", nargs="+", default=["2026-11-14"])

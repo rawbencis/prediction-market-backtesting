@@ -15,9 +15,11 @@ REC, OUT = HOME / "shadow-rec", HOME / "dublin-retest"
 WINNERS = OUT / "winners.csv"
 ASSETS = ("btc", "eth", "sol", "xrp", "doge")
 FEE_RATE, REBATE_SHARE, HOLD_MS, MIN_SHOW = 0.07, 0.2, 50, 5.0
-# trade prints are stamped later than the book change they cause (2026-11-14, OhioAI taker fills: level gone in the
-# book p50 9 ms / p90 29 ms before the print x). Prints are moved this much earlier (more maker fills beat a cancel).
-PRINT_SHIFT_MS = 20
+# trade prints are stamped later than the book change they cause. Default = smallest book offset before the print at
+# which >= 90% of OhioAI's 2026-11-14 taker fills are hittable (V2 sweep: 0:44.5% 5:46.5% 10:50.6% 15:57.5% 20:72.8%
+# 30:89.6% 50:93.6%). Prints are moved this much earlier (maker fills beat a cancel more often: conservative).
+PRINT_SHIFT_MS = 50
+OFFSETS = (0, 5, 10, 15, 20, 30, 50)
 MARKOUTS = (100, 1000, 5000, 30000)
 PM_DT = np.dtype([("l", "<i8"), ("x", "<i8"), ("a", "u1"), ("tf", "u1"), ("e", "<u4"),
                   ("b", "<u2"), ("k", "<u2"), ("bs", "<f4"), ("ks", "<f4")])  # fmt: skip
@@ -335,7 +337,8 @@ def cmd_v2(a):
         lvl = None if i < 0 else (int(B["k"][i]) if tok == 0 else 10000 - int(B["b"][i]))
         why = "hit" if f_any else ("nobook" if i < 0 else "price" if lvl is None or lvl > lim or lvl in (0, 10000) else "size")
         # does the book at match + / - 50 ms or after same-ms events show it? (timing diagnosis)
-        alt = {f"hit_at{dt:+d}": bool(taker(m, x + dt, tok, lim, size=r.size, min_show=1e-6)) for dt in (-50, -10, 1, 10, 50)}
+        # book offset o before the print: FAK matched at x - o (strict book), their own print excluded
+        alt = {f"off{o}": bool(taker(m, x - o, tok, lim, size=r.size, min_show=1e-6, exclude_tx=tx)) for o in OFFSETS}
         res.append(dict(row, hit=bool(f_any), hit5=bool(f_5), exact=bool(f_any and f_any["px"] == lim), why=why, book_px=lvl,
                         book_age=(x - int(B["x"][i])) if i >= 0 else None, **alt))
     import pandas as pd
@@ -347,7 +350,10 @@ def cmd_v2(a):
     print(f"  FAK at exact match time, limit = their price: fills {R.hit.mean():.1%} (exact same price {R.exact.mean():.1%}),"
           f" with >= min(5, their size) shown {R.hit5.mean():.1%}")
     print("  miss reasons:", R.why.value_counts().to_dict())
-    print("  hit share if matched at x+dt:", {c: round(float(R[c].mean()), 3) for c in R.columns if c.startswith("hit_at")})
+    hits = {o: float(R[f"off{o}"].mean()) for o in OFFSETS}
+    print("  V2 hit rate by book offset before the print (ms):", {o: round(h, 3) for o, h in hits.items()})
+    ok = [o for o in OFFSETS if hits[o] >= 0.9]
+    print(f"  smallest offset with >= 90% hits: {ok[0] if ok else None} ms (PRINT_SHIFT_MS is {PRINT_SHIFT_MS})")
     miss = R[~R.hit.astype(bool)]
     if len(miss):
         print("  misses: book_px - their px (c) quantiles", np.percentile((miss.book_px.dropna() - miss.px[miss.book_px.notna()]) / 100, [10, 50, 90]).round(2) if miss.book_px.notna().any() else None,
