@@ -159,3 +159,19 @@ attempt = mid(t0+2 s) − price − fee in ¢/share (0 if not hittable); settle 
 5. **feeds_rec now records BTC and ETH 1h books** (`pmbook1h-HH.jsonl.gz`, top 5 levels, both tokens). Verified on
    the 09:00 UTC (4am ET) markets. I caused a ~4 min gap in all feeds (09:00:02–09:04:15) with a pkill that killed
    its own shell before the restart ran.
+
+## R-D3 registered (2026-11-15 14:12 UTC; rule text in `frozen/R-D3.md`, commit 62575ef)
+- `repo/rd3_eval.py` (dsim): one row per signal × src (fut primary, spot) × scenario (dublin primary, tokyo, colo).
+  Columns: filled/px/fee and pnl vs the Gamma winner, plus a 2 s mid markout. 5 synthetic-day tests pass.
+- Loop: `rd3_loop.sh` (nohup) runs daily at 00:40 UTC, memory-capped, after the nightly evals are idle. It writes
+  `~/rd3-res/rd3-<day>.csv` for each finished, fully settled day from 2026-11-15; first file 2026-11-16 ~00:40.
+  The log holds row counts only. `~/rd3-res` is outside rule 7's directories, at your explicit request. Blind: I will
+  only check existence and row count.
+- Modelling choices to know:
+  - The box clock is taken as the exchange clock.
+  - "Seen ask" = the newest book row received on this box by the decision time.
+  - The day's send p50 uses probe rows from 0 to 2000 ms; ≤ 0 rows are detector artefacts.
+  - Tokyo decides at Binance T + 2 + 1 ms with the book 116 ms stale and a 120 ms send.
+  - Colo decides at this box's Binance receipt + 1 ms with 1 ms book/send.
+- Disclosure: before registration I measured the closely related "taker edge at landing" (2 bp/500 ms, BTC 5m) on
+  2026-11-14 only (dev). No R-D3-like number was computed on 2026-11-15 or later.
