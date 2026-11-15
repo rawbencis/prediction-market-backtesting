@@ -89,7 +89,7 @@ def read(root, day, kind, dt, keep=None):
 def mk_market(book, prints, shift=None):
     """book: rows with x, b, k, bs, ks (one market); prints: rows with x, tok, sd, p, sz, tx -> market dict."""
     o = np.argsort(book["x"], kind="stable")
-    B = {c: np.asarray(book[c])[o] for c in ("x", "b", "k", "bs", "ks")}
+    B = {c: np.asarray(book[c])[o] for c in ("x", "b", "k", "bs", "ks") + (("l",) if "l" in book.dtype.names else ())}
     o = np.argsort(prints["x"], kind="stable")
     tok, sd, p = (np.asarray(prints[c])[o].astype(np.int64) for c in ("tok", "sd", "p"))
     x = np.asarray(prints["x"])[o].astype(np.int64)
