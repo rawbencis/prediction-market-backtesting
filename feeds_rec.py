@@ -42,7 +42,7 @@ class Out:
 
 
 def log(*a):
-    print(datetime.utcnow().isoformat(timespec="seconds"), *a, flush=True)
+    print(time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()), *a, flush=True)
 
 
 async def keep(name, fn, out):
@@ -63,13 +63,15 @@ async def rtds(out):
     async with websockets.connect(RTDS, open_timeout=10, ping_interval=None, max_size=None) as ws:
         subs = [{"topic": t, "type": "*", "filters": ""} for t in ("crypto_prices_chainlink", "crypto_prices_twap_sixty")]
         await ws.send(json.dumps({"action": "subscribe", "subscriptions": subs}))
-        nxt = time.time() + 5
+        nxt, last_upd = time.time() + 5, time.time()
         while True:
             try:
                 raw = await asyncio.wait_for(ws.recv(), 5)
             except asyncio.TimeoutError:
                 raw = None
             r = time.time_ns()
+            if r / 1e9 - last_upd > 10:  # socket open but silent (2026-11-15: gaps up to 100 min): reconnect
+                raise RuntimeError("rtds silent > 10 s")
             if r / 1e9 > nxt:
                 await ws.send("PING")
                 nxt = r / 1e9 + 5
@@ -82,6 +84,7 @@ async def rtds(out):
             p, t = m.get("payload") or {}, m.get("topic")
             feed = "chainlink" if t == "crypto_prices_chainlink" else "twap60" if t == "crypto_prices_twap_sixty" else None
             if feed and m.get("type") == "update" and p.get("symbol") in SYMS:
+                last_upd = r / 1e9
                 out.add(feed, {"r": r, "x": p.get("timestamp"), "s": p["symbol"].split("/")[0], "v": p.get("value"),
                                "fa": p.get("full_accuracy_value"), "ts": m.get("timestamp")})
             elif feed and m.get("type") == "subscribe":  # 2-min snapshot after (re)connect: keep, flagged
