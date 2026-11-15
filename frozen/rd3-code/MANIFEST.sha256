@@ -1,0 +1,4 @@
+# R-D3 frozen evaluator: source commit 9113475 (research/dublin-retest), frozen 2026-11-15T14:23:50Z
+73269126b3156315fe1709a4b2811d7b4c62e0e294ffb621dfbbb9ac1dd38f0e  rd3_eval.py
+435eb9807677055462ccf964dac28c50e7c891b40c2eeb40b7b2a7de8996b3a6  dsim.py
+0daceb76a1a5f979b552293560f920398e9fd476ffc2223903713e8e8b447b57  test_rd3_eval.py

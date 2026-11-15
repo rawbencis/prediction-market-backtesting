@@ -1,9 +1,14 @@
 #!/bin/bash
-# R-D3 (registered, BLIND): evaluate every finished day since 2026-11-15 that has no ~/rd3-res/rd3-<day>.csv yet.
+# R-D3 (registered, BLIND), run from the frozen code in frozen/rd3-code: evaluate every finished day since 2026-11-15 that has no ~/rd3-res/rd3-<day>.csv yet.
 # Waits for the nightly evals to be idle. Log = row counts only. Exit 2 if a day is not fully settled (unit retries in 1 h).
 set -u
 OUT=/home/ubuntu/rd3-res; LOG=$OUT/loop.log; mkdir -p $OUT
-cd /home/ubuntu/dublin-retest/repo || exit 1
+CODE=/home/ubuntu/dublin-retest/frozen/rd3-code  # frozen evaluator (commit 9113475); never the live repo
+cd $CODE || exit 1
+if ! sha256sum --quiet -c MANIFEST.sha256 >/dev/null 2>&1; then
+  echo "$(date -u +%FT%T) FROZEN CODE HASH MISMATCH: not running" >> $LOG; exit 1
+fi
+export PYTHONDONTWRITEBYTECODE=1
 pending=0; d=2026-11-15; today=$(date -u +%F)
 while [[ "$d" < "$today" ]]; do
   if [ ! -f $OUT/rd3-$d.csv ]; then
