@@ -461,7 +461,7 @@ def cmd_v3(a):
 
 
 def cmd_winners(a):
-    mk, _, _ = load_day(a.day)
+    mk = load_markets(a.day)
     w = fetch_winners(sorted(slug(k) for k in mk))
     print(f"{sum(slug(k) in w for k in mk)}/{len(mk)} winners cached in {WINNERS}")
 

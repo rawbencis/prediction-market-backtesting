@@ -269,14 +269,19 @@ def stats(R, n_days, B=2000, seed=1):
     for c, g in R.groupby("cfg"):
         pn = g.pnl.values
         tot = pn.sum()
-        boot = pn[rng.integers(0, len(pn), (B, len(pn)))].sum(1) if len(pn) > 1 else np.array([tot])
+        idx = rng.integers(0, len(pn), (B, len(pn)))
+        boot = pn[idx].sum(1) if len(pn) > 1 else np.array([tot])
         lo, hi = np.percentile(boot, [5, 95])
+        cs = g.cost.values
+        nc = 100 * boot / np.maximum(cs[idx].sum(1), 1e-9) if len(pn) > 1 else np.array([100 * tot / cs.sum()])
+        nlo, nhi = np.percentile(nc, [5, 95])
         H = g[g.hedged == 1]
         N = g[g.hedged == 0]
         out.append(dict(cfg=c, entries=len(g), hedge_rate=round(len(H) / len(g), 3), t_hedge_p50_s=round(np.nanmedian(g.t_hedge) / 1000, 1) if g.t_hedge.notna().any() else np.nan,
                         locked_pnl=round(H.pnl.sum(), 2), naked_pnl=round(N.pnl.sum(), 2), naked_exit_share=round(N.exited.mean(), 2) if len(N) else np.nan,
                         leg1_pnl=round(g.pnl1.sum(), 2), leg2_pnl=round(g.pnl2.sum(), 2), pnl=round(tot, 2),
-                        net_c_per_usd=round(100 * tot / g.cost.sum(), 2), usd_day=round(tot / n_days, 2),
+                        net_c_per_usd=round(100 * tot / g.cost.sum(), 2), net_lo90=round(nlo, 2), net_hi90=round(nhi, 2),
+                        usd_day=round(tot / n_days, 2),
                         usd_day_lo90=round(lo / n_days, 2), usd_day_hi90=round(hi / n_days, 2), rebate_est=round(g.rebate.sum(), 2)))
     return pd.DataFrame(out)
 
@@ -302,14 +307,15 @@ def main(a):
     if a.stage in ("stage1", "stage2"):
         cfgs = G[a.stage]["configs"][: a.limit or None]
         R = evaluate(wins, cfgs, "dublin", "pess", sc)
-        R.to_csv(OUTD / f"{a.stage}-{tag}-entries.csv.gz", index=False)
+        pre = a.out_prefix or a.stage
+        R.to_csv(OUTD / f"{pre}-{tag}-entries.csv.gz", index=False)
         S = stats(R, len(a.days))
         S["label"] = [label(cfgs[c]) for c in S.cfg]
         S["family"] = [family(cfgs[c]) for c in S.cfg]
-        S.to_csv(OUTD / f"{a.stage}-{tag}-summary.csv", index=False)
+        S.to_csv(OUTD / f"{pre}-{tag}-summary.csv", index=False)
         print(f"done {len(cfgs)} configs in {time.time() - t0:.0f}s", flush=True)
     elif a.stage == "stage3":
-        fz = json.load(open(OUTD / "frozen.json"))
+        fz = json.load(open(OUTD / a.frozen))
         cfgs = [x["config"] for x in fz["pick_and_runners_up"]] + [x["config"] for x in fz["family_best"]]
         cells = [(s, q) for s in ("dublin", "tokyo", "colo") for q in ("pess", "prop", "front")] if a.all_cells else [("dublin", "pess")]
         allS = []
@@ -325,27 +331,28 @@ def main(a):
         S.to_csv(OUTD / f"{a.out_prefix or 'stage3'}-{tag}-summary.csv", index=False)
 
 
-def freeze():
-    """Apply the pre-set pick rule from grid.json to stage-1 dev results -> frozen.json (never overwritten)."""
+def freeze(summary="stage1-btc5m-summary.csv", name="frozen.json", dev_days=("2026-11-14",), cand="A"):
+    """Apply the pre-set pick rule from grid.json to stage-1 dev results -> `name` (never overwritten)."""
     G = json.load(open(OUTD / "grid.json"))
-    fz = OUTD / "frozen.json"
+    fz = OUTD / name
     if fz.exists():
-        raise SystemExit("frozen.json exists: not re-freezing")
-    S = pd.read_csv(OUTD / "stage1-btc5m-summary.csv")
+        raise SystemExit(f"{name} exists: not re-freezing")
+    S = pd.read_csv(OUTD / summary)
     cfgs = G["stage1"]["configs"]
     ok = S[S.entries >= 40].sort_values(["usd_day_lo90", "entries"], ascending=[False, False])
     top = ok.head(3)
     fam = S.sort_values(["usd_day_lo90", "entries"], ascending=[False, False]).groupby("family").head(1)
     fam = fam[~fam.cfg.isin(top.cfg)]
-    out = dict(frozen_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), dev_days=["2026-11-14"],
-               print_shift_ms=d.PRINT_SHIFT_MS, queue_model_judged="pess", scenario_judged="dublin",
+    out = dict(candidate=cand, frozen_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), dev_days=list(dev_days),
+               print_shift_ms=d.PRINT_SHIFT_MS if d.PRINT_SHIFT_MS is not None else f"per-print match time, fallback {d.PRINT_FALLBACK_MS}", queue_model_judged="pess", scenario_judged="dublin",
                rule=G["pick_rule"],
                pick_and_runners_up=[dict(cfg=int(r.cfg), label=r.label, dev=dict(entries=int(r.entries), usd_day=r.usd_day,
                                          usd_day_lo90=r.usd_day_lo90, net_c_per_usd=r.net_c_per_usd), config=cfgs[int(r.cfg)])
                                     for r in top.itertuples()],
                family_best=[dict(cfg=int(r.cfg), family=r.family, label=r.label, config=cfgs[int(r.cfg)]) for r in fam.itertuples()],
-               holdout_command="cd ~/dublin-retest/repo && nice -n 19 ~/shadow-venv/bin/python fav_hedge.py stage3 --all-cells "
-                               "--out-prefix holdout --days " + " ".join(f"2026-11-{d}" for d in range(21, 28)),
+               holdout_command="cd ~/dublin-retest/repo && systemd-run --user --scope -p MemoryMax=1200M -p MemorySwapMax=0 "
+                               f"nice -n 19 ~/shadow-venv/bin/python fav_hedge.py stage3 --all-cells --frozen {name} "
+                               f"--out-prefix holdout-{cand} --days " + " ".join(f"2026-11-{d}" for d in range(21, 28)),
                pass_rule="dev pick under dublin+pess: holdout net c/$ with market-bootstrap 90% CI lower bound > 0, >= $3/day at"
                          " 5 shares, >= 300 entries, still >= 0 under prop, and clearly worse under tokyo")
     json.dump(out, open(fz, "w"), indent=1)
@@ -354,8 +361,11 @@ def freeze():
 
 if __name__ == "__main__":
     import sys
-    if sys.argv[1:] == ["freeze"]:
-        freeze()
+    if sys.argv[1:2] == ["freeze"]:  # freeze [summary.csv name.json cand day1 day2 ...]
+        if len(sys.argv) > 2:
+            freeze(sys.argv[2], sys.argv[3], sys.argv[5:], sys.argv[4])
+        else:
+            freeze()
         raise SystemExit
     ap = argparse.ArgumentParser()
     ap.add_argument("stage", choices=("stage1", "stage2", "stage3"))
@@ -365,4 +375,5 @@ if __name__ == "__main__":
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--all-cells", action="store_true")
     ap.add_argument("--out-prefix", default="")
+    ap.add_argument("--frozen", default="frozen.json")
     main(ap.parse_args())
