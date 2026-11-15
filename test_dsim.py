@@ -85,6 +85,22 @@ class Maker(unittest.TestCase):
         self.assertEqual(filled(d.maker(mkt(book, pr, 0), 100, 0, 5000, 5, 1005, "front")), 0)
         self.assertEqual(filled(d.maker(mkt(book, pr, 20), 100, 0, 5000, 5, 1005, "front")), 5)  # print really at 990
 
+    def test_per_print_match_time(self):
+        book = [(0, 5000, 5200, 20, 50), (990, 5000, 5200, 15, 50), (1000, 5000, 5200, 15, 30), (2000, 4900, 5200, 8, 30),
+                (3000, 4900, 5200, 8, 30)]
+        pr = [(1010, 0, 1, 5000, 5, b"a"),   # SELL UP 5 at 0.50: bid 20 -> 15 at 990
+              (2030, 0, 1, 5000, 15, b"b"),  # level 0.50 vanished at 2000
+              (2500, 0, 0, 5200, 7, b"c"),   # BUY UP 7 at 0.52: ask 50 -> 30 at 1000 is 20, not ~7, and > 100 ms: fallback
+              (3050, 1, 1, 4800, 4, b"d")]   # SELL DOWN 0.48 = lift UP ask 0.52: no change -> fallback
+        m = mkt(book, pr, None)
+        P = m["pr"]
+        got = dict(zip([bytes(x) for x in P["tx"]], zip(P["x"].tolist(), P["matched"].tolist())))
+        self.assertEqual(got[b"a"], (990, True))
+        self.assertEqual(got[b"b"], (2000, True))
+        self.assertEqual(got[b"c"], (2500 - d.PRINT_FALLBACK_MS, False))
+        self.assertEqual(got[b"d"], (3050 - d.PRINT_FALLBACK_MS, False))
+        self.assertTrue(np.all(np.diff(P["x"]) >= 0))
+
     def test_reject_cross_and_improve(self):
         m = self.stale()
         self.assertEqual(d.maker(m, 100, 0, 5200, 5, 2000)["status"], "rejected")

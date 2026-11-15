@@ -15,10 +15,13 @@ REC, OUT = HOME / "shadow-rec", HOME / "dublin-retest"
 WINNERS = OUT / "winners.csv"
 ASSETS = ("btc", "eth", "sol", "xrp", "doge")
 FEE_RATE, REBATE_SHARE, HOLD_MS, MIN_SHOW = 0.07, 0.2, 50, 5.0
-# trade prints are stamped later than the book change they cause. Default = smallest book offset before the print at
-# which >= 90% of OhioAI's 2026-11-14 taker fills are hittable (V2 sweep: 0:44.5% 5:46.5% 10:50.6% 15:57.5% 20:72.8%
-# 30:89.6% 50:93.6%). Prints are moved this much earlier (maker fills beat a cancel more often: conservative).
-PRINT_SHIFT_MS = 50
+# Trade prints are stamped later than the book change they cause. Each print gets a match time = the latest book row at
+# or before it (within MATCH_WINDOW_MS) where the print's level, top of its side just before, lost about the print size
+# or vanished; prints with no such row fall back to x - PRINT_FALLBACK_MS (median lag of matched prints, 2026-11-14).
+# The flat-shift sweep (V2 hits by offset 0:44.5% 5:46.5% 10:50.6% 15:57.5% 20:72.8% 30:89.6% 50:93.6%) is superseded.
+MATCH_WINDOW_MS, SIZE_TOL = 100, 0.10
+PRINT_FALLBACK_MS = 21
+PRINT_SHIFT_MS = None  # None: per-print match times; a number: flat shift (tests, sweeps)
 OFFSETS = (0, 5, 10, 15, 20, 30, 50)
 MARKOUTS = (100, 1000, 5000, 30000)
 PM_DT = np.dtype([("l", "<i8"), ("x", "<i8"), ("a", "u1"), ("tf", "u1"), ("e", "<u4"),
@@ -89,11 +92,43 @@ def mk_market(book, prints, shift=None):
     B = {c: np.asarray(book[c])[o] for c in ("x", "b", "k", "bs", "ks")}
     o = np.argsort(prints["x"], kind="stable")
     tok, sd, p = (np.asarray(prints[c])[o].astype(np.int64) for c in ("tok", "sd", "p"))
+    x = np.asarray(prints["x"])[o].astype(np.int64)
+    sz = np.asarray(prints["sz"])[o].astype(float)
+    hb = ((tok == 0) & (sd == 1)) | ((tok == 1) & (sd == 0))  # True: taker sold UP (hit the UP bid)
+    up = np.where(tok == 0, p, 10000 - p)
     sh = PRINT_SHIFT_MS if shift is None else shift
-    P = dict(x=np.asarray(prints["x"])[o].astype(np.int64) - sh, sz=np.asarray(prints["sz"])[o].astype(float),
-             hb=((tok == 0) & (sd == 1)) | ((tok == 1) & (sd == 0)),  # True: taker sold UP (hit the UP bid)
-             up=np.where(tok == 0, p, 10000 - p), tx=np.asarray(prints["tx"])[o] if "tx" in prints.dtype.names else None)
+    if sh is None:
+        mt = match_times(B, x, hb, up, sz)
+        xs = np.where(np.isnan(mt), x - PRINT_FALLBACK_MS, mt).astype(np.int64)
+    else:
+        mt, xs = np.full(len(x), np.nan), x - sh
+    o2 = np.argsort(xs, kind="stable")  # keep prints in (estimated) match-time order
+    P = dict(x=xs[o2], x_print=x[o2], matched=~np.isnan(mt[o2]), sz=sz[o2], hb=hb[o2], up=up[o2],
+             tx=np.asarray(prints["tx"])[o][o2] if "tx" in prints.dtype.names else None)
     return dict(book=B, pr=P)
+
+
+def match_times(B, x, hb, up, sz):
+    """Per print: exchange ms of the book row (<= print x, within MATCH_WINDOW_MS) where the print's level, top of its
+    side on the previous row, lost ~ the print size (|drop - size| <= SIZE_TOL * size + 0.01) or vanished. NaN if none."""
+    bx = B["x"]
+    out = np.full(len(x), np.nan)
+    lo = np.searchsorted(bx, x - MATCH_WINDOW_MS, "left")
+    hi = np.searchsorted(bx, x, "right")
+    for j in range(len(x)):
+        lv, n = int(up[j]), float(sz[j])
+        lvl, siz = (B["b"], B["bs"]) if hb[j] else (B["k"], B["ks"])
+        for r in range(hi[j] - 1, max(lo[j], 1) - 1, -1):
+            if int(lvl[r - 1]) != lv:
+                continue
+            nl = int(lvl[r])
+            if B["b"][r] == 0 and B["k"][r] == 0:  # dropped-connection marker, not a book change
+                continue
+            gone = nl == 0 or (nl < lv if hb[j] else nl > lv)
+            if gone or (nl == lv and abs((float(siz[r - 1]) - float(siz[r])) - n) <= SIZE_TOL * n + 0.01):
+                out[j] = bx[r]
+                break
+    return out
 
 
 def load_day(day, root=REC, shift=None, asset=None, tf=None):
@@ -322,8 +357,16 @@ def ohio_fills(day, taker_flag):
     return d[d.day == day]
 
 
+def load_markets(day, shift=None):
+    """All markets of a day, loaded one asset at a time (keeps peak memory under the 1.2 GB job cap)."""
+    mk = {}
+    for asset in ASSETS:
+        mk.update(load_day(day, shift=shift, asset=asset)[0])
+    return mk
+
+
 def cmd_v2(a):
-    mk, _, _ = load_day(a.day, shift=0)
+    mk = load_markets(a.day)  # per-print match times
     d = ohio_fills(a.day, 1)
     res = []
     for r in d.itertuples():
@@ -335,9 +378,15 @@ def cmd_v2(a):
             continue
         P = m["pr"]  # their own print: same ms, their token's price level, closest size (fills csv has no tx column)
         up = lim if tok == 0 else 10000 - lim
-        js = [j for j in range(np.searchsorted(P["x"], x, "left"), np.searchsorted(P["x"], x, "right"))
-              if P["hb"][j] == (tok == 1) and P["up"][j] == up]
-        tx = bytes(P["tx"][min(js, key=lambda j: abs(P["sz"][j] - r.size))]) if js else b"\xff" * 32
+        js = [j for j in np.flatnonzero(P["x_print"] == x) if P["hb"][j] == (tok == 1) and P["up"][j] == up]
+        jo = min(js, key=lambda j: abs(P["sz"][j] - r.size)) if js else None
+        tx = bytes(P["tx"][jo]) if js else b"\xff" * 32
+        tm = int(P["x"][jo]) if js else x - PRINT_FALLBACK_MS  # estimated match time of their print
+        f_mt = taker(m, tm, tok, lim, size=r.size, min_show=1e-6, exclude_tx=tx)
+        Bm, im = m["book"], state(m, tm)
+        lv_mt = None if im < 0 or (Bm["b"][im] == 0 and Bm["k"][im] == 0) else (int(Bm["k"][im]) if tok == 0 else 10000 - int(Bm["b"][im]))
+        row.update(hit_mt=bool(f_mt), own_matched=bool(js and P["matched"][jo]), lag_mt=x - tm,
+                   shown_mt=bool(lv_mt is not None and 0 < lv_mt <= lim))  # level visible at match time, no same-ms priority
         f_any = taker(m, x, tok, lim, size=r.size, min_show=1e-6, exclude_tx=tx)
         f_5 = taker(m, x, tok, lim, size=5, min_show=min(5.0, r.size), exclude_tx=tx)
         B, i = m["book"], state(m, x)
@@ -357,10 +406,19 @@ def cmd_v2(a):
     print(f"  FAK at exact match time, limit = their price: fills {R.hit.mean():.1%} (exact same price {R.exact.mean():.1%}),"
           f" with >= min(5, their size) shown {R.hit5.mean():.1%}")
     print("  miss reasons:", R.why.value_counts().to_dict())
+    lag = np.concatenate([m["pr"]["x_print"][m["pr"]["matched"]] - m["pr"]["x"][m["pr"]["matched"]] for m in mk.values()])
+    nall = sum(len(m["pr"]["x"]) for m in mk.values())
+    print(f"  per-print match time: all prints of the day n={nall}, matched to a book row {len(lag) / max(nall, 1):.1%};"
+          f" lag print - match ms: share 0 {np.mean(lag == 0):.3f}, q10/25/50/75/90/99 {np.percentile(lag, [10, 25, 50, 75, 90, 99]).round(0)},"
+          f" median {np.median(lag):.0f} (fallback used {PRINT_FALLBACK_MS})")
+    print(f"  OhioAI prints matched to a book row {R.own_matched.mean():.1%}; V2 FAK at the per-print match time: hits"
+          f" {R.hit_mt.mean():.1%} (matched prints {R[R.own_matched].hit_mt.mean():.1%}, fallback {R[~R.own_matched].hit_mt.mean():.1%});"
+          f" level visible at the match time (same-ms prints not given priority) {R.shown_mt.mean():.1%}"
+          f" (matched {R[R.own_matched].shown_mt.mean():.1%}, fallback {R[~R.own_matched].shown_mt.mean():.1%})")
     hits = {o: float(R[f"off{o}"].mean()) for o in OFFSETS}
     print("  V2 hit rate by book offset before the print (ms):", {o: round(h, 3) for o, h in hits.items()})
     ok = [o for o in OFFSETS if hits[o] >= 0.9]
-    print(f"  smallest offset with >= 90% hits: {ok[0] if ok else None} ms (PRINT_SHIFT_MS is {PRINT_SHIFT_MS})")
+    print(f"  smallest flat offset with >= 90% hits: {ok[0] if ok else None} ms")
     miss = R[~R.hit.astype(bool)]
     if len(miss):
         print("  misses: book_px - their px (c) quantiles", np.percentile((miss.book_px.dropna() - miss.px[miss.book_px.notna()]) / 100, [10, 50, 90]).round(2) if miss.book_px.notna().any() else None,
@@ -369,7 +427,7 @@ def cmd_v2(a):
 
 
 def cmd_v3(a):
-    mk, _, _ = load_day(a.day, shift=0)
+    mk = load_markets(a.day)
     d = ohio_fills(a.day, 0)
     res = []
     for r in d.itertuples():
