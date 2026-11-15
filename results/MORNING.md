@@ -115,3 +115,19 @@ Branch `research/dublin-retest` (local, not pushed); latest commits listed in `o
 - **Candidate B** is scheduled: `repick_B.sh` (nohup, pid 23567; does not survive a reboot). It runs 2026-11-21 00:30 UTC
   and waits for ohioai-match to finish and load < 1.5. Inputs: 7 dev days, same grid and rule, memory-capped. Output:
   `frozen_B.json`. The holdout command for each candidate is in its frozen file. Holdout days untouched.
+
+## Taker edge at landing (atlas `--edge`, 2026-11-14 only, DESCRIPTIVE; `out/atlas/edge-2026-11-14-{spot,fut}.{txt,csv}`)
+Buy the side the Binance ≥ 2 bp/500 ms move favours, FAK landing at t0+L (≥ 5 shown; same-ms prints first). EV per
+attempt = mid(t0+2 s) − price − fee in ¢/share (0 if not hittable); settle = vs Gamma winner; 90% CI = window bootstrap.
+- **BTC 5m, 2–5 bp, 30–120 s left (spot, n=591):** EV L100 **+3.32¢ [+2.65, +4.12]**, L165 +3.00, L300 +1.99;
+  settle +2.95¢ [+0.98, +5.09]. Fut (n=629): L100 +3.72 [+2.99, +4.63], settle +5.25 [+2.99, +7.51]. This is the best
+  of 10 BTC 5m cells (selection-biased).
+- BTC 5m, 2–5 bp, 120–300 s (n=2,575): L100 +1.41 [+1.22, +1.65], L300 +0.92; settle ≈ +3¢. Edge shrinks with L:
+  ~0.5¢ (120–300 s) and ~1.3¢ (30–120 s) are lost going from 100 to 300 ms.
+- BTC 15m: best is 2–5 bp, 30–120 s, L100: +6.21¢ [+4.28, +7.80], but n=36 and settle +0.22 [−8.7, +11.0]. With
+  300+ s left (n=2,982) the mid-markout EV is ≤ 0.
+- Alts mostly negative (DOGE/SOL/XRP −1 to −3¢), except a small positive at L100 with 30–120 s left. 5–10/10+ bp
+  buckets have n ≤ 100.
+- **Alt-led BTC 5m trigger** (≥ 2 alt 5m books moved, BTC not, within 300 ms; n≈15.8k): negative everywhere, about
+  −1.0 to −2.1¢ at every L. Best cell −0.98¢ [−1.28, −0.66], settle −1.91¢. The alt-book lead is not a profitable
+  BTC entry.
