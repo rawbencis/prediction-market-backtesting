@@ -1,5 +1,5 @@
 import unittest
-from feeds_rec import apply_msg, top
+from feeds_rec import apply_msg, slug_1h, top
 
 
 class T(unittest.TestCase):
@@ -26,6 +26,12 @@ class T(unittest.TestCase):
         # new snapshot replaces the book entirely
         apply_msg(books, {"event_type": "book", "asset_id": "U", "bids": [], "asks": [{"price": "0.6", "size": "1"}]})
         self.assertEqual(top(books["U"]), ([], [[0.6, 1.0]]))
+
+
+    def test_slug_1h(self):
+        self.assertEqual(slug_1h("bitcoin", 1794733200), "bitcoin-up-or-down-november-15-2026-4am-et")  # 09:00 UTC
+        self.assertEqual(slug_1h("ethereum", 1794762000), "ethereum-up-or-down-november-15-2026-12pm-et")  # 17:00 UTC
+        self.assertEqual(slug_1h("bitcoin", 1794718800), "bitcoin-up-or-down-november-15-2026-12am-et")  # 05:00 UTC
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ Usage: python feeds_rec.py --out ~/feeds-rec
 """
 import argparse, asyncio, gzip, json, time, urllib.request
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import orjson
@@ -184,8 +185,8 @@ def top(book, n=DEPTH):
     return [[p, b[p]] for p in sorted(b, reverse=True)[:n]], [[p, a[p]] for p in sorted(a)[:n]]
 
 
-async def pm_window(tf, epoch, out):
-    sl = f"btc-updown-{tf}m-{epoch}"
+async def pm_window(tf, epoch, out, sl=None, feed="pmbook"):
+    sl = sl or f"btc-updown-{tf}m-{epoch}"
     toks = None
     for _ in range(20):
         try:
@@ -222,7 +223,7 @@ async def pm_window(tf, epoch, out):
                     for e in ev if isinstance(ev, list) else (ev,):
                         x = int(e.get("timestamp") or 0)
                         if e.get("event_type") == "last_trade_price" and e.get("asset_id") in toks:
-                            out.add("pmbook", {"r": r, "x": x, "slug": sl, "tok": toks[e["asset_id"]], "ev": "trade",
+                            out.add(feed, {"r": r, "x": x, "slug": sl, "tok": toks[e["asset_id"]], "ev": "trade",
                                                "p": e.get("price"), "sz": e.get("size"), "side": e.get("side"),
                                                "fee": e.get("fee_rate_bps"), "tx": e.get("transaction_hash")})
                             continue
@@ -230,25 +231,33 @@ async def pm_window(tf, epoch, out):
                             bb, aa = top(books[a])
                             if (bb, aa) != last.get(a):
                                 last[a] = (bb, aa)
-                                out.add("pmbook", {"r": r, "x": x, "slug": sl, "tok": toks[a], "b": bb, "a": aa})
+                                out.add(feed, {"r": r, "x": x, "slug": sl, "tok": toks[a], "b": bb, "a": aa})
         except Exception as e:  # noqa: BLE001
             log("reconnect pm", sl, repr(e)[:160])
             STATS["pm_reconnects"] = STATS.get("pm_reconnects", 0) + 1
             if time.time() < end:
-                out.add("pmbook", {"r": time.time_ns(), "x": 0, "slug": sl, "ev": "drop"})
+                out.add(feed, {"r": time.time_ns(), "x": 0, "slug": sl, "ev": "drop"})
                 await asyncio.sleep(1)
+
+
+def slug_1h(name, epoch):
+    """BTC/ETH 1h up/down slug (Binance 1H candle markets), keyed by the ET start hour."""
+    t = datetime.fromtimestamp(epoch, ZoneInfo("America/New_York"))
+    return f"{name}-up-or-down-{t.strftime('%B').lower()}-{t.day}-{t.year}-{t.hour % 12 or 12}{'am' if t.hour < 12 else 'pm'}-et"
 
 
 async def pm_sched(out):
     seen, tasks = set(), set()
     while True:
         now = time.time()
-        for tf in (5, 15):
+        jobs = [(tf, None) for tf in (5, 15)] + [(60, nm) for nm in ("bitcoin", "ethereum")]
+        for tf, nm in jobs:
             w = tf * 60
             for e in (int(now // w) * w, int(now // w) * w + w):
-                if (tf, e) not in seen and now >= e - LEAD_S and now < e + w:
-                    seen.add((tf, e))
-                    t = asyncio.create_task(pm_window(tf, e, out))
+                if (tf, e, nm) not in seen and now >= e - LEAD_S and now < e + w:
+                    seen.add((tf, e, nm))
+                    job = pm_window(tf, e, out) if nm is None else pm_window(tf, e, out, slug_1h(nm, e), "pmbook1h")
+                    t = asyncio.create_task(job)
                     tasks.add(t)
                     t.add_done_callback(tasks.discard)
         seen = {k for k in seen if k[1] > now - 7200}
