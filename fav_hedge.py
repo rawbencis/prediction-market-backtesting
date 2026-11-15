@@ -234,10 +234,13 @@ def load(days, asset, tf):
     out = []
     W = d.winners()
     for day in days:
-        mk, pm, bn = d.load_day(day)
+        mk, pm, bn = d.load_day(day, asset=asset, tf=tf)
         ai = d.ASSETS.index(asset)
         mv = dict(pull=bn_moves(bn, ai, 2, 250), stop=bn_moves(bn, ai, 3, 500))
-        sc = {k: d.scenario(k, pm, bn) for k in ("dublin", "tokyo", "colo")}
+        pm_all = d.read(d.REC, day, "pm", d.PM_DT, lambda x: np.arange(len(x)) % 10 == 0)  # whole-day delay, 1/10 sample
+        bn_all = d.read(d.REC, day, "bn", d.BN_DT, lambda x: (np.arange(len(x)) % 10 == 0) & (x["src"] == 0))
+        sc = {k: d.scenario(k, pm_all, bn_all) for k in ("dublin", "tokyo", "colo")}
+        del pm_all, bn_all
         for (a, t, e), m in sorted(mk.items()):
             w = W.get(d.slug((a, t, e)))
             if a == asset and t == tf and w:
@@ -335,6 +338,7 @@ def freeze():
     fam = S.sort_values(["usd_day_lo90", "entries"], ascending=[False, False]).groupby("family").head(1)
     fam = fam[~fam.cfg.isin(top.cfg)]
     out = dict(frozen_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), dev_days=["2026-11-14"],
+               print_shift_ms=d.PRINT_SHIFT_MS, queue_model_judged="pess", scenario_judged="dublin",
                rule=G["pick_rule"],
                pick_and_runners_up=[dict(cfg=int(r.cfg), label=r.label, dev=dict(entries=int(r.entries), usd_day=r.usd_day,
                                          usd_day_lo90=r.usd_day_lo90, net_c_per_usd=r.net_c_per_usd), config=cfgs[int(r.cfg)])

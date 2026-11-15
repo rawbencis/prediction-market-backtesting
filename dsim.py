@@ -74,8 +74,12 @@ def maker_times(t_decide, t_cancel_decide, sc):
 # ---------------------------------------------------------------- data
 
 
-def read(root, day, kind, dt):
-    parts = [np.fromfile(f, dtype=dt) for f in sorted((Path(root) / day).glob(f"{kind}-*.bin"))]
+def read(root, day, kind, dt, keep=None):
+    """All hourly files of one kind; keep(arr) -> mask filters each file as it is read (keeps peak memory low)."""
+    parts = []
+    for f in sorted((Path(root) / day).glob(f"{kind}-*.bin")):
+        a = np.fromfile(f, dtype=dt)
+        parts.append(a[keep(a)] if keep else a)
     return np.concatenate(parts) if parts else np.zeros(0, dt)
 
 
@@ -92,9 +96,12 @@ def mk_market(book, prints, shift=None):
     return dict(book=B, pr=P)
 
 
-def load_day(day, root=REC, shift=None):
-    """-> ({(asset, tf, epoch): market}, pm, bn) for one recorded day."""
-    pm, tr, bn = read(root, day, "pm", PM_DT), read(root, day, "tr", TR_DT), read(root, day, "bn", BN_DT)
+def load_day(day, root=REC, shift=None, asset=None, tf=None):
+    """-> ({(asset, tf, epoch): market}, pm, bn) for one recorded day (optionally one asset / tf only)."""
+    ai = None if asset is None else ASSETS.index(asset)
+    km = lambda a: (np.ones(len(a), bool) if ai is None else a["a"] == ai) & (True if tf is None else a["tf"] == tf)  # noqa: E731
+    kb = None if ai is None else (lambda a: a["a"] == ai)
+    pm, tr, bn = read(root, day, "pm", PM_DT, km), read(root, day, "tr", TR_DT, km), read(root, day, "bn", BN_DT, kb)
     mk = {}
     for name, arr in (("pm", pm), ("tr", tr)):
         key = arr["a"].astype(np.int64) * 10**12 + arr["tf"].astype(np.int64) * 10**10 + arr["e"]
