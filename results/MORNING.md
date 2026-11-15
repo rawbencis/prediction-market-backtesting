@@ -131,3 +131,31 @@ attempt = mid(t0+2 s) − price − fee in ¢/share (0 if not hittable); settle 
 - **Alt-led BTC 5m trigger** (≥ 2 alt 5m books moved, BTC not, within 300 ms; n≈15.8k): negative everywhere, about
   −1.0 to −2.1¢ at every L. Best cell −0.98¢ [−1.28, −0.66], settle −1.91¢. The alt-book lead is not a profitable
   BTC entry.
+
+## Operator round 3 (2026-11-15 ~09:30 UTC)
+1. **Taker edge, L ∈ {80,130,180,250}, last-60 s bucket added** (`out/atlas/edge2-2026-11-14-{spot,fut}.txt`, csv):
+   - BTC 5m 2–5 bp, **last 60 s**: spot n=150, EV L80 **+5.03¢ [+3.14, +7.67]**, L250 +2.69; settle +7.92¢ [+3.91, +12.62].
+     Fut n=154: +6.11¢ [+4.02, +8.42], settle +8.91¢. This is the best of 12 cells (selection-biased).
+   - BTC 5m 2–5 bp, 60–120 s: +3.19¢ (L80) → +2.45¢ (L250). 120–300 s (n=2,575): +1.44 → +1.07¢, settle ≈ +3¢.
+   - BTC 15m best: 2–5 bp, 120–300 s: +1.57¢ [+1.06, +2.16], but settle +0.51 [−1.27, +2.23]. 300+ s is ≤ 0.
+   - Alt-led BTC 5m trigger: still negative everywhere (−0.8 to −1.6¢; best −0.79¢ [−1.74, +0.27]).
+   - Overlap note: the registered momentum test is BTC 5m, Binance 2 bp / 5 s, 30–300 s left. These tables use only
+     2026-11-14 and must not be extended to later days.
+2. **V2 tie rule:** excluding all 1,453 OhioAI prints changed nothing (69.5%). The competing same-ms prints were
+   other prints with different print stamps (−32..+67 ms) that my match-time step assigned to the same book row.
+   Replay rule now: a same-ms print goes first only if stamped earlier than the replayed print. **V2 = 80.3% overall,
+   93.5% for prints matched to a book row** (unmatched 20% ≈ sweeps: 31% visible). Our own simulated orders keep the
+   conservative rule (all same-ms prints first).
+3. **Final minute: run on 2026-11-14 ONLY** (`out/final-minute-2026-11-14.txt`). Reason: a 90–99¢ favourite in the
+   last 60 s on later days largely reveals the outcome of the registered late-breakout test (ask first reaching
+   60–80¢ in the last 60 s, BTC 5m primary), which must stay blind until 11-29. Say if you still want all days.
+   Results are thin (≤ 70 markets per cell):
+   - BTC 5m ask 0.97–0.99, 31–60 s: 288 snapshots / 70 markets, win 100%, +2.31¢ [+2.25, +2.37].
+   - 0.90–0.95 and 0.95–0.97 at 31–60 s: −1.5 / −0.7¢ with CIs spanning ±8¢.
+   - FV ≥ 0.99: 100% wins at +2.9 to +3.1¢.
+   - The TWAP fair value uses Binance as the Chainlink proxy (no Chainlink recording on 11-14). It is unreliable
+     ≤ 15 s before the close (FV 0.15–0.3 on tokens that won), so rerun it on Chainlink data.
+4. PolyBolt with keys from probe.env: **not done, waiting for your yes.**
+5. **feeds_rec now records BTC and ETH 1h books** (`pmbook1h-HH.jsonl.gz`, top 5 levels, both tokens). Verified on
+   the 09:00 UTC (4am ET) markets. I caused a ~4 min gap in all feeds (09:00:02–09:04:15) with a pkill that killed
+   its own shell before the restart ran.

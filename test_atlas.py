@@ -9,15 +9,15 @@ class T(unittest.TestCase):
         m = mkt([(-5000, 4900, 5100, 100, 100), (150, 7900, 8100, 100, 100)])
         r = atlas.land_edges(m, 0, 0, "UP")
         f51, f81 = 100 * d.fee(5100, 1), 100 * d.fee(8100, 1)
-        for L in (100, 130):
+        for L in (80, 130):
             self.assertEqual(r[f"hit_{L}"], 1.0)
             self.assertAlmostEqual(r[f"edge_{L}"], 80 - 51 - f51)
             self.assertAlmostEqual(r[f"settle_{L}"], 100 - 51 - f51)
-        for L in (165, 200, 300):
+        for L in (180, 250):
             self.assertAlmostEqual(r[f"edge_{L}"], 80 - 81 - f81)
         r = atlas.land_edges(mkt([(-5000, 4900, 5100, 100, 3)]), 0, 0, None)  # < 5 shown: not hittable
-        self.assertEqual(r["hit_100"], 0.0)
-        self.assertTrue(r["settle_100"] != r["settle_100"])
+        self.assertEqual(r["hit_80"], 0.0)
+        self.assertTrue(r["settle_80"] != r["settle_80"])
 
     def test_alt_led_trigger(self):
         flat = [(-60_000, 4900, 5100, 100, 100)]

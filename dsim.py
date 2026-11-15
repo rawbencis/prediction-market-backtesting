@@ -175,7 +175,7 @@ def fee(px, size):
 # ---------------------------------------------------------------- taker
 
 
-def taker(m, t_match, tok, limit, size=5.0, min_show=MIN_SHOW, exclude_tx=None, sell=False):
+def taker(m, t_match, tok, limit, size=5.0, min_show=MIN_SHOW, exclude_tx=None, sell=False, before_print=None):
     """BUY `tok` (0 UP / 1 DOWN) FAK with limit (1e-4) matching at t_match. Top level only.
     -> fill dict or None. Same-ms ties: other takers go first (book row at t_match used if present, else the book
     before t_match minus same-ms prints on that level). exclude_tx (validation only): book strictly before, minus
@@ -196,9 +196,15 @@ def taker(m, t_match, tok, limit, size=5.0, min_show=MIN_SHOW, exclude_tx=None, 
         return None
     P = m["pr"]
     j0, j1 = np.searchsorted(P["x"], t_match, "left"), np.searchsorted(P["x"], t_match, "right")
-    ex = None if exclude_tx is None else bytes(exclude_tx).rstrip(b"\0")
+    if exclude_tx is None:
+        ex = None
+    elif isinstance(exclude_tx, (set, frozenset)):
+        ex = {bytes(t).rstrip(b"\0") for t in exclude_tx}
+    else:
+        ex = {bytes(exclude_tx).rstrip(b"\0")}
     for j in range(0 if same_ms else j0, j1 if not same_ms else 0):
-        if P["hb"][j] == hit_bid and P["up"][j] == lvl and not (ex is not None and bytes(P["tx"][j]).rstrip(b"\0") == ex):
+        if P["hb"][j] == hit_bid and P["up"][j] == lvl and not (ex is not None and bytes(P["tx"][j]).rstrip(b"\0") in ex) \
+                and (before_print is None or P["x_print"][j] < before_print):  # replay: only prints stamped earlier go first
             shown -= P["sz"][j]
     if shown < min_show - 1e-9:
         return None
@@ -368,6 +374,16 @@ def load_markets(day, shift=None):
 def cmd_v2(a):
     mk = load_markets(a.day)  # per-print match times
     d = ohio_fills(a.day, 1)
+    own = set()  # every print identified as one of OhioAI's own fills: never a competing taker in its own replay
+    for r in d.itertuples():
+        m = mk.get((r.asset, int(r.tf), int(r.epoch)))
+        if m is None:
+            continue
+        P, tok, lim, x = m["pr"], int(r.side), int(round(r.px * 1e4)), int(r.x_ms)
+        up = lim if tok == 0 else 10000 - lim
+        js = [j for j in np.flatnonzero(P["x_print"] == x) if P["hb"][j] == (tok == 1) and P["up"][j] == up]
+        if js:
+            own.add(bytes(P["tx"][min(js, key=lambda j: abs(P["sz"][j] - r.size))]).rstrip(b"\0"))
     res = []
     for r in d.itertuples():
         m = mk.get((r.asset, int(r.tf), int(r.epoch)))
@@ -382,19 +398,21 @@ def cmd_v2(a):
         jo = min(js, key=lambda j: abs(P["sz"][j] - r.size)) if js else None
         tx = bytes(P["tx"][jo]) if js else b"\xff" * 32
         tm = int(P["x"][jo]) if js else x - PRINT_FALLBACK_MS  # estimated match time of their print
-        f_mt = taker(m, tm, tok, lim, size=r.size, min_show=1e-6, exclude_tx=tx)
+        f_mt = taker(m, tm, tok, lim, size=r.size, min_show=1e-6, exclude_tx=own | {tx})
+        f_mt1 = taker(m, tm, tok, lim, size=r.size, min_show=1e-6, exclude_tx=tx)  # old rule: only this print excluded
+        f_po = taker(m, tm, tok, lim, size=r.size, min_show=1e-6, exclude_tx=own | {tx}, before_print=x)  # print order
         Bm, im = m["book"], state(m, tm)
         lv_mt = None if im < 0 or (Bm["b"][im] == 0 and Bm["k"][im] == 0) else (int(Bm["k"][im]) if tok == 0 else 10000 - int(Bm["b"][im]))
-        row.update(hit_mt=bool(f_mt), own_matched=bool(js and P["matched"][jo]), lag_mt=x - tm,
+        row.update(hit_mt=bool(f_mt), hit_mt_oneprint=bool(f_mt1), hit_mt_printorder=bool(f_po), own_matched=bool(js and P["matched"][jo]), lag_mt=x - tm,
                    shown_mt=bool(lv_mt is not None and 0 < lv_mt <= lim))  # level visible at match time, no same-ms priority
-        f_any = taker(m, x, tok, lim, size=r.size, min_show=1e-6, exclude_tx=tx)
-        f_5 = taker(m, x, tok, lim, size=5, min_show=min(5.0, r.size), exclude_tx=tx)
+        f_any = taker(m, x, tok, lim, size=r.size, min_show=1e-6, exclude_tx=own | {tx})
+        f_5 = taker(m, x, tok, lim, size=5, min_show=min(5.0, r.size), exclude_tx=own | {tx})
         B, i = m["book"], state(m, x)
         lvl = None if i < 0 else (int(B["k"][i]) if tok == 0 else 10000 - int(B["b"][i]))
         why = "hit" if f_any else ("nobook" if i < 0 else "price" if lvl is None or lvl > lim or lvl in (0, 10000) else "size")
         # does the book at match + / - 50 ms or after same-ms events show it? (timing diagnosis)
         # book offset o before the print: FAK matched at x - o (strict book), their own print excluded
-        alt = {f"off{o}": bool(taker(m, x - o, tok, lim, size=r.size, min_show=1e-6, exclude_tx=tx)) for o in OFFSETS}
+        alt = {f"off{o}": bool(taker(m, x - o, tok, lim, size=r.size, min_show=1e-6, exclude_tx=own | {tx})) for o in OFFSETS}
         res.append(dict(row, hit=bool(f_any), hit5=bool(f_5), exact=bool(f_any and f_any["px"] == lim), why=why, book_px=lvl,
                         book_age=(x - int(B["x"][i])) if i >= 0 else None, **alt))
     import pandas as pd
@@ -412,7 +430,10 @@ def cmd_v2(a):
           f" lag print - match ms: share 0 {np.mean(lag == 0):.3f}, q10/25/50/75/90/99 {np.percentile(lag, [10, 25, 50, 75, 90, 99]).round(0)},"
           f" median {np.median(lag):.0f} (fallback used {PRINT_FALLBACK_MS})")
     print(f"  OhioAI prints matched to a book row {R.own_matched.mean():.1%}; V2 FAK at the per-print match time: hits"
-          f" {R.hit_mt.mean():.1%} (matched prints {R[R.own_matched].hit_mt.mean():.1%}, fallback {R[~R.own_matched].hit_mt.mean():.1%});"
+          f" {R.hit_mt.mean():.1%} (matched prints {R[R.own_matched].hit_mt.mean():.1%}, fallback {R[~R.own_matched].hit_mt.mean():.1%})"
+          f" with all {len(own)} OhioAI prints excluded from same-ms competition [only the replayed print excluded: {R.hit_mt_oneprint.mean():.1%}];"
+          f" same-ms priority only for prints stamped earlier than the replayed one: {R.hit_mt_printorder.mean():.1%}"
+          f" (matched {R[R.own_matched].hit_mt_printorder.mean():.1%});"
           f" level visible at the match time (same-ms prints not given priority) {R.shown_mt.mean():.1%}"
           f" (matched {R[R.own_matched].shown_mt.mean():.1%}, fallback {R[~R.own_matched].shown_mt.mean():.1%})")
     hits = {o: float(R[f"off{o}"].mean()) for o in OFFSETS}
