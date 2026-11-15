@@ -1,0 +1,9 @@
+[Unit]
+Description=fav-hedge candidate B re-pick, once at 2026-11-21 00:30 UTC
+
+[Timer]
+OnCalendar=2026-11-21 00:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

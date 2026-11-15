@@ -1,0 +1,22 @@
+[Unit]
+Description=Dublin extra feed recorder (RTDS Chainlink/TWAP, Coinbase, Deribit, Polymarket BTC 5m/15m and BTC/ETH 1h depth)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/dublin-retest/repo
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/shadow-venv/bin/python /home/ubuntu/dublin-retest/repo/feeds_rec.py --out /home/ubuntu/feeds-rec
+Restart=always
+RestartSec=5
+Nice=10
+MemoryMax=500M
+MemorySwapMax=0
+StandardOutput=append:/home/ubuntu/dublin-retest/out/feeds_rec.log
+StandardError=append:/home/ubuntu/dublin-retest/out/feeds_rec.log
+
+[Install]
+WantedBy=multi-user.target

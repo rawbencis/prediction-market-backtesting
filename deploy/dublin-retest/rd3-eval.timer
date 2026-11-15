@@ -1,0 +1,9 @@
+[Unit]
+Description=R-D3 daily evaluation at 00:40 UTC
+
+[Timer]
+OnCalendar=*-*-* 00:40:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

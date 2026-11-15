@@ -1,0 +1,16 @@
+[Unit]
+Description=fav-hedge candidate B re-pick over dev days 2026-11-14..20 (one-shot; writes fav-hedge/frozen_B.json)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/home/ubuntu/dublin-retest/fav-hedge/frozen_B.json
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/dublin-retest/repo
+ExecStart=/home/ubuntu/dublin-retest/deploy/favhedge_repick.sh
+TimeoutStartSec=8h
+Nice=19
+MemoryMax=1200M
+MemorySwapMax=0

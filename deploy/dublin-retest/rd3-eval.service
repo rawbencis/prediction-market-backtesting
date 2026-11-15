@@ -1,0 +1,21 @@
+[Unit]
+Description=R-D3 registered test: daily evaluation (blind; writes ~/rd3-res/rd3-<day>.csv, logs row counts only)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/dublin-retest/repo
+ExecStart=/home/ubuntu/dublin-retest/deploy/rd3_once.sh
+# exit 2 = a day not fully settled yet: try again in 1 h
+Restart=on-failure
+RestartSec=3600
+TimeoutStartSec=3h
+Nice=19
+MemoryMax=1200M
+MemorySwapMax=0
+StandardOutput=append:/home/ubuntu/rd3-res/loop.log
+StandardError=append:/home/ubuntu/rd3-res/loop.log
