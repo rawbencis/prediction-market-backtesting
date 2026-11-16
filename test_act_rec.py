@@ -112,5 +112,36 @@ class TestAct(unittest.TestCase):
         self.assertIn("<- OhioAI", out)
 
 
+    def test_fills_joins_exchange_time_binance_book_and_counterparties(self):
+        from test_shadow import DAY, EP, record
+
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            record(td)  # BTC 5m window EP: Binance +0.3% at 100.03 s, UP book 50/52 until 100.27 s
+            tx = "0x" + "cd" * 32
+            p = dict(slug=f"btc-updown-5m-{EP}", transactionHash=tx, timestamp=EP + 101)
+            rows = [ar.pack(1, 2, payload(price=0.52, size=600, fee=0.02, **p)),
+                    ar.pack(1, 2, payload(proxyWallet="0x" + "44" * 20, side="SELL", price=0.52, size=600, fee=None, **p))]
+            (td / DAY / "act-01.bin").write_bytes(b"".join(rows))
+            import ohioai_match as om
+            import shadow_rec as sr
+
+            with (td / DAY / "tr-01.bin").open("ab") as f:
+                f.write(sr.TR_REC.pack(1, EP * 1000 + 100_200, 0, 5, EP, 0, 0, 5200, 600.0, 0, bytes.fromhex(tx[2:])))
+            st = td / "s.csv"
+            st.write_text(f"slug,winner\nbtc-updown-5m-{EP},UP\n")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                ar.cmd_fills(Namespace(rec=td, days=[DAY], asset="btc", tf=5, wallet="0x1292", settle=st, no_fetch=True))
+            out = buf.getvalue()
+            _ = om
+        self.assertIn("1 of 1 txs found in trade prints", out)
+        line = [ln for ln in out.splitlines() if "taker" in ln][0]
+        self.assertIn(" 199.8 UP   BUY  taker  0.52     600", line)  # exchange ms 100.200 s into a 300 s window
+        self.assertIn("+30.0bp", line)                               # Binance +0.3% since the open
+        self.assertIn("0.510", line)                                  # UP mid 50/52 before the 100.27 s reprice
+        self.assertIn(" W    1: 0x444444", line)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,9 @@ them next to the books: ~/shadow-rec/YYYY-MM-DD/act-HH.bin, one ACT_REC per trad
   python3 act_rec.py profile --wallets 0x523c 0x13c6 ... [--asset btc] [--tf 5]
                                                         where in the window and at what price each wallet (and all
                                                         taker flow) makes or loses money
+  python3 act_rec.py fills --wallet 0x523c [--asset btc] [--tf 5]
+                                                        every fill with exchange time, time left, Binance move since
+                                                        the window opened, book mid, outcome and counterparties
 
 The stream emits one row per participant of a fill (taker + each maker; 2+ rows per tx), and only the taker's row
 carries a fee, so fee > 0 marks the taker side.
@@ -356,6 +359,71 @@ def cmd_profile(a):
             _breakdown(r[mm], pnl[mm], key[mm], "all")
 
 
+def cmd_fills(a):
+    import numpy as np
+
+    import shadow_eval as se
+    from ohioai_match import TR_DT
+
+    days = a.days or sorted(p.name for p in a.rec.glob("????-??-??") if any(p.glob("act-*.bin")))
+    r = read(a.rec, days)
+    if a.asset:
+        r = r[r["a"] == ASSETS.index(a.asset)]
+    if a.tf:
+        r = r[r["tf"] == a.tf]
+    hexw = np.array(["0x" + w.hex() for w in r["w"].tolist()])
+    mine = np.char.startswith(hexw, a.wallet.lower())
+    if not mine.any():
+        print("no rows")
+        return
+    me = r[mine]
+    txs = set(me["tx"].tolist())
+    others = {}
+    for t, w in zip(r["tx"].tolist(), hexw.tolist()):
+        if t in txs:
+            others.setdefault(t, []).append(w)
+    keys = sorted({f"{ASSETS[x]}-updown-{t}m-{e}" for x, t, e in set(zip(me["a"].tolist(), me["tf"].tolist(), me["e"].tolist()))})
+    win = se.settle(a.settle, keys, not a.no_fetch)
+    xms, bn, pm = {}, [], []
+    for d in days:
+        tr = se.read(a.rec, d, "tr-", TR_DT)
+        for t, x in zip(tr["tx"].tolist(), tr["x"].tolist()):
+            if t in txs:
+                xms.setdefault(t, int(x))
+        b = se.read(a.rec, d, "bn-", se.BN_DT)
+        bn.append(b[(b["src"] == 0)])
+        q = se.read(a.rec, d, "pm-", se.PM_DT)
+        pm.append(q[np.isin(q["e"], me["e"])])
+    bn, pm = np.concatenate(bn), np.concatenate(pm)
+    print(f"{hexw[mine][0]}: {len(me)} rows, {sum(t in xms for t in txs)} of {len(txs)} txs found in trade prints")
+    print(f"{'exchange time UTC':23} {'left s':>6} {'tok':4} {'side':4} {'role':5} {'price':>5} {'size':>7} "
+          f"{'bn since open':>13} {'book mid':>8} {'out':3}  counterparties")  # fmt: skip
+    for row in np.sort(me, order=["e", "ts"]):
+        t = row["tx"]
+        x = xms.get(t, int(row["x"]) or int(row["ts"]) * 1000)
+        e0, end = int(row["e"]) * 1000, (int(row["e"]) + 60 * int(row["tf"])) * 1000
+        bb = bn[bn["a"] == row["a"]]
+        bb = bb[np.argsort(bb["T"])]
+
+        def px(tms, bb=bb):
+            i = np.searchsorted(bb["T"], tms, "right") - 1
+            return float(bb["p"][i]) if i >= 0 else float("nan")
+
+        mv = 1e4 * np.log(px(x) / px(e0)) * (1 if row["tok"] == 0 else -1)
+        pp = pm[(pm["a"] == row["a"]) & (pm["tf"] == row["tf"]) & (pm["e"] == row["e"])]
+        pp = pp[np.argsort(pp["x"])]
+        i = np.searchsorted(pp["x"], x, "right") - 1
+        mid = (int(pp["b"][i]) + int(pp["k"][i])) / 2e4 if i >= 0 else float("nan")
+        mid = mid if row["tok"] == 0 else 1 - mid
+        k = f"{ASSETS[row['a']]}-updown-{row['tf']}m-{row['e']}"
+        out = {None: "?"}.get(win.get(k), "W" if win.get(k) == ("UP" if row["tok"] == 0 else "DOWN") else "L")
+        cps = sorted({w for w in others.get(t, []) if w != hexw[mine][0]})
+        print(f"{time.strftime('%m-%d %H:%M:%S', time.gmtime(x / 1000))}.{x % 1000:03d} {(end - x) / 1000:6.1f} "
+              f"{'UP' if row['tok'] == 0 else 'DOWN':4} {'BUY' if row['sd'] == 0 else 'SELL':4} "
+              f"{'taker' if row['fee'] > 0 else 'maker':5} {row['p']:5.2f} {row['sz']:7.0f} {mv:+11.1f}bp "
+              f"{mid:8.3f} {out:3}  {len(cps)}: " + " ".join(c[:8] for c in cps[:4]))  # fmt: skip
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -375,6 +443,14 @@ def main():
     p.add_argument("--wallets", nargs="*", default=[])
     p.add_argument("--settle", type=Path, default=Path.home() / "act-settlements.csv")
     p.add_argument("--no-fetch", action="store_true")
+    p = sp.add_parser("fills")
+    p.add_argument("--rec", type=Path, default=Path.home() / "shadow-rec")
+    p.add_argument("--days", nargs="*")
+    p.add_argument("--asset", choices=ASSETS)
+    p.add_argument("--tf", type=int, choices=(5, 15))
+    p.add_argument("--wallet", required=True)
+    p.add_argument("--settle", type=Path, default=Path.home() / "act-settlements.csv")
+    p.add_argument("--no-fetch", action="store_true")
     p = sp.add_parser("pnl")
     p.add_argument("--rec", type=Path, default=Path.home() / "shadow-rec")
     p.add_argument("--days", nargs="*")
@@ -391,6 +467,8 @@ def main():
         cmd_pnl(a)
     elif a.cmd == "profile":
         cmd_profile(a)
+    elif a.cmd == "fills":
+        cmd_fills(a)
     else:
         cmd_top(a)
 
