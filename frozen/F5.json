@@ -1,0 +1,1 @@
+{"family":"F5 imbalance taker","frozen_utc":"2026-11-16T20:30:24Z","rule":"none frozen: every taker exit < -2.5c on dev; settle -0.10 [-0.84,0.62] n 81298","configs_tried":3}
