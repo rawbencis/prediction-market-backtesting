@@ -250,9 +250,12 @@ def cmd_pnl(a):
           f"({len(keys) - len(set(key))} unsettled skipped)")  # fmt: skip
     rng = np.random.default_rng(7)
     rows = []
-    w_all = r["w"]
-    for w in np.unique(w_all):
-        m = w_all == w
+    order = np.argsort(r["w"], kind="stable")
+    r, pnl, key, usd = r[order], pnl[order], key[order], usd[order]
+    uw, start = np.unique(r["w"], return_index=True)
+    bounds = list(start) + [len(r)]
+    for i, w in enumerate(uw):
+        m = slice(bounds[i], bounds[i + 1])
         u = float(usd[m].sum())
         if u < a.min_usd:
             continue
@@ -266,7 +269,7 @@ def cmd_pnl(a):
         idx = rng.integers(0, len(arr), (500, len(arr)))
         boot = 100 * arr[idx, 0].sum(1) / np.maximum(arr[idx, 1].sum(1), 1e-9)
         tk = r["fee"][m] > 0
-        rows.append(("0x" + w.hex(), int(m.sum()), u, float(pm.sum()), 100 * float(pm.sum()) / u,
+        rows.append(("0x" + w.hex(), len(pm), u, float(pm.sum()), 100 * float(pm.sum()) / u,
                      *np.percentile(boot, [5, 95]), float(tk.mean()), len(arr),
                      100 * float(pm[tk].sum() / max(usd[m][tk].sum(), 1e-9)) if tk.any() else float("nan"),
                      100 * float(pm[~tk].sum() / max(usd[m][~tk].sum(), 1e-9)) if (~tk).any() else float("nan")))  # fmt: skip
