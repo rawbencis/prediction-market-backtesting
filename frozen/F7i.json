@@ -1,0 +1,6 @@
+{"family":"F7i: F3i fast improve-maker on BTC 5m + alt-book pull trigger","frozen_utc":"2026-11-16T20:51:46Z",
+ "base":"exactly frozen/F3i.json (event, improve one tick inside a >= 2-tick spread, one live order per side, post-only BUY 5, hold to settlement, pess)",
+ "alt_trigger":"for each ETH/SOL/XRP/DOGE 5m market of the same window: dm = UP mid now - UP mid 500 ms earlier (at each alt book row). If we bid UP on BTC: cancel at the first alt row with dm <= -THR after our decision; if we offer UP (bid DOWN): first alt row with dm >= +THR. Cancel lands alt row + book + cancel ms.",
+ "A_primary":{"rules":"out+opp+dep+alt+ttl (TTL 5 s)","THR_1e4":50,"own_imbalance":"> 0.6","dev":{"orders":9086,"fills":1730,"settle_c":3.13,"ci_market":[1.24,5.03],"markout_1s_c":1.75}},
+ "B_volume":{"rules":"out+alt+ttl (TTL 5 s)","THR_1e4":50,"own_imbalance":"none","dev":{"orders":54922,"fills":13670,"settle_c":1.25,"ci_market":[0.63,1.85],"markout_1s_c":0.90}},
+ "configs_tried_F7":24,"note":"join-mode F7 runs were killed by the 800 MB cap at 20:47/20:50 (all rows held in memory); fixed (per-hour flush) and rerun later"}

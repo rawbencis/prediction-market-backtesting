@@ -19,6 +19,7 @@ import pandas as pd
 import pmlat  # noqa: I001
 import dsim
 import f3_maker
+from f3_maker import NW, OUTF, flush
 
 ALTS = ("eth", "sol", "xrp", "doge")
 THRS = (50, 100)
@@ -68,6 +69,7 @@ def main():
         f3_maker.MODE = sys.argv[3]
     sc = pmlat.SC[scn]
     out = []
+    OUTF[0] = pmlat.OUT / f"f7{'i' if f3_maker.MODE == 'improve' else ''}-{scn}-{day}.csv.gz"
     W = pmlat.winners([])
     gens = {a: pmlat.hours(day, a, 5, with_act=False) for a in ALTS}
     alt_cur = {a: (None, {}) for a in ALTS}
@@ -92,11 +94,10 @@ def main():
                     r["thr"] = thr
                     r["n_alts"] = len(alts)
                 out += rows
-        print(day, scn, h, len(out), flush=True)
-    f = pmlat.OUT / f"f7{'i' if f3_maker.MODE == 'improve' else ''}-{scn}-{day}.csv.gz"
-    with gzip.open(f, "wt") as fo:
-        pd.DataFrame(out).to_csv(fo, index=False)
-    print("wrote", f, len(out))
+        flush(out)
+        print(day, scn, h, NW[0], flush=True)
+    flush(None)
+    print("wrote", OUTF[0], NW[0])
 
 
 if __name__ == "__main__":

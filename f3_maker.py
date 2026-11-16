@@ -141,6 +141,33 @@ def run_market(m, sc, winner, rules_list):
     return out
 
 
+OUTF, NW, COLS = [None], [0], [None]
+
+
+def flush(rows):
+    """Append rows to OUTF (gz csv) and clear them; keeps memory flat. rows None: just make sure the file exists."""
+    import csv as _csv
+
+    if rows is None:
+        if NW[0] == 0:
+            gzip.open(OUTF[0], "wt").close()
+        return
+    if not rows:
+        return
+    if COLS[0] is None:
+        cols = []
+        for r in rows:
+            cols += [k for k in r if k not in cols]
+        COLS[0] = cols + [c for c in ("tfill", "tleft", "mo100", "mo1000", "mo5000", "mo30000", "settle_c", "exit_c", "exit_mk", "thr", "n_alts") if c not in cols]
+    with gzip.open(OUTF[0], "at" if NW[0] else "wt") as fo:
+        w = _csv.DictWriter(fo, fieldnames=COLS[0], extrasaction="ignore")
+        if NW[0] == 0:
+            w.writeheader()
+        w.writerows(rows)
+    NW[0] += len(rows)
+    rows.clear()
+
+
 RULES = (("out", "ttl"), ("out", "opp", "dep", "ttl"))
 
 
@@ -157,6 +184,7 @@ def main():
     hrs = range(24) if len(sys.argv) <= 5 or sys.argv[5] == "all" else [int(h) for h in sys.argv[5].split(",")]
     sc = pmlat.SC[scn]
     out = []
+    OUTF[0] = pmlat.OUT / f"f3{'' if MODE == 'join' else 'i'}-{asset}{tf}-{scn}-{day}.csv.gz"
     W = None
     for h, mk in pmlat.hours(day, asset, tf, hrs=hrs, with_act=False):
         if W is None:
@@ -164,11 +192,10 @@ def main():
         for e, m in mk.items():
             W.update(pmlat.winners([pmlat.slug(m["key"])]) if pmlat.slug(m["key"]) not in W else {})
             out += run_market(m, sc, W.get(pmlat.slug(m["key"])), RULES)
-        print(day, scn, h, len(out), flush=True)
-    f = pmlat.OUT / f"f3{'' if MODE == 'join' else 'i'}-{asset}{tf}-{scn}-{day}.csv.gz"
-    with gzip.open(f, "wt") as fo:
-        pd.DataFrame(out).to_csv(fo, index=False)
-    print("wrote", f, len(out))
+        flush(out)
+        print(day, scn, h, NW[0], flush=True)
+    flush(None)
+    print("wrote", OUTF[0], NW[0])
 
 
 if __name__ == "__main__":
