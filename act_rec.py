@@ -359,51 +359,89 @@ def cmd_profile(a):
             _breakdown(r[mm], pnl[mm], key[mm], "all")
 
 
+def _hours(ms_list, back=1):
+    """{(day, hour)} covering each exchange time and the `back` hours before it (UTC file names)."""
+    out = set()
+    for ms in ms_list:
+        for k in range(back + 1):
+            t = time.gmtime(ms / 1000 - 3600 * k)
+            out.add((time.strftime("%Y-%m-%d", t), t.tm_hour))
+    return out
+
+
+def _load(root, kind, dt, hours, keep):
+    """Read only the given hour files, filtering each as it is read (keeps memory flat on the recorder box)."""
+    import numpy as np
+
+    parts = []
+    for d, h in sorted(hours):
+        f = root / d / f"{kind}-{h:02d}.bin"
+        if f.exists():
+            x = np.fromfile(f, dtype=dt, count=f.stat().st_size // dt.itemsize)
+            parts.append(x[keep(x)])
+    return np.concatenate(parts) if parts else np.zeros(0, dt)
+
+
 def cmd_fills(a):
     import numpy as np
 
     import shadow_eval as se
     from ohioai_match import TR_DT
 
+    dt = np.dtype(ACT_DT)
     days = a.days or sorted(p.name for p in a.rec.glob("????-??-??") if any(p.glob("act-*.bin")))
-    r = read(a.rec, days)
-    if a.asset:
-        r = r[r["a"] == ASSETS.index(a.asset)]
-    if a.tf:
-        r = r[r["tf"] == a.tf]
-    hexw = np.array(["0x" + w.hex() for w in r["w"].tolist()])
-    mine = np.char.startswith(hexw, a.wallet.lower())
-    if not mine.any():
+    files = [f for d in days for f in sorted((a.rec / d).glob("act-*.bin"))]
+
+    def scoped(x):
+        m = np.ones(len(x), bool)
+        if a.asset:
+            m &= x["a"] == ASSETS.index(a.asset)
+        if a.tf:
+            m &= x["tf"] == a.tf
+        return m
+
+    mine, who = [], None
+    for f in files:  # pass 1: the wallet's rows (match the prefix on each file's distinct wallets only)
+        x = np.fromfile(f, dtype=dt, count=f.stat().st_size // dt.itemsize)
+        x = x[scoped(x)]
+        hit = [w for w in np.unique(x["w"]).tolist() if ("0x" + w.ljust(20, b"\0").hex()).startswith(a.wallet.lower())]
+        if hit:
+            who = who or "0x" + hit[0].ljust(20, b"\0").hex()
+            mine.append(x[x["w"] == hit[0] if len(hit) == 1 else np.isin(x["w"], hit)])
+    if not mine:
         print("no rows")
         return
-    me = r[mine]
-    txs = set(me["tx"].tolist())
+    me = np.concatenate(mine)
+    txl = np.unique(me["tx"])
     others = {}
-    for t, w in zip(r["tx"].tolist(), hexw.tolist()):
-        if t in txs:
-            others.setdefault(t, []).append(w)
+    for f in files:  # pass 2: everyone else in the same fills
+        x = np.fromfile(f, dtype=dt, count=f.stat().st_size // dt.itemsize)
+        x = x[np.isin(x["tx"], txl)]
+        for t, w in zip(x["tx"].tolist(), x["w"].tolist()):
+            others.setdefault(t, set()).add("0x" + w.ljust(20, b"\0").hex())
     keys = sorted({f"{ASSETS[x]}-updown-{t}m-{e}" for x, t, e in set(zip(me["a"].tolist(), me["tf"].tolist(), me["e"].tolist()))})
     win = se.settle(a.settle, keys, not a.no_fetch)
-    xms, bn, pm = {}, [], []
-    for d in days:
-        tr = se.read(a.rec, d, "tr-", TR_DT)
-        for t, x in zip(tr["tx"].tolist(), tr["x"].tolist()):
-            if t in txs:
-                xms.setdefault(t, int(x))
-        b = se.read(a.rec, d, "bn-", se.BN_DT)
-        bn.append(b[(b["src"] == 0)])
-        q = se.read(a.rec, d, "pm-", se.PM_DT)
-        pm.append(q[np.isin(q["e"], me["e"])])
-    bn, pm = np.concatenate(bn), np.concatenate(pm)
-    print(f"{hexw[mine][0]}: {len(me)} rows, {sum(t in xms for t in txs)} of {len(txs)} txs found in trade prints")
+    ts_ms = [int(t) * 1000 for t in me["ts"].tolist()]
+    tr = _load(a.rec, "tr", TR_DT, _hours(ts_ms) | _hours([t + 3_600_000 for t in ts_ms], 0),
+               lambda x: np.isin(x["tx"], txl))  # fmt: skip
+    xms = {}
+    for t, xx in zip(tr["tx"].tolist(), tr["x"].tolist()):
+        xms.setdefault(t, int(xx))
+    fill_ms = [xms.get(t, int(xx) or int(s) * 1000) for t, xx, s in zip(me["tx"].tolist(), me["x"].tolist(), me["ts"].tolist())]
+    opens = [int(e) * 1000 for e in me["e"].tolist()]
+    assets = np.unique(me["a"])
+    bn = _load(a.rec, "bn", se.BN_DT, _hours(fill_ms + opens), lambda x: (x["src"] == 0) & np.isin(x["a"], assets))
+    epochs = np.unique(me["e"])
+    pm = _load(a.rec, "pm", se.PM_DT, _hours(fill_ms), lambda x: np.isin(x["e"], epochs) & np.isin(x["a"], assets))
+    print(f"{who}: {len(me)} rows, {sum(t in xms for t in txl.tolist())} of {len(txl)} txs found in trade prints")
     print(f"{'exchange time UTC':23} {'left s':>6} {'tok':4} {'side':4} {'role':5} {'price':>5} {'size':>7} "
           f"{'bn since open':>13} {'book mid':>8} {'out':3}  counterparties")  # fmt: skip
-    for row in np.sort(me, order=["e", "ts"]):
-        t = row["tx"]
-        x = xms.get(t, int(row["x"]) or int(row["ts"]) * 1000)
+    order = np.lexsort((me["ts"], me["e"]))
+    for k in order:
+        row, x = me[k], fill_ms[k]
         e0, end = int(row["e"]) * 1000, (int(row["e"]) + 60 * int(row["tf"])) * 1000
         bb = bn[bn["a"] == row["a"]]
-        bb = bb[np.argsort(bb["T"])]
+        bb = bb[np.argsort(bb["T"], kind="stable")]
 
         def px(tms, bb=bb):
             i = np.searchsorted(bb["T"], tms, "right") - 1
@@ -411,13 +449,13 @@ def cmd_fills(a):
 
         mv = 1e4 * np.log(px(x) / px(e0)) * (1 if row["tok"] == 0 else -1)
         pp = pm[(pm["a"] == row["a"]) & (pm["tf"] == row["tf"]) & (pm["e"] == row["e"])]
-        pp = pp[np.argsort(pp["x"])]
+        pp = pp[np.argsort(pp["x"], kind="stable")]
         i = np.searchsorted(pp["x"], x, "right") - 1
         mid = (int(pp["b"][i]) + int(pp["k"][i])) / 2e4 if i >= 0 else float("nan")
         mid = mid if row["tok"] == 0 else 1 - mid
-        k = f"{ASSETS[row['a']]}-updown-{row['tf']}m-{row['e']}"
-        out = {None: "?"}.get(win.get(k), "W" if win.get(k) == ("UP" if row["tok"] == 0 else "DOWN") else "L")
-        cps = sorted({w for w in others.get(t, []) if w != hexw[mine][0]})
+        key = f"{ASSETS[row['a']]}-updown-{row['tf']}m-{row['e']}"
+        out = "?" if win.get(key) is None else "W" if win.get(key) == ("UP" if row["tok"] == 0 else "DOWN") else "L"
+        cps = sorted(others.get(row["tx"], set()) - {who})
         print(f"{time.strftime('%m-%d %H:%M:%S', time.gmtime(x / 1000))}.{x % 1000:03d} {(end - x) / 1000:6.1f} "
               f"{'UP' if row['tok'] == 0 else 'DOWN':4} {'BUY' if row['sd'] == 0 else 'SELL':4} "
               f"{'taker' if row['fee'] > 0 else 'maker':5} {row['p']:5.2f} {row['sz']:7.0f} {mv:+11.1f}bp "
