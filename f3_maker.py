@@ -26,6 +26,7 @@ import pmlat  # noqa: I001  (sets sys.path for dsim)
 import dsim
 
 DEP = 0.5
+STRICT = os.environ.get("PMLAT_STRICT") == "1"  # dsim_strict.maker_strict: through-prints fill only their own size
 SIZE = float(os.environ.get("PMLAT_SIZE", "5"))  # order size (shares); output files get a -s{SIZE} suffix if != 5
 TTLS = (5000,)
 MODELS = ("pess", "prop", "front")
@@ -108,7 +109,7 @@ def run_market(m, sc, winner, rules_list):
                     t_cxl = pull_time(m, r0, side, q, sz0, t_arr, ttl, sc, rules)
                     busy[(rules, ttl)] = t_cxl
                     for model in MODELS:
-                        res = dsim.maker(m, t_arr, tok, price, SIZE, t_cxl, model=model)
+                        res = MAKER(m, t_arr, tok, price, SIZE, t_cxl, model=model)
                         f = res["fills"]
                         rec = dict(e=e, x0=x0, spr=int(B["k"][r0]) - int(B["b"][r0]), tleft0=end_ms - x0, imb=imb, mode=MODE, side=side, tok=tok, px=price, sz0=sz0, rules="+".join(rules), ttl=ttl,
                                    model=model, status=res["status"], t_live=t_cxl - t_arr,
@@ -129,7 +130,7 @@ def run_market(m, sc, winner, rules_list):
                             ex = None
                             if qx < 9900:
                                 ta, tc = seen + sc["order"], min(seen + EXIT_TTL, end_ms - 2000) + sc["cancel"]
-                                rr = dsim.maker(m, ta, 1 - tok, 10000 - qx, 5.0, tc, model=model)
+                                rr = MAKER(m, ta, 1 - tok, 10000 - qx, 5.0, tc, model=model)
                                 if rr["status"] == "ok" and sum(z["size"] for z in rr["fills"]) >= 5 - 1e-6:
                                     ex = 1.0
                                 else:
@@ -173,6 +174,14 @@ def flush(rows):
 RULES = (("out", "ttl"), ("out", "opp", "dep", "ttl"))
 
 
+def MAKER(*a, **k):
+    if STRICT:
+        import dsim_strict
+
+        return dsim_strict.maker_strict(*a, **k)
+    return dsim.maker(*a, **k)
+
+
 MODE = "join"
 
 
@@ -186,7 +195,7 @@ def main():
     hrs = range(24) if len(sys.argv) <= 5 or sys.argv[5] == "all" else [int(h) for h in sys.argv[5].split(",")]
     sc = pmlat.SC[scn]
     out = []
-    sfx = "" if SIZE == 5 else f"-s{SIZE:g}"
+    sfx = ("" if SIZE == 5 else f"-s{SIZE:g}") + ("-strict" if STRICT else "")
     OUTF[0] = pmlat.OUT / f"f3{'' if MODE == 'join' else 'i'}-{asset}{tf}-{scn}-{day}{sfx}.csv.gz"
     W = None
     for h, mk in pmlat.hours(day, asset, tf, hrs=hrs, with_act=False):

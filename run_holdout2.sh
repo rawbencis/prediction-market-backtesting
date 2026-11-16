@@ -9,5 +9,7 @@ echo "holdout2 start $(date -u +%FT%T)"
 cap="systemd-run --user --scope -q -p MemoryMax=800M -p MemorySwapMax=0 nice -n 10 env PYTHONPATH=$HOME/overnight-wt $HOME/shadow-venv/bin/python"
 for sc in dublin tokyo; do wait_ok; $cap f3_maker.py $D $sc btc 5 0,1,2,3,4 improve 2>&1 | tail -1; done
 for sc in dublin tokyo; do wait_ok; $cap f7_altpull.py $D $sc improve btc 5 0,1,2,3,4 2>&1 | tail -1; done
+for sc in dublin tokyo; do wait_ok; env PMLAT_STRICT=1 $cap f7_altpull.py $D $sc improve btc 5 0,1,2,3,4 2>&1 | tail -1; done
 $cap holdout_eval.py $D > out/pmlat/holdout-$D-h00-04.txt 2>&1
+env PMLAT_STRICT=1 $cap holdout_eval.py $D > out/pmlat/holdout-$D-h00-04-strict.txt 2>&1
 echo "holdout2 end $(date -u +%FT%T)"
