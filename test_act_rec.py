@@ -87,5 +87,30 @@ class TestAct(unittest.TestCase):
             self.assertIn("+6 ", out.split("TOP")[1].splitlines()[2])  # OhioAI +5.83 $ on top
 
 
+    def test_profile_buckets_by_time_left_and_price(self):
+        # window opens 1794650400 (5m): ts 1794650690 -> 10 s left; ts 1794650500 -> 200 s left
+        late = ar.pack(1, 2, payload(price=0.60, size=10, fee=0.02, timestamp=1794650690))
+        early = ar.pack(1, 2, payload(price=0.40, size=10, fee=0.02, timestamp=1794650500, outcome="Down"))
+        maker = ar.pack(1, 2, payload(proxyWallet="0x" + "33" * 20, side="SELL", price=0.60, size=10, fee=None,
+                                      timestamp=1794650690))
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td) / "2026-11-14"
+            d.mkdir()
+            (d / "act-10.bin").write_bytes(late + early + maker)
+            st = Path(td) / "s.csv"
+            st.write_text("slug,winner\nbtc-updown-5m-1794650400,UP\n")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                ar.cmd_profile(Namespace(rec=Path(td), days=None, asset="btc", tf=5, wallets=["0x1292", "0xdead"],
+                                         settle=st, no_fetch=True))
+            out = buf.getvalue()
+        self.assertIn("ALL TAKER FLOW: 2 fills", out)
+        self.assertIn("ALL MAKER FLOW: 1 fills", out)
+        self.assertIn("300-180s n=1 -104.2c/$", out)     # bought DOWN at .40, lost: -4 $ - fee on 4 $
+        self.assertIn("30-10s n=1 +63.9c/$", out)        # bought UP at .60 with 10 s left, won: +4 $ - fee on 6 $
+        self.assertIn("0xdead: no rows", out)
+        self.assertIn("<- OhioAI", out)
+
+
 if __name__ == "__main__":
     unittest.main()

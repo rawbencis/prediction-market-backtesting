@@ -9,6 +9,9 @@ them next to the books: ~/shadow-rec/YYYY-MM-DD/act-HH.bin, one ACT_REC per trad
                                                         wallets ranked by volume, with OhioAI marked
   python3 act_rec.py pnl   --rec ~/shadow-rec [--days D ...] [--asset btc] [--tf 5] [--min-usd 2000]
                                                         wallets ranked by settled PnL on these markets
+  python3 act_rec.py profile --wallets 0x523c 0x13c6 ... [--asset btc] [--tf 5]
+                                                        where in the window and at what price each wallet (and all
+                                                        taker flow) makes or loses money
 
 The stream emits one row per participant of a fill (taker + each maker; 2+ rows per tx), and only the taker's row
 carries a fee, so fee > 0 marks the taker side.
@@ -296,6 +299,63 @@ def cmd_pnl(a):
     print(f"sum of PnL across listed wallets: {tot:+.0f} $ (fees leave the system, so the total is negative)")
 
 
+T_BUCKETS = ((180, 1e9, "300-180s"), (120, 180, "180-120s"), (60, 120, "120-60s"), (30, 60, "60-30s"),
+             (10, 30, "30-10s"), (-1e9, 10, "<10s"))  # fmt: skip
+P_BUCKETS = ((0, 0.2, "<.20"), (0.2, 0.4, ".20-.40"), (0.4, 0.6, ".40-.60"), (0.6, 0.8, ".60-.80"),
+             (0.8, 0.9, ".80-.90"), (0.9, 0.95, ".90-.95"), (0.95, 1.01, ">=.95"))  # fmt: skip
+
+
+def _breakdown(r, pnl, key, title, out=print):
+    import numpy as np
+
+    usd = r["p"].astype(float) * r["sz"]
+    t_left = r["e"].astype(float) + 60.0 * r["tf"] - r["ts"].astype(float)
+    tk = r["fee"] > 0
+    out(f"  {title}: {len(r)} fills, {len(set(key.tolist()))} markets, ${usd.sum():,.0f}, "
+        f"pnl {pnl.sum():+,.0f} $ ({100 * pnl.sum() / max(usd.sum(), 1e-9):+.2f} c/$), taker {tk.mean():.0%}, "
+        f"buys {(r['sd'] == 0).mean():.0%}, median size {np.median(r['sz']):.0f} sh")  # fmt: skip
+    for lab, col, buckets in (("time left", t_left, T_BUCKETS), ("price", r["p"].astype(float), P_BUCKETS)):
+        cells = []
+        for lo, hi, name in buckets:
+            m = (col >= lo) & (col < hi)
+            if m.sum():
+                cells.append(f"{name} n={int(m.sum())} {100 * pnl[m].sum() / max(usd[m].sum(), 1e-9):+.1f}c/$"
+                             f" ${usd[m].sum() / 1000:.1f}k")  # fmt: skip
+        out(f"    by {lab:9}: " + " | ".join(cells))
+
+
+def cmd_profile(a):
+    import numpy as np
+
+    import shadow_eval as se
+
+    days = a.days or sorted(p.name for p in a.rec.glob("????-??-??") if any(p.glob("act-*.bin")))
+    r = read(a.rec, days)
+    if a.asset:
+        r = r[r["a"] == ASSETS.index(a.asset)]
+    if a.tf:
+        r = r[r["tf"] == a.tf]
+    keys = sorted({f"{ASSETS[x]}-updown-{t}m-{e}" for x, t, e in set(zip(r["a"].tolist(), r["tf"].tolist(), r["e"].tolist()))})
+    pnl, key = settled_pnl(r, se.settle(a.settle, keys, not a.no_fetch))
+    ok = ~np.isnan(pnl)
+    r, pnl, key = r[ok], pnl[ok], key[ok]
+    print(f"days {days[0]}..{days[-1]}, {len(r)} settled rows")
+    tk = r["fee"] > 0
+    _breakdown(r[tk], pnl[tk], key[tk], "ALL TAKER FLOW")
+    _breakdown(r[~tk], pnl[~tk], key[~tk], "ALL MAKER FLOW")
+    hexw = np.array(["0x" + w.hex() for w in r["w"].tolist()])
+    for pre in a.wallets:
+        m = np.char.startswith(hexw, pre.lower())
+        ws = sorted(set(hexw[m].tolist()))
+        if not ws:
+            print(f"\n{pre}: no rows")
+            continue
+        for w in ws[:3]:
+            mm = hexw == w
+            print(f"\n{w}" + ("  <- OhioAI" if w == OHIOAI else ""))
+            _breakdown(r[mm], pnl[mm], key[mm], "all")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -307,6 +367,14 @@ def main():
     p.add_argument("--asset", choices=ASSETS)
     p.add_argument("--tf", type=int, choices=(5, 15))
     p.add_argument("--n", type=int, default=25)
+    p = sp.add_parser("profile")
+    p.add_argument("--rec", type=Path, default=Path.home() / "shadow-rec")
+    p.add_argument("--days", nargs="*")
+    p.add_argument("--asset", choices=ASSETS)
+    p.add_argument("--tf", type=int, choices=(5, 15))
+    p.add_argument("--wallets", nargs="*", default=[])
+    p.add_argument("--settle", type=Path, default=Path.home() / "act-settlements.csv")
+    p.add_argument("--no-fetch", action="store_true")
     p = sp.add_parser("pnl")
     p.add_argument("--rec", type=Path, default=Path.home() / "shadow-rec")
     p.add_argument("--days", nargs="*")
@@ -321,6 +389,8 @@ def main():
         asyncio.run(run(a))
     elif a.cmd == "pnl":
         cmd_pnl(a)
+    elif a.cmd == "profile":
+        cmd_profile(a)
     else:
         cmd_top(a)
 
