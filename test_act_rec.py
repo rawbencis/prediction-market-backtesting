@@ -58,5 +58,34 @@ class TestAct(unittest.TestCase):
             self.assertIn("OhioAI rank by volume: 2 of 2", out)
 
 
+    def test_settled_pnl_and_ranking(self):
+        import numpy as np
+
+        mk = "0x" + "22" * 20
+        rows = [
+            ar.pack(1, 2, payload(price=0.40, size=10, fee=0.02)),                       # OhioAI taker buys UP at .40, UP wins
+            ar.pack(1, 2, payload(proxyWallet=mk, side="SELL", price=0.40, size=10, fee=None)),  # maker sells it
+            ar.pack(1, 2, payload(proxyWallet=mk, outcome="Down", price=0.55, size=10, fee=None)),  # maker buys DOWN, loses
+        ]
+        r = np.frombuffer(b"".join(rows), dtype=np.dtype(ar.ACT_DT))
+        pnl, key = ar.settled_pnl(r, {"btc-updown-5m-1794650400": "UP"})
+        self.assertAlmostEqual(pnl[0], (1 - 0.40) * 10 - 0.07 * 0.4 * 0.6 * 10, places=4)
+        self.assertAlmostEqual(pnl[1], (0.40 - 1) * 10, places=4)
+        self.assertAlmostEqual(pnl[2], -0.55 * 10, places=4)
+        self.assertTrue(np.isnan(ar.settled_pnl(r, {})[0]).all())
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td) / "2026-11-14"
+            d.mkdir()
+            (d / "act-10.bin").write_bytes(b"".join(rows))
+            st = Path(td) / "s.csv"
+            st.write_text("slug,winner\nbtc-updown-5m-1794650400,UP\n")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                ar.cmd_pnl(Namespace(rec=Path(td), days=None, asset="btc", tf=5, min_usd=0, n=5, settle=st, no_fetch=True))
+            out = buf.getvalue()
+            self.assertIn("OhioAI rank by PnL: 1 of 2", out)
+            self.assertIn("+6 ", out.split("TOP")[1].splitlines()[2])  # OhioAI +5.83 $ on top
+
+
 if __name__ == "__main__":
     unittest.main()

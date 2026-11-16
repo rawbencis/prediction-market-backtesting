@@ -7,6 +7,11 @@ them next to the books: ~/shadow-rec/YYYY-MM-DD/act-HH.bin, one ACT_REC per trad
   python3 act_rec.py rec   --out ~/shadow-rec          (systemd: updown-act)
   python3 act_rec.py top   --rec ~/shadow-rec [--days D ...] [--asset btc] [--tf 5]
                                                         wallets ranked by volume, with OhioAI marked
+  python3 act_rec.py pnl   --rec ~/shadow-rec [--days D ...] [--asset btc] [--tf 5] [--min-usd 2000]
+                                                        wallets ranked by settled PnL on these markets
+
+The stream emits one row per participant of a fill (taker + each maker; 2+ rows per tx), and only the taker's row
+carries a fee, so fee > 0 marks the taker side.
 """
 
 import argparse
@@ -209,6 +214,85 @@ def cmd_top(a):
     _ = np
 
 
+def settled_pnl(r, winners, fee_rate=0.07):
+    """Per-row settled PnL in $ on these markets: buy (win - p)*size, sell (p - win)*size, minus the taker fee.
+    Exact for anything held to settlement or round-tripped; a minted pair sold both ways nets p_up + p_down - 1.
+    Rows in markets without a winner get NaN."""
+    import numpy as np
+
+    key = [f"{ASSETS[a]}-updown-{tf}m-{e}" for a, tf, e in zip(r["a"].tolist(), r["tf"].tolist(), r["e"].tolist())]
+    won = np.array([{"UP": 0, "DOWN": 1}.get(winners.get(k), -1) for k in key])
+    win = np.where(won < 0, np.nan, (won == r["tok"]).astype(float))
+    p, sz = r["p"].astype(float), r["sz"].astype(float)
+    taker = r["fee"] > 0
+    pnl = np.where(r["sd"] == 0, win - p, p - win) * sz - taker * fee_rate * p * (1 - p) * sz
+    return pnl, np.array(key)
+
+
+def cmd_pnl(a):
+    import numpy as np
+
+    import shadow_eval as se
+
+    days = a.days or sorted(p.name for p in a.rec.glob("????-??-??") if any(p.glob("act-*.bin")))
+    r = read(a.rec, days)
+    if a.asset:
+        r = r[r["a"] == ASSETS.index(a.asset)]
+    if a.tf:
+        r = r[r["tf"] == a.tf]
+    keys = sorted({f"{ASSETS[x]}-updown-{t}m-{e}" for x, t, e in set(zip(r["a"].tolist(), r["tf"].tolist(), r["e"].tolist()))})
+    winners = se.settle(a.settle, keys, not a.no_fetch)
+    pnl, key = settled_pnl(r, winners)
+    ok = ~np.isnan(pnl)
+    r, pnl, key = r[ok], pnl[ok], key[ok]
+    usd = r["p"].astype(float) * r["sz"]
+    print(f"days {days[0]}..{days[-1]} ({len(days)}): {int(ok.sum())} rows in {len(set(key))} settled markets "
+          f"({len(keys) - len(set(key))} unsettled skipped)")  # fmt: skip
+    rng = np.random.default_rng(7)
+    rows = []
+    w_all = r["w"]
+    for w in np.unique(w_all):
+        m = w_all == w
+        u = float(usd[m].sum())
+        if u < a.min_usd:
+            continue
+        pm = pnl[m]
+        g = {}
+        for k, x, y in zip(key[m].tolist(), pm.tolist(), usd[m].tolist()):
+            s = g.setdefault(k, [0.0, 0.0])
+            s[0] += x
+            s[1] += y
+        arr = np.array(list(g.values()))
+        idx = rng.integers(0, len(arr), (500, len(arr)))
+        boot = 100 * arr[idx, 0].sum(1) / np.maximum(arr[idx, 1].sum(1), 1e-9)
+        tk = r["fee"][m] > 0
+        rows.append(("0x" + w.hex(), int(m.sum()), u, float(pm.sum()), 100 * float(pm.sum()) / u,
+                     *np.percentile(boot, [5, 95]), float(tk.mean()), len(arr),
+                     100 * float(pm[tk].sum() / max(usd[m][tk].sum(), 1e-9)) if tk.any() else float("nan"),
+                     100 * float(pm[~tk].sum() / max(usd[m][~tk].sum(), 1e-9)) if (~tk).any() else float("nan")))  # fmt: skip
+    rows.sort(key=lambda x: -x[3])
+    hdr = f"{'wallet':44} {'fills':>6} {'usd':>9} {'pnl $':>8} {'c/$':>6} {'90% CI (by market)':>17} {'taker':>5} {'mkts':>5} {'tk c/$':>7} {'mk c/$':>7}"
+    print(f"{len(rows)} wallets with >= ${a.min_usd:,.0f} traded")
+
+    def show(x):
+        tag = "  <- OhioAI" if x[0] == OHIOAI else ""
+        print(f"{x[0]:44} {x[1]:6d} {x[2]:9.0f} {x[3]:+8.0f} {x[4]:+6.2f} [{x[5]:+6.2f},{x[6]:+6.2f}] {x[7]:5.0%} {x[8]:5d} "
+              f"{x[9]:+7.2f} {x[10]:+7.2f}{tag}")  # fmt: skip
+
+    print("TOP by settled PnL\n" + hdr)
+    for x in rows[: a.n]:
+        show(x)
+    print("BOTTOM\n" + hdr)
+    for x in rows[-min(a.n, 10) :]:
+        show(x)
+    oh = [x for x in rows if x[0] == OHIOAI]
+    if oh:
+        print(f"OhioAI rank by PnL: {rows.index(oh[0]) + 1} of {len(rows)}")
+        show(oh[0])
+    tot = sum(x[3] for x in rows)
+    print(f"sum of PnL across listed wallets: {tot:+.0f} $ (fees leave the system, so the total is negative)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -220,9 +304,20 @@ def main():
     p.add_argument("--asset", choices=ASSETS)
     p.add_argument("--tf", type=int, choices=(5, 15))
     p.add_argument("--n", type=int, default=25)
+    p = sp.add_parser("pnl")
+    p.add_argument("--rec", type=Path, default=Path.home() / "shadow-rec")
+    p.add_argument("--days", nargs="*")
+    p.add_argument("--asset", choices=ASSETS)
+    p.add_argument("--tf", type=int, choices=(5, 15))
+    p.add_argument("--min-usd", type=float, default=2000.0)
+    p.add_argument("--n", type=int, default=30)
+    p.add_argument("--settle", type=Path, default=Path.home() / "act-settlements.csv")
+    p.add_argument("--no-fetch", action="store_true")
     a = ap.parse_args()
     if a.cmd == "rec":
         asyncio.run(run(a))
+    elif a.cmd == "pnl":
+        cmd_pnl(a)
     else:
         cmd_top(a)
 
