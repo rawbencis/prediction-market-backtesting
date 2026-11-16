@@ -11,6 +11,7 @@ Usage: python f7_altpull.py DAY SCEN [join|improve] [asset tf] [hours|all] (alts
 """
 
 import gzip
+import os
 import sys
 
 import numpy as np
@@ -24,6 +25,7 @@ from f3_maker import NW, OUTF, flush
 ALTS = ("eth", "sol", "xrp", "doge")
 THRS = (50, 100)
 LOOK = 500
+PLACEBO = os.environ.get("PMLAT_PLACEBO") == "1"
 RULES = (("out", "ttl"), ("out", "alt", "ttl"), ("out", "opp", "dep", "alt", "ttl"))
 ALT = {}  # side -> sorted adverse event times (set per market before run_market)
 
@@ -43,6 +45,8 @@ def alt_events(alt_mk, thr):
         dn.append(x[dm <= -thr])
         up.append(x[dm >= thr])
     cat = lambda z: np.sort(np.concatenate(z)) if z else np.zeros(0, np.int64)  # noqa: E731
+    if PLACEBO:  # pull on alt moves in the FAVOURABLE direction (same pull frequency, wrong sign): control for "just pulling more"
+        return {0: cat(up), 1: cat(dn)}
     return {0: cat(dn), 1: cat(up)}
 
 
@@ -73,7 +77,7 @@ def main():
     hrs = range(24) if len(sys.argv) <= 6 or sys.argv[6] == "all" else [int(x) for x in sys.argv[6].split(",")]
     sc = pmlat.SC[scn]
     out = []
-    tag = "" if (asset, tf) == ("btc", 5) else f"-{asset}{tf}"
+    tag = ("" if (asset, tf) == ("btc", 5) else f"-{asset}{tf}") + ("-placebo" if PLACEBO else "")
     sfx = "" if f3_maker.SIZE == 5 else f"-s{f3_maker.SIZE:g}"
     OUTF[0] = pmlat.OUT / f"f7{'i' if f3_maker.MODE == 'improve' else ''}{tag}-{scn}-{day}{sfx}.csv.gz"
     W = pmlat.winners([])
