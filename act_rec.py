@@ -374,6 +374,19 @@ def _hours(ms_list, back=1):
     return out
 
 
+def _thin(x, ms=100):
+    """Last row per (asset, ms bucket) by exchange time: enough for 1 s / 5 s moves, a fraction of the memory."""
+    import numpy as np
+
+    if not len(x):
+        return x
+    o = np.lexsort((x["T"], x["a"]))
+    x = x[o]
+    key = x["a"].astype(np.int64) * 10**13 + x["T"] // ms
+    last = np.r_[key[1:] != key[:-1], True]
+    return x[last]
+
+
 def _load(root, kind, dt, hours, keep):
     """Read only the given hour files, filtering each as it is read (keeps memory flat on the recorder box)."""
     import numpy as np
@@ -383,7 +396,8 @@ def _load(root, kind, dt, hours, keep):
         f = root / d / f"{kind}-{h:02d}.bin"
         if f.exists():
             x = np.fromfile(f, dtype=dt, count=f.stat().st_size // dt.itemsize)
-            parts.append(x[keep(x)])
+            x = x[keep(x)]
+            parts.append(_thin(x) if kind == "bn" else x)
     return np.concatenate(parts) if parts else np.zeros(0, dt)
 
 
@@ -439,32 +453,79 @@ def cmd_fills(a):
     epochs = np.unique(me["e"])
     pm = _load(a.rec, "pm", se.PM_DT, _hours(fill_ms), lambda x: np.isin(x["e"], epochs) & np.isin(x["a"], assets))
     print(f"{who}: {len(me)} rows, {sum(t in xms for t in txl.tolist())} of {len(txl)} txs found in trade prints")
-    print(f"{'exchange time UTC':23} {'left s':>6} {'tok':4} {'side':4} {'role':5} {'price':>5} {'size':>7} "
-          f"{'bn since open':>13} {'book mid':>8} {'out':3}  counterparties")  # fmt: skip
-    order = np.lexsort((me["ts"], me["e"]))
-    for k in order:
+    pnl, _ = settled_pnl(me, win)
+    rows = []
+    for k in np.lexsort((me["ts"], me["e"])):
         row, x = me[k], fill_ms[k]
         e0, end = int(row["e"]) * 1000, (int(row["e"]) + 60 * int(row["tf"])) * 1000
         bb = bn[bn["a"] == row["a"]]
-        bb = bb[np.argsort(bb["T"], kind="stable")]
+        sgn = 1 if row["tok"] == 0 else -1
 
         def px(tms, bb=bb):
             i = np.searchsorted(bb["T"], tms, "right") - 1
             return float(bb["p"][i]) if i >= 0 else float("nan")
 
-        mv = 1e4 * np.log(px(x) / px(e0)) * (1 if row["tok"] == 0 else -1)
+        p_now = px(x)
         pp = pm[(pm["a"] == row["a"]) & (pm["tf"] == row["tf"]) & (pm["e"] == row["e"])]
         pp = pp[np.argsort(pp["x"], kind="stable")]
-        i = np.searchsorted(pp["x"], x, "right") - 1
+        i = np.searchsorted(pp["x"], x - 1, "right") - 1  # book standing just before the match
         mid = (int(pp["b"][i]) + int(pp["k"][i])) / 2e4 if i >= 0 else float("nan")
         mid = mid if row["tok"] == 0 else 1 - mid
         key = f"{ASSETS[row['a']]}-updown-{row['tf']}m-{row['e']}"
-        out = "?" if win.get(key) is None else "W" if win.get(key) == ("UP" if row["tok"] == 0 else "DOWN") else "L"
-        cps = sorted(others.get(row["tx"], set()) - {who})
-        print(f"{time.strftime('%m-%d %H:%M:%S', time.gmtime(x / 1000))}.{x % 1000:03d} {(end - x) / 1000:6.1f} "
-              f"{'UP' if row['tok'] == 0 else 'DOWN':4} {'BUY' if row['sd'] == 0 else 'SELL':4} "
-              f"{'taker' if row['fee'] > 0 else 'maker':5} {row['p']:5.2f} {row['sz']:7.0f} {mv:+11.1f}bp "
-              f"{mid:8.3f} {out:3}  {len(cps)}: " + " ".join(c[:8] for c in cps[:4]))  # fmt: skip
+        rows.append(dict(
+            x=x, left=(end - x) / 1000, tok="UP" if row["tok"] == 0 else "DOWN", side="BUY" if row["sd"] == 0 else "SELL",
+            role="taker" if row["fee"] > 0 else "maker", p=float(row["p"]), sz=float(row["sz"]),
+            mv_open=sgn * 1e4 * np.log(p_now / px(e0)), mv_1s=sgn * 1e4 * np.log(p_now / px(x - 1000)),
+            mv_5s=sgn * 1e4 * np.log(p_now / px(x - 5000)), mid=mid, vs_mid=float(row["p"]) - mid,
+            out="?" if win.get(key) is None else "W" if win.get(key) == ("UP" if row["tok"] == 0 else "DOWN") else "L",
+            pnl=float(pnl[k]), usd=float(row["p"]) * float(row["sz"]),
+            cps=sorted(others.get(row["tx"], set()) - {who})))  # fmt: skip
+    if a.summary:
+        _fills_summary(rows)
+        return
+    print(f"{'exchange time UTC':23} {'left s':>6} {'tok':4} {'side':4} {'role':5} {'price':>5} {'size':>7} "
+          f"{'bn open':>8} {'bn 1s':>6} {'bn 5s':>6} {'mid':>6} {'out':3}  counterparties")  # fmt: skip
+    for r in rows:
+        x = r["x"]
+        print(f"{time.strftime('%m-%d %H:%M:%S', time.gmtime(x / 1000))}.{x % 1000:03d} {r['left']:6.1f} {r['tok']:4} "
+              f"{r['side']:4} {r['role']:5} {r['p']:5.2f} {r['sz']:7.0f} {r['mv_open']:+7.1f} {r['mv_1s']:+6.1f} "
+              f"{r['mv_5s']:+6.1f} {r['mid']:6.3f} {r['out']:3}  {len(r['cps'])}: " + " ".join(c[:8] for c in r["cps"][:4]))  # fmt: skip
+
+
+def _fills_summary(rows, out=print):
+    """Settled c/$ by Binance move toward the token (1 s, 5 s, since open), by price vs mid, by role."""
+    import numpy as np
+
+    rows = [r for r in rows if r["out"] != "?" and np.isfinite(r["mv_1s"])]
+    if not rows:
+        out("no settled rows")
+        return
+    pnl = np.array([r["pnl"] for r in rows])
+    usd = np.array([r["usd"] for r in rows])
+    out(f"settled fills {len(rows)}: pnl {pnl.sum():+,.0f} $ on ${usd.sum():,.0f} ({100 * pnl.sum() / usd.sum():+.2f} c/$), "
+        f"win rate {np.mean([r['out'] == 'W' for r in rows]):.3f}")  # fmt: skip
+
+    def table(name, vals, edges, fmt):
+        v = np.array(vals, float)
+        cells = []
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            m = (v >= lo) & (v < hi)
+            if m.sum():
+                lab = f"{'' if lo < -1e8 else fmt.format(lo)}..{'' if hi > 1e8 else fmt.format(hi)}"
+                cells.append(f"{lab} n={int(m.sum())} {100 * pnl[m].sum() / max(usd[m].sum(), 1e-9):+.1f}c/$")
+        out(f"  {name:>17}: " + " | ".join(cells))
+
+    inf = 1e9
+    table("bn move 1s (bp)", [r["mv_1s"] for r in rows], (-inf, -2, -0.5, 0.5, 2, 5, inf), "{:g}")
+    table("bn move 5s (bp)", [r["mv_5s"] for r in rows], (-inf, -5, -2, 0, 2, 5, 10, inf), "{:g}")
+    table("bn since open (bp)", [r["mv_open"] for r in rows], (-inf, -10, -5, -2, 0, 2, 5, 10, 20, inf), "{:g}")
+    table("price - mid (c)", [100 * r["vs_mid"] for r in rows], (-inf, -2, -1, -0.5, 0, 0.5, 1, 2, inf), "{:g}")
+    table("time left (s)", [r["left"] for r in rows], (-inf, 10, 30, 60, 120, 180, inf), "{:g}")
+    for role in ("taker", "maker"):
+        m = np.array([r["role"] == role for r in rows])
+        if m.any():
+            out(f"  {role}: n={int(m.sum())} {100 * pnl[m].sum() / usd[m].sum():+.2f} c/$, median price - mid "
+                f"{100 * np.median([r['vs_mid'] for r, k in zip(rows, m) if k]):+.2f}c")  # fmt: skip
 
 
 def main():
@@ -492,6 +553,7 @@ def main():
     p.add_argument("--asset", choices=ASSETS)
     p.add_argument("--tf", type=int, choices=(5, 15))
     p.add_argument("--wallet", required=True)
+    p.add_argument("--summary", action="store_true", help="settled c/$ by Binance move, price vs mid, time left")
     p.add_argument("--settle", type=Path, default=Path.home() / "act-settlements.csv")
     p.add_argument("--no-fetch", action="store_true")
     p = sp.add_parser("pnl")

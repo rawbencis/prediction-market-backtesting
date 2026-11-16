@@ -136,15 +136,18 @@ class TestAct(unittest.TestCase):
             st.write_text(f"slug,winner\nbtc-updown-5m-{EP},UP\n")
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                ar.cmd_fills(Namespace(rec=td, days=[DAY], asset="btc", tf=5, wallet="0x1292", settle=st, no_fetch=True))
+                ar.cmd_fills(Namespace(rec=td, days=[DAY], asset="btc", tf=5, wallet="0x1292", settle=st, no_fetch=True,
+                                       summary=False))
+                ar.cmd_fills(Namespace(rec=td, days=[DAY], asset="btc", tf=5, wallet="0x1292", settle=st, no_fetch=True,
+                                       summary=True))
             out = buf.getvalue()
             _ = om
         self.assertIn("1 of 1 txs found in trade prints", out)
         line = [ln for ln in out.splitlines() if "taker" in ln][0]
         self.assertIn(" 199.8 UP   BUY  taker  0.52     600", line)  # exchange ms 100.200 s into a 300 s window
-        self.assertIn("+30.0bp", line)                               # Binance +0.3% since the open
-        self.assertIn("0.510", line)                                  # UP mid 50/52 before the 100.27 s reprice
-        self.assertIn(" W    1: 0x444444", line)
+        self.assertIn("  +30.0  +30.0  +30.0  0.510 W    1: 0x444444", line)  # +0.3% since open, in 1 s and 5 s; mid
+        self.assertIn("bn move 1s (bp): 5.. n=1 +88.9c/$", out)  # ((1 - .52) * 600 - fee) / (.52 * 600)
+        self.assertIn("taker: n=1 +88.95 c/$, median price - mid +1.00c", out)
 
 
 if __name__ == "__main__":
