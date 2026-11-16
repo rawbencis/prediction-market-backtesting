@@ -81,9 +81,13 @@ class TestAct(unittest.TestCase):
             st.write_text("slug,winner\nbtc-updown-5m-1794650400,UP\n")
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                ar.cmd_pnl(Namespace(rec=Path(td), days=None, asset="btc", tf=5, min_usd=0, n=5, settle=st, no_fetch=True))
+                ar.cmd_pnl(Namespace(rec=Path(td), days=None, asset="btc", tf=5, min_usd=0, min_markets=1, n=5, settle=st,
+                                    no_fetch=True))
+                ar.cmd_pnl(Namespace(rec=Path(td), days=None, asset="btc", tf=5, min_usd=0, min_markets=2, n=5, settle=st,
+                                    no_fetch=True))
             out = buf.getvalue()
             self.assertIn("OhioAI rank by PnL: 1 of 2", out)
+            self.assertIn("0 wallets with >= $0 traded in >= 2 markets (2 more traded in fewer markets", out)
             self.assertIn("+6 ", out.split("TOP")[1].splitlines()[2])  # OhioAI +5.83 $ on top
 
 

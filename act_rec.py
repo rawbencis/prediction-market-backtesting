@@ -255,7 +255,7 @@ def cmd_pnl(a):
     print(f"days {days[0]}..{days[-1]} ({len(days)}): {int(ok.sum())} rows in {len(set(key))} settled markets "
           f"({len(keys) - len(set(key))} unsettled skipped)")  # fmt: skip
     rng = np.random.default_rng(7)
-    rows = []
+    rows, few = [], 0
     order = np.argsort(r["w"], kind="stable")
     r, pnl, key, usd = r[order], pnl[order], key[order], usd[order]
     uw, start = np.unique(r["w"], return_index=True)
@@ -272,6 +272,9 @@ def cmd_pnl(a):
             s[0] += x
             s[1] += y
         arr = np.array(list(g.values()))
+        if len(arr) < a.min_markets:
+            few += 1
+            continue
         idx = rng.integers(0, len(arr), (500, len(arr)))
         boot = 100 * arr[idx, 0].sum(1) / np.maximum(arr[idx, 1].sum(1), 1e-9)
         tk = r["fee"][m] > 0
@@ -281,7 +284,9 @@ def cmd_pnl(a):
                      100 * float(pm[~tk].sum() / max(usd[m][~tk].sum(), 1e-9)) if (~tk).any() else float("nan")))  # fmt: skip
     rows.sort(key=lambda x: -x[3])
     hdr = f"{'wallet':44} {'fills':>6} {'usd':>9} {'pnl $':>8} {'c/$':>6} {'90% CI (by market)':>17} {'taker':>5} {'mkts':>5} {'tk c/$':>7} {'mk c/$':>7}"
-    print(f"{len(rows)} wallets with >= ${a.min_usd:,.0f} traded")
+    print(f"{len(rows)} wallets with >= ${a.min_usd:,.0f} traded in >= {a.min_markets} markets "
+          f"({few} more traded in fewer markets: a bootstrap over a handful of markets can't separate skill from a "
+          f"streak, so they are left out)")  # fmt: skip
 
     def show(x):
         tag = "  <- OhioAI" if x[0] == OHIOAI else ""
@@ -495,6 +500,7 @@ def main():
     p.add_argument("--asset", choices=ASSETS)
     p.add_argument("--tf", type=int, choices=(5, 15))
     p.add_argument("--min-usd", type=float, default=2000.0)
+    p.add_argument("--min-markets", type=int, default=30)
     p.add_argument("--n", type=int, default=30)
     p.add_argument("--settle", type=Path, default=Path.home() / "act-settlements.csv")
     p.add_argument("--no-fetch", action="store_true")
