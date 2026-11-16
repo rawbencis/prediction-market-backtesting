@@ -1,0 +1,11 @@
+{"family":"F3i fast maker: improve by one tick when our side's queue is heavy","frozen_utc":"2026-11-16T20:41:16Z",
+ "market":"BTC 5m (Polymarket up/down), both tokens",
+ "event":"a book row where the UP best bid rises or the UP best ask falls (new best level, >= 5 shares), window has >= 20 s left",
+ "decision":"at row time + book delay: spread >= 2 ticks and the new level still best; own-side imbalance > 0.6, where I=(UP bid size - UP ask size)/(sum) at the book seen, own = I for a bid on UP, -I for an offer on UP (= bid on DOWN)",
+ "order":"post-only BUY 5 shares one tick inside the spread on that side (UP bid + 1 tick, or DOWN bid + 1 tick = UP ask - 1 tick); one live order per side",
+ "pull":"cancel (lands +cancel ms) at the first of: someone improves past our price (out); the opposite best moves toward us (opp); TTL 5 s",
+ "exit":"hold to settlement (no exit leg)",
+ "fill_model":"dsim maker, pess (alone at a new price, so pess ~ prop ~ front)",
+ "dev":{"days":["2026-11-14 (09-23h)","2026-11-15"],"orders":7799,"fills":2866,"fills_per_day_approx":1430,"settle_c_per_share":2.04,"ci_market":[0.53,3.60],"ci_day":[1.30,2.85],"markout_1s_c":1.04,"markout_5s_c":0.95},
+ "configs_tried_F3_total":576,
+ "caveats":["our order is absent from the recorded book: penny-jumping reactions of other bots to it are not modelled","the dep rule is inert in improve mode (no queue ahead)","settlement P&L is noisy; the 1 s markout is the robust part"]}
