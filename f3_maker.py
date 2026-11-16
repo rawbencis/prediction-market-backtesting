@@ -16,6 +16,7 @@ Usage: python f3_maker.py DAY SCEN [asset tf hours|all mode(join|improve)] -> ou
 """
 
 import gzip
+import os
 import sys
 
 import numpy as np
@@ -25,6 +26,7 @@ import pmlat  # noqa: I001  (sets sys.path for dsim)
 import dsim
 
 DEP = 0.5
+SIZE = float(os.environ.get("PMLAT_SIZE", "5"))  # order size (shares); output files get a -s{SIZE} suffix if != 5
 TTLS = (5000,)
 MODELS = ("pess", "prop", "front")
 EXIT_TTL = 10000
@@ -106,7 +108,7 @@ def run_market(m, sc, winner, rules_list):
                     t_cxl = pull_time(m, r0, side, q, sz0, t_arr, ttl, sc, rules)
                     busy[(rules, ttl)] = t_cxl
                     for model in MODELS:
-                        res = dsim.maker(m, t_arr, tok, price, 5.0, t_cxl, model=model)
+                        res = dsim.maker(m, t_arr, tok, price, SIZE, t_cxl, model=model)
                         f = res["fills"]
                         rec = dict(e=e, x0=x0, spr=int(B["k"][r0]) - int(B["b"][r0]), tleft0=end_ms - x0, imb=imb, mode=MODE, side=side, tok=tok, px=price, sz0=sz0, rules="+".join(rules), ttl=ttl,
                                    model=model, status=res["status"], t_live=t_cxl - t_arr,
@@ -184,7 +186,8 @@ def main():
     hrs = range(24) if len(sys.argv) <= 5 or sys.argv[5] == "all" else [int(h) for h in sys.argv[5].split(",")]
     sc = pmlat.SC[scn]
     out = []
-    OUTF[0] = pmlat.OUT / f"f3{'' if MODE == 'join' else 'i'}-{asset}{tf}-{scn}-{day}.csv.gz"
+    sfx = "" if SIZE == 5 else f"-s{SIZE:g}"
+    OUTF[0] = pmlat.OUT / f"f3{'' if MODE == 'join' else 'i'}-{asset}{tf}-{scn}-{day}{sfx}.csv.gz"
     W = None
     for h, mk in pmlat.hours(day, asset, tf, hrs=hrs, with_act=False):
         if W is None:

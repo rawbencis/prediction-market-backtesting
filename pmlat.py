@@ -7,6 +7,7 @@ Each print gets its taker wallet from the RTDS census (act rows, fee > 0) when t
 Latency scenarios (ms, exchange clock), dsim conventions:
   dublin: book/print seen +9, order on book +22 (probe p50 send->visible), cancel +21, taker hold 50
   tokyo : book +116, order +120, cancel +120, hold 50
+  dublin_p90 (stress): book +23, order +52, cancel +69, hold 50
 """
 
 import csv
@@ -30,6 +31,8 @@ ADT = np.dtype(ACT_DT)
 SC = {
     "dublin": dict(book=9.0, order=22.0, cancel=21.0, hold=50.0),
     "tokyo": dict(book=116.0, order=120.0, cancel=120.0, hold=50.0),
+    # stress: this box's p90-ish delays (receive p90 ~23 ms; probe send->visible p90 33-95 ms by hour; cancel p90 54-69 ms in good hours)
+    "dublin_p90": dict(book=23.0, order=52.0, cancel=69.0, hold=50.0),
 }
 DEV = ("2026-11-14", "2026-11-15")
 HOLD = ("2026-11-16",)

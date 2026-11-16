@@ -7,7 +7,7 @@ snipers arrive. Our cancel lands at alt row + book (9) + cancel (21) ms; cancels
 Alt signal: for each alt 5m market of the same epoch, at every book row, dm = UP mid now - UP mid 500 ms earlier.
 An adverse alt event for our BTC BUY UP (bid) is any alt with dm <= -THR; for our BTC offer (BUY DOWN) dm >= +THR.
 Rules: F3's out/opp/dep/ttl plus 'alt'. Everything else as f3_maker (join mode, one live order per side, TTL 5 s).
-Usage: python f7_altpull.py DAY SCEN [join|improve] -> out/pmlat/f7-{scen}-{day}.csv.gz
+Usage: python f7_altpull.py DAY SCEN [join|improve] [asset tf] (alts = the other four assets, same tf) -> out/pmlat/f7-{scen}-{day}.csv.gz
 """
 
 import gzip
@@ -67,14 +67,19 @@ def main():
     day, scn = sys.argv[1], sys.argv[2]
     if len(sys.argv) > 3:
         f3_maker.MODE = sys.argv[3]
+    asset = sys.argv[4] if len(sys.argv) > 4 else "btc"
+    tf = int(sys.argv[5]) if len(sys.argv) > 5 else 5
+    alts = tuple(a for a in ("btc",) + ALTS if a != asset)
     sc = pmlat.SC[scn]
     out = []
-    OUTF[0] = pmlat.OUT / f"f7{'i' if f3_maker.MODE == 'improve' else ''}-{scn}-{day}.csv.gz"
+    tag = "" if (asset, tf) == ("btc", 5) else f"-{asset}{tf}"
+    sfx = "" if f3_maker.SIZE == 5 else f"-s{f3_maker.SIZE:g}"
+    OUTF[0] = pmlat.OUT / f"f7{'i' if f3_maker.MODE == 'improve' else ''}{tag}-{scn}-{day}{sfx}.csv.gz"
     W = pmlat.winners([])
-    gens = {a: pmlat.hours(day, a, 5, with_act=False) for a in ALTS}
-    alt_cur = {a: (None, {}) for a in ALTS}
-    for h, mk in pmlat.hours(day, "btc", 5, with_act=False):
-        for a in ALTS:  # advance each alt generator to hour h
+    gens = {a: pmlat.hours(day, a, tf, with_act=False) for a in alts}
+    alt_cur = {a: (None, {}) for a in alts}
+    for h, mk in pmlat.hours(day, asset, tf, with_act=False):
+        for a in alts:  # advance each alt generator to hour h
             while alt_cur[a][0] is None or alt_cur[a][0] < h:
                 try:
                     alt_cur[a] = next(gens[a])
@@ -84,15 +89,15 @@ def main():
         if miss:
             W.update(pmlat.winners(miss))
         for e, m in mk.items():
-            alts = [alt_cur[a][1][e] for a in ALTS if alt_cur[a][0] == h and e in alt_cur[a][1]]
+            altm = [alt_cur[a][1][e] for a in alts if alt_cur[a][0] == h and e in alt_cur[a][1]]
             for thr in THRS:
                 ALT.clear()
-                ALT.update(alt_events(alts, thr))
+                ALT.update(alt_events(altm, thr))
                 rows = f3_maker.run_market(m, sc, W.get(pmlat.slug(m["key"])),
                                            RULES if thr == THRS[0] else tuple(r for r in RULES if "alt" in r))
                 for r in rows:
                     r["thr"] = thr
-                    r["n_alts"] = len(alts)
+                    r["n_alts"] = len(altm)
                 out += rows
         flush(out)
         print(day, scn, h, NW[0], flush=True)

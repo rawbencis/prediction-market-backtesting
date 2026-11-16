@@ -48,6 +48,22 @@ def f3i(days, scn, pfx="f3i"):
     ci_line(f"F3i markout 1 s [{scn}]", m, F.loc[m.index].e, F.loc[m.index].day, len(days))
 
 
+def f7i(days, scn):
+    fs = [pmlat.OUT / f"f7i-{scn}-{d}.csv.gz" for d in days]
+    if not all(f.exists() for f in fs):
+        return
+    D = pd.concat([pd.read_csv(f).assign(day=d) for f, d in zip(fs, days)], ignore_index=True)
+    D["own"] = np.where(D.tok == 0, D.imb, -D.imb)
+    for lab, C in (("A", D[(D.rules == "out+opp+dep+alt+ttl") & (D.thr == 50) & (D.model == "pess") & (D.own > 0.6)]),
+                   ("B", D[(D.rules == "out+alt+ttl") & (D.thr == 50) & (D.model == "pess")])):
+        F = C[C.filled > 0].reset_index(drop=True)
+        v = F.settle_c.dropna()
+        ci_line(f"F7i-{lab} settle [{scn}]", v, F.loc[v.index].e, F.loc[v.index].day, len(days),
+                f"orders {len(C)} fill {len(F) / max(len(C), 1):.2f} mo1s {F.mo1000.mean():+.2f} mo5s {F.mo5000.mean():+.2f}")
+        m = F.mo1000.dropna()
+        ci_line(f"F7i-{lab} markout 1 s [{scn}]", m, F.loc[m.index].e, F.loc[m.index].day, len(days))
+
+
 def f4(days, scn):
     fs = [pmlat.OUT / f"f4-{scn}-{d}.csv.gz" for d in days]
     if not all(f.exists() for f in fs):
@@ -73,9 +89,10 @@ def f6(days, scn):
 def main():
     days = sys.argv[1:]
     print("days", days)
-    for scn in ("dublin", "tokyo"):
+    for scn in ("dublin", "dublin_p90", "tokyo"):
         f1(days, scn)
         f3i(days, scn)
+        f7i(days, scn)
         f4(days, scn)
         f6(days, scn)
 
