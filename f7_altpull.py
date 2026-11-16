@@ -7,7 +7,7 @@ snipers arrive. Our cancel lands at alt row + book (9) + cancel (21) ms; cancels
 Alt signal: for each alt 5m market of the same epoch, at every book row, dm = UP mid now - UP mid 500 ms earlier.
 An adverse alt event for our BTC BUY UP (bid) is any alt with dm <= -THR; for our BTC offer (BUY DOWN) dm >= +THR.
 Rules: F3's out/opp/dep/ttl plus 'alt'. Everything else as f3_maker (join mode, one live order per side, TTL 5 s).
-Usage: python f7_altpull.py DAY SCEN [join|improve] [asset tf] (alts = the other four assets, same tf) -> out/pmlat/f7-{scen}-{day}.csv.gz
+Usage: python f7_altpull.py DAY SCEN [join|improve] [asset tf] [hours|all] (alts = the other four assets, same tf) -> out/pmlat/f7-{scen}-{day}.csv.gz
 """
 
 import gzip
@@ -70,15 +70,16 @@ def main():
     asset = sys.argv[4] if len(sys.argv) > 4 else "btc"
     tf = int(sys.argv[5]) if len(sys.argv) > 5 else 5
     alts = tuple(a for a in ("btc",) + ALTS if a != asset)
+    hrs = range(24) if len(sys.argv) <= 6 or sys.argv[6] == "all" else [int(x) for x in sys.argv[6].split(",")]
     sc = pmlat.SC[scn]
     out = []
     tag = "" if (asset, tf) == ("btc", 5) else f"-{asset}{tf}"
     sfx = "" if f3_maker.SIZE == 5 else f"-s{f3_maker.SIZE:g}"
     OUTF[0] = pmlat.OUT / f"f7{'i' if f3_maker.MODE == 'improve' else ''}{tag}-{scn}-{day}{sfx}.csv.gz"
     W = pmlat.winners([])
-    gens = {a: pmlat.hours(day, a, tf, with_act=False) for a in alts}
+    gens = {a: pmlat.hours(day, a, tf, hrs=hrs, with_act=False) for a in alts}
     alt_cur = {a: (None, {}) for a in alts}
-    for h, mk in pmlat.hours(day, asset, tf, with_act=False):
+    for h, mk in pmlat.hours(day, asset, tf, hrs=hrs, with_act=False):
         for a in alts:  # advance each alt generator to hour h
             while alt_cur[a][0] is None or alt_cur[a][0] < h:
                 try:
