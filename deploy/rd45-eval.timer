@@ -1,0 +1,8 @@
+# NOT INSTALLED (see rd45-eval.service). Runs after the other nightly evals (00:20-01:05).
+[Unit]
+Description=R-D4/R-D5 nightly eval at 01:20 UTC
+[Timer]
+OnCalendar=*-*-* 01:20:00 UTC
+Persistent=true
+[Install]
+WantedBy=timers.target

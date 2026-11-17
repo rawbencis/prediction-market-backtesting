@@ -1,0 +1,11 @@
+# NOT INSTALLED. To install (operator): sudo cp rd45-eval.service rd45-eval.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now rd45-eval.timer
+[Unit]
+Description=R-D4/R-D5 (F7i alt-pull improve-maker) recorded-data shadow eval, nightly
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/overnight-wt
+ExecStart=/home/ubuntu/overnight-wt/deploy/rd45_eval.sh
+Nice=19
+MemoryMax=900M
+MemorySwapMax=0
