@@ -18,7 +18,7 @@ def load(prefix, scn, days, tag):
     F, O = [], []
     for d in days:
         b = OUT / f"{prefix}-{scn}-{d}-strict{tag}"
-        if not Path(f"{b}.csv.gz").exists():
+        if not Path(f"{b}-orders.csv").exists():  # run not finished yet
             continue
         f, o = pd.read_csv(f"{b}.csv.gz"), pd.read_csv(f"{b}-orders.csv")
         f["day"], o["day"] = d, d

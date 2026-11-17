@@ -1,0 +1,10 @@
+{"frozen_utc": "2026-11-17T23:43:48Z", "before": "any 2026-11-17 15m data was read (all dev runs used PMLAT_MAXDAY=2026-11-16)",
+ "status": "holdout CHECKS, not candidates: no dev row had a positive 1 s markout at live speed or a settle CI above 0",
+ "scenario": "live (primary) and dublin; strict fills; pess queue", "holdout": "2026-11-17 (00:00-24:00 UTC), run once",
+ "checks": {
+  "F15-1": {"rule": "frozen F7i-B (frozen/F7i.json B: improve one tick inside a >= 2-tick spread at a new best level, post-only BUY 5, pulls out + alt + 5 s TTL, alt = ETH/SOL/XRP/DOGE 15m UP mid moves >= 0.5c against within 500 ms, ackc) on BTC 15m", "code": "p2_f7i.py DAY SCEN alt15 (rows rules == out+alt+ttl)",
+            "dev_live": {"fills_day": 518, "settle_c": 1.22, "ci_market": [-0.63, 3.10], "mo1s_c": -0.48}},
+  "F15-2": {"rule": "join-maker: new best level on BTC 15m, post-only BUY 5 at it (pess), rest 180 s, pull when someone improves past us, one order per token, >= 30 s left", "code": "p2_join.py cfg bid|180000|out",
+            "dev_live": {"fills_day": 2080, "settle_c": 0.17, "ci_market": [-0.69, 1.01], "mo1s_c": -1.19}}},
+ "pass": "holdout settle market-CI lower bound > 0 AND 1 s markout > 0 (live); otherwise closed",
+ "cells_seen_on_dev": "Part 2: 32 x 2 join + 8 F7i rows x 2 sources + 6 price bands; Part 3: 38 x 2 grid + sibling 2 days; F9 15m alt-entry 16 x 2 (3b)"}
