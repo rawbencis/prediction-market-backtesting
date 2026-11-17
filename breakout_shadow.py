@@ -173,25 +173,25 @@ def lt_window(L, d10, d50, pmsig, a):
 
 def eval_day(a, day):
     nxt = (date.fromisoformat(day) + timedelta(1)).isoformat()
-    pm = np.concatenate(
-        [se.read(a.rec, day, "pm-", se.PM_DT), se.read(a.rec, nxt, "pm-00", se.PM_DT)]
-    )
+    files = se.pm_files(a.rec, day) + se.pm_files(a.rec, nxt, "00")
     d0 = datetime.fromisoformat(day).replace(tzinfo=timezone.utc).timestamp()
-    pm = pm[(pm["e"] >= d0) & (pm["e"] < d0 + 86400)]
+
+    def inday(r):
+        return (r["e"] >= d0) & (r["e"] < d0 + 86400)
+
     rows, sigs, info = [], {}, {"day": day}
-    if len(pm):
-        live = (pm["x"] > 0) & (pm["k"] > 0)
-        d10 = float(np.percentile(pm["l"][live] / 1000 - pm["x"][live], 10))
+    d10 = se.lag_pct(files, 10, inday)
+    if d10 is not None:
+        d10 = float(d10)
         info["pm_d10_ms"] = round(d10, 1)
-        key = (pm["a"].astype(np.int64) << 40) | (pm["tf"].astype(np.int64) << 32) | pm["e"]
-        o = np.argsort(key, kind="stable")
-        pm, key = pm[o], key[o]
-        cuts = np.r_[0, np.flatnonzero(np.diff(key)) + 1, len(pm)]
-        for c0, c1 in itertools.pairwise(cuts):
-            r, s = pm_window(pm[c0:c1], d10, a)
-            rows += r
-            if int(pm["tf"][c0]) == 15 and int(pm["a"][c0]) in LT_TAGS:
-                sigs[(int(pm["a"][c0]), int(pm["e"][c0]))] = s
+        out, st = {}, {}
+        for r in se.iter_windows(files, inday, stats=st):
+            w, s = pm_window(r, d10, a)
+            out[int(se.wkey(r[:1])[0])] = w
+            if int(r["tf"][0]) == 15 and int(r["a"][0]) in LT_TAGS:
+                sigs[(int(r["a"][0]), int(r["e"][0]))] = s
+        rows += [x for k in sorted(out) for x in out[k]]
+        info["late_rows"] = st["late_rows"]
     if a.lt:
         lb = np.concatenate([_lt_read(a.lt, day), _lt_read(a.lt, nxt, "00")])
         lb = lb[(lb["tf"] == 15) & (lb["e"] >= d0) & (lb["e"] < d0 + 86400)]

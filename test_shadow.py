@@ -133,3 +133,36 @@ class TestEval(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStreamWindows(unittest.TestCase):
+    def test_same_groups_as_whole_day(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td) / DAY
+            d.mkdir()
+            r = np.random.default_rng(3)
+            rows = []
+            for tf in (5, 15):
+                for e in range(EP - 1800, EP + 3600, tf * 60):
+                    for x in np.sort(r.integers((e - 10) * 1000, (e + tf * 60 + 3) * 1000, 300)):
+                        rows.append((int(x) * 1000 + int(r.integers(1000, 90000)), int(x), int(r.integers(0, 5)), tf, e))
+            rows.sort()
+            for h in (0, 1, 2):
+                lo, hi = (EP - 3600 + h * 3600) * 1_000_000, (EP + h * 3600) * 1_000_000
+                with (d / f"pm-{h:02d}.bin").open("wb") as f:
+                    for lus, x, a, tf, e in rows:
+                        if lo <= lus < hi:
+                            f.write(sr.PM_REC.pack(lus, x, a, tf, e, 4000, 4200, 1.0, 1.0))
+            files = se.pm_files(Path(td), DAY)
+            whole = se.read(Path(td), DAY, "pm-", se.PM_DT)
+            k = se.wkey(whole)
+            o = np.argsort(k, kind="stable")
+            ref = {int(kk): whole[o][k[o] == kk] for kk in np.unique(k)}
+            st = {}
+            got = {int(se.wkey(g[:1])[0]): g for g in se.iter_windows(files, stats=st)}
+            self.assertEqual(sorted(got), sorted(ref))
+            for kk in ref:
+                np.testing.assert_array_equal(got[kk], ref[kk])
+            self.assertEqual(st["late_rows"], 0)
+            live = (whole["x"] > 0) & (whole["k"] > 0)
+            self.assertEqual(se.lag_pct(files, 10), np.percentile(whole["l"][live] / 1000 - whole["x"][live], 10))

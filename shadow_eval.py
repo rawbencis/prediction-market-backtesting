@@ -52,6 +52,69 @@ def read(root, day, kind, dt):
     return np.concatenate(parts) if parts else np.zeros(0, dt)
 
 
+def pm_files(root, day, hours="*"):
+    return sorted((root / day).glob(f"pm-{hours}.bin"))
+
+
+def _read1(f, dt=PM_DT):
+    return np.fromfile(f, dtype=dt, count=f.stat().st_size // dt.itemsize)
+
+
+def wkey(r):
+    return (r["a"].astype(np.int64) << 40) | (r["tf"].astype(np.int64) << 32) | r["e"]
+
+
+def lag_pct(files, q, keep=None):
+    """Percentiles of live rows' receive delay (ms), one hour file at a time; equal to the whole-day value."""
+    buf = np.empty(sum(f.stat().st_size // PM_DT.itemsize for f in files))
+    m = 0
+    for f in files:
+        r = _read1(f)
+        if keep is not None:
+            r = r[keep(r)]
+        r = r[(r["x"] > 0) & (r["k"] > 0)]
+        buf[m : m + len(r)] = r["l"] / 1000 - r["x"]
+        m += len(r)
+    return np.percentile(buf[:m], q, overwrite_input=True) if m else None
+
+
+def iter_windows(files, keep=None, slack_s=120, stats=None):
+    """Yield one market window's rows at a time (same rows and order as grouping the concatenated files),
+    holding at most ~an hour file in memory. A window is released once the files read so far end more than
+    slack_s after its close (the recorder stops a window 3 s after close). Rows of an already-released
+    window that turn up later are dropped and counted in stats["late_rows"]."""
+    carry, done = np.zeros(0, PM_DT), np.zeros(0, np.int64)
+    if stats is not None:
+        stats.setdefault("late_rows", 0)
+    for n, f in enumerate(files):
+        r = _read1(f)
+        if keep is not None:
+            r = r[keep(r)]
+        if len(done) and len(r):
+            late = np.isin(wkey(r), done)
+            if late.any():
+                if stats is not None:
+                    stats["late_rows"] += int(late.sum())
+                r = r[~late]
+        P = np.concatenate([carry, r]) if len(carry) else r
+        if n == len(files) - 1:
+            ready = np.ones(len(P), bool)
+        else:
+            end = datetime.strptime(f.parent.name + f.stem[-2:], "%Y-%m-%d%H").replace(tzinfo=timezone.utc).timestamp() + 3600
+            ready = P["e"].astype(np.int64) + P["tf"].astype(np.int64) * 60 + slack_s <= end
+        R, carry = P[ready], P[~ready]
+        del P, r
+        if not len(R):
+            continue
+        k = wkey(R)
+        o = np.argsort(k, kind="stable")
+        R, k = R[o], k[o]
+        cuts = np.r_[0, np.flatnonzero(np.diff(k)) + 1, len(R)]
+        done = np.union1d(done, k[cuts[:-1]])
+        for c0, c1 in zip(cuts[:-1], cuts[1:]):
+            yield R[c0:c1]
+
+
 def book_at(M, q):
     """Book at exchange times q (us) -> UP ask, UP ask size, DOWN ask (1 - UP bid), DOWN ask size."""
     i = np.searchsorted(M["xu"], q, "right") - 1

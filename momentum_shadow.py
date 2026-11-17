@@ -61,13 +61,13 @@ def fills_for(sig_side, seen, arr, asz, cap, mode, g, cool_us=10_000_000, nmax=5
 
 
 def eval_day(root, day, a):
-    pm = se.read(root, day, "pm-", se.PM_DT)
+    files = se.pm_files(root, day)
+    q = se.lag_pct(files, [10, 50])
     prev = (date.fromisoformat(day) - timedelta(1)).isoformat()
     bn = np.concatenate([se.read(root, prev, "bn-23", se.BN_DT), se.read(root, day, "bn-", se.BN_DT)])
-    if not len(pm) or not len(bn):
+    if q is None or not len(bn):
         return None
-    live = (pm["x"] > 0) & (pm["k"] > 0)
-    d10, d50 = np.percentile(pm["l"][live] / 1000 - pm["x"][live], [10, 50])
+    d10, d50 = q
     scen = [("tokyo", 0.0, d50, d10 + a.proc_ms)] + [(f"colo-{int(s)}", d10 - s, 1.0, 1.0 + a.proc_ms) for s in a.relay_save_ms]
     B = {}
     for s in (0, 1):
@@ -76,54 +76,58 @@ def eval_day(root, day, a):
             x = bn[m & (bn["a"] == i)]
             x = x[np.argsort(x["l"], kind="stable")]
             B[s, i] = (x["l"], x["p"])
-    key = (pm["a"].astype(np.int64) << 40) | (pm["tf"].astype(np.int64) << 32) | pm["e"]
-    o = np.lexsort((pm["x"], key))
-    pm, key = pm[o], key[o]
-    cuts = np.r_[0, np.flatnonzero(np.diff(key)) + 1, len(pm)]
-    rows = []
-    for c0, c1 in zip(cuts[:-1], cuts[1:]):
-        r = pm[c0:c1]
-        i, tf, ep = int(r["a"][0]), int(r["tf"][0]), int(r["e"][0])
-        W, e_us = tf * 60, ep * 1_000_000
-        M = {"xu": r["x"] * 1000, "b": r["b"], "k": r["k"], "bs": r["bs"], "ks": r["ks"]}
-        g = np.arange(max(5, W - LEFT[1]) * 1_000_000, (W - LEFT[0]) * 1_000_000, STEP_US)
-        t = e_us + g
-        books = {}
-        for n, ad, sv, b in scen:
-            v = se.book_at(M, t + int((ad - sv) * 1000))
-            w = se.book_at(M, t + int((ad + b + a.taker_delay_ms) * 1000))
-            books[n] = ({"UP": v[0], "DOWN": v[2]}, {"UP": w[0], "DOWN": w[2]}, {"UP": w[1], "DOWN": w[3]})
-        for s in (0, 1):
-            L, P = B[s, i]
-            if len(L) < 2:
-                continue
-            for win in WINS:
-                p1 = P[np.maximum(np.searchsorted(L, t, "right") - 1, 0)]
-                p0 = P[np.maximum(np.searchsorted(L, t - int(win * 1e6), "right") - 1, 0)]
-                valid = (np.searchsorted(L, t - int(win * 1e6), "right") > 0)
-                mom = np.where(valid, 1e4 * np.log(p1 / p0), 0.0)
-                for Mv in MS:
-                    side = np.where(mom >= Mv, 1, np.where(mom <= -Mv, -1, 0))
-                    if not side.any():
-                        continue
-                    for name, (seen, arr, asz) in books.items():
-                        for cap in CAPS:
-                            for mode in ("first", "multi"):
-                                f, anys = fills_for(side, seen, arr, asz, cap, mode, g)
-                                base = (day, i, tf, ep, s, name, Mv, win, cap, mode)
-                                for n, (j, sv) in enumerate(f):
-                                    rows.append(base + (n, 1, sv, g[j] / 1e6, float(mom[j]), float(seen[sv][j]), float(arr[sv][j]), float(asz[sv][j])))
-                                if anys and not f:
-                                    rows.append(base + (0, 0, "", np.nan, np.nan, np.nan, np.nan, np.nan))
+    del bn
+    out, st = {}, {}
+    for r in se.iter_windows(files, stats=st):
+        out[int(se.wkey(r[:1])[0])] = window_rows(r[np.argsort(r["x"], kind="stable")], B, scen, day, a)
+    rows = [x for k in sorted(out) for x in out[k]]
     pd.DataFrame(rows, columns=COLS).to_csv(a.res / f"mom-{day}.csv", index=False)
-    return dict(day=day, rows=len(rows), d10=round(float(d10), 1), d50=round(float(d50), 1))
+    return dict(day=day, rows=len(rows), d10=round(float(d10), 1), d50=round(float(d50), 1), late_rows=st["late_rows"])
+
+
+def window_rows(r, B, scen, day, a):
+    rows = []
+    i, tf, ep = int(r["a"][0]), int(r["tf"][0]), int(r["e"][0])
+    W, e_us = tf * 60, ep * 1_000_000
+    M = {"xu": r["x"] * 1000, "b": r["b"], "k": r["k"], "bs": r["bs"], "ks": r["ks"]}
+    g = np.arange(max(5, W - LEFT[1]) * 1_000_000, (W - LEFT[0]) * 1_000_000, STEP_US)
+    t = e_us + g
+    books = {}
+    for n, ad, sv, b in scen:
+        v = se.book_at(M, t + int((ad - sv) * 1000))
+        w = se.book_at(M, t + int((ad + b + a.taker_delay_ms) * 1000))
+        books[n] = ({"UP": v[0], "DOWN": v[2]}, {"UP": w[0], "DOWN": w[2]}, {"UP": w[1], "DOWN": w[3]})
+    for s in (0, 1):
+        L, P = B[s, i]
+        if len(L) < 2:
+            continue
+        for win in WINS:
+            p1 = P[np.maximum(np.searchsorted(L, t, "right") - 1, 0)]
+            p0 = P[np.maximum(np.searchsorted(L, t - int(win * 1e6), "right") - 1, 0)]
+            valid = (np.searchsorted(L, t - int(win * 1e6), "right") > 0)
+            mom = np.where(valid, 1e4 * np.log(p1 / p0), 0.0)
+            for Mv in MS:
+                side = np.where(mom >= Mv, 1, np.where(mom <= -Mv, -1, 0))
+                if not side.any():
+                    continue
+                for name, (seen, arr, asz) in books.items():
+                    for cap in CAPS:
+                        for mode in ("first", "multi"):
+                            f, anys = fills_for(side, seen, arr, asz, cap, mode, g)
+                            base = (day, i, tf, ep, s, name, Mv, win, cap, mode)
+                            for n, (j, sv) in enumerate(f):
+                                rows.append(base + (n, 1, sv, g[j] / 1e6, float(mom[j]), float(seen[sv][j]), float(arr[sv][j]), float(asz[sv][j])))
+                            if anys and not f:
+                                rows.append(base + (0, 0, "", np.nan, np.nan, np.nan, np.nan, np.nan))
+    return rows
 
 
 def cmd_eval(a):
     a.res.mkdir(parents=True, exist_ok=True)
     today = datetime.now(timezone.utc).date().isoformat()
     for d in a.days or sorted(p.name for p in a.rec.glob("????-??-??") if p.is_dir()):
-        if d < a.since or ((a.res / f"mom-{d}.csv").exists() and d < today and not a.force):
+        # only finished days: a day evaluated at 00:25 while still recording would be kept truncated forever
+        if d < a.since or d >= today or ((a.res / f"mom-{d}.csv").exists() and not a.force):
             continue
         print(eval_day(a.rec, d, a), flush=True)
 
