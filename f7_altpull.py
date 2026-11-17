@@ -78,7 +78,7 @@ def main():
     sc = pmlat.SC[scn]
     out = []
     tag = ("" if (asset, tf) == ("btc", 5) else f"-{asset}{tf}") + ("-placebo" if PLACEBO else "")
-    sfx = ("" if f3_maker.SIZE == 5 else f"-s{f3_maker.SIZE:g}") + ("-strict" if f3_maker.STRICT else "") + ("-ackc" if f3_maker.ACKC else "")
+    sfx = ("" if f3_maker.SIZE == 5 else f"-s{f3_maker.SIZE:g}") + ("-strict" if f3_maker.STRICT else "") + ("-ackc" if f3_maker.ACKC else "") + os.environ.get("PMLAT_OUTTAG", "")
     OUTF[0] = pmlat.OUT / f"f7{'i' if f3_maker.MODE == 'improve' else ''}{tag}-{scn}-{day}{sfx}.csv.gz"
     W = pmlat.winners([])
     gens = {a: pmlat.hours(day, a, tf, hrs=hrs, with_act=False) for a in alts}

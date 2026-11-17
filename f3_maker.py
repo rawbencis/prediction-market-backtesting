@@ -102,7 +102,7 @@ def run_market(m, sc, winner, rules_list):
                 sz0 = 0.0
             tok = 0 if side == 0 else 1
             price = q if tok == 0 else 10000 - q
-            t_arr = t_dec + sc["order"]
+            t_arr = t_dec + pmlat.olat(m, t_dec, sc)
             for rules in rules_list:
                 for ttl in TTLS:
                     if t_dec < busy.get((rules, ttl), -1):
@@ -115,7 +115,7 @@ def run_market(m, sc, winner, rules_list):
                         res = MAKER(m, t_arr, tok, price, SIZE, t_cxl, model=model)
                         f = res["fills"]
                         rec = dict(e=e, x0=x0, spr=int(B["k"][r0]) - int(B["b"][r0]), tleft0=end_ms - x0, imb=imb, mode=MODE, side=side, tok=tok, px=price, sz0=sz0, rules="+".join(rules), ttl=ttl,
-                                   model=model, status=res["status"], t_live=t_cxl - t_arr,
+                                   model=model, status=res["status"], t_live=t_cxl - t_arr, olat=t_arr - t_dec,
                                    filled=float(sum(z["size"] for z in f)))
                         if rec["filled"] > 0:
                             tf = f[0]["x"]
@@ -132,13 +132,13 @@ def run_market(m, sc, winner, rules_list):
                             seen = tf + sc["book"]
                             ex = None
                             if qx < 9900:
-                                ta, tc = seen + sc["order"], min(seen + EXIT_TTL, end_ms - 2000) + sc["cancel"]
+                                ta, tc = seen + pmlat.olat(m, seen, sc), min(seen + EXIT_TTL, end_ms - 2000) + sc["cancel"]
                                 rr = MAKER(m, ta, 1 - tok, 10000 - qx, 5.0, tc, model=model)
                                 if rr["status"] == "ok" and sum(z["size"] for z in rr["fills"]) >= 5 - 1e-6:
                                     ex = 1.0
                                 else:
-                                    g = dsim.taker(m, tc - sc["cancel"] + sc["order"] + sc["hold"], tok, 0, 5.0, sell=True) \
-                                        if tc - sc["cancel"] + sc["order"] + sc["hold"] < end_ms else None
+                                    tx = tc - sc["cancel"] + pmlat.olat(m, tc - sc["cancel"], sc) + sc["hold"]
+                                    g = dsim.taker(m, tx, tok, 0, 5.0, sell=True) if tx < end_ms else None
                                     if g is not None:
                                         ex = (g["px"] - price) / 100 - 100 * g["fee"] / g["size"]
                             rec["exit_c"] = ex if ex is not None else rec.get("settle_c")
@@ -164,7 +164,7 @@ def flush(rows):
         cols = []
         for r in rows:
             cols += [k for k in r if k not in cols]
-        COLS[0] = cols + [c for c in ("tfill", "tleft", "mo100", "mo1000", "mo5000", "mo30000", "settle_c", "exit_c", "exit_mk", "thr", "n_alts") if c not in cols]
+        COLS[0] = cols + [c for c in ("tfill", "tleft", "mo100", "mo1000", "mo5000", "mo30000", "settle_c", "exit_c", "exit_mk", "thr", "n_alts", "olat") if c not in cols]
     with gzip.open(OUTF[0], "at" if NW[0] else "wt") as fo:
         w = _csv.DictWriter(fo, fieldnames=COLS[0], extrasaction="ignore")
         if NW[0] == 0:

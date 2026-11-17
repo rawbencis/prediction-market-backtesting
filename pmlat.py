@@ -34,8 +34,13 @@ SC = {
     "tokyo": dict(book=116.0, order=120.0, cancel=120.0, hold=50.0),
     # stress: this box's p90-ish delays (receive p90 ~23 ms; probe send->visible p90 33-95 ms by hour; cancel p90 54-69 ms in good hours)
     "dublin_p90": dict(book=23.0, order=52.0, cancel=69.0, hold=50.0),
-    # measured live on dublin 2 (2026-11-17): order ack/visible +200, cancel lands +130, taker hold 150
-    "live_ack": dict(book=9.0, order=200.0, cancel=130.0, hold=150.0),
+    # measured live on dublin 2 (2026-11-17), first version: order +200, cancel +130, taker hold 150 (files f7i-live_ack200-*)
+    "live_ack200": dict(book=9.0, order=200.0, cancel=130.0, hold=150.0),
+    # measured live on dublin 2 (2026-11-17), second version
+    "live_ack": dict(book=9.0, order=250.0, cancel=130.0, hold=150.0),
+    # state-dependent post latency: +55 if the BTC 5m best bid and ask were unchanged over the previous 1 s, else +157
+    # (order = the slow value, so scripts that ignore order_fast are conservative); see olat()
+    "live_lean": dict(book=9.0, order=157.0, order_fast=55.0, stable_ms=1000.0, cancel=136.0, hold=150.0),
     "live_hold150": dict(book=9.0, order=22.0, cancel=21.0, hold=150.0),
 }
 MAXDAY = os.environ.get("PMLAT_MAXDAY")  # e.g. 2026-11-16: hour h+1 of the last hour would otherwise read the next day
@@ -137,6 +142,21 @@ def winners(slugs=()):
                         have[mk["slug"]] = w
                 time.sleep(0.2)
     return have
+
+
+def olat(m, t, sc):
+    """Order latency (ms) for a post sent at exchange time t: sc['order'], or sc['order_fast'] when the market's best
+    bid and ask did not change in (t - stable_ms, t] (live_lean)."""
+    if "order_fast" not in sc:
+        return sc["order"]
+    B = m["book"]
+    i = int(np.searchsorted(B["x"], t, "right")) - 1
+    j = int(np.searchsorted(B["x"], t - sc["stable_ms"], "right")) - 1
+    if j < 0 or i < 0:
+        return sc["order"]
+    b, k = B["b"][j : i + 1], B["k"][j : i + 1]
+    stable = b[0] > 0 and k[0] > 0 and (b == b[0]).all() and (k == k[0]).all()
+    return sc["order_fast"] if stable else sc["order"]
 
 
 def mid_up(m, t):

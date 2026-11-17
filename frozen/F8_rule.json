@@ -1,0 +1,9 @@
+{
+  "written": "2026-11-17T15:35Z, before any F8 grid output existed",
+  "grid": "f8_grid.ALL: entry{new,stable} x offset{+1,0,-1,-2} x pulls{alt,alt+out,none} x ttl{5000,30000,close} x cap{off,0.99} = 144 configs, scenario live_lean, ackc on, pess, dsim fills",
+  "dev_days": ["2026-11-14", "2026-11-15"],
+  "eligible": "dev fills/day >= 200 and dev share-weighted 1 s markout > 0",
+  "rank": "lower bound of the dev 90% market-bootstrap CI of share-weighted settle c/share (B=2000, seed 0), descending",
+  "pick": "top 2 eligible configs; if fewer than 2 are eligible, take the top 2 by the same rank among all configs and say so",
+  "holdout": "2026-11-16, once, dsim and strict fill models, no changes after seeing it"
+}
