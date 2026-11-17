@@ -75,14 +75,20 @@ def eval_day(root, day, a):
         for i in range(len(rec.ASSETS)):
             x = bn[m & (bn["a"] == i)]
             x = x[np.argsort(x["l"], kind="stable")]
-            B[s, i] = (x["l"], x["p"])
-    del bn
-    out, st = {}, {}
+            B[s, i] = (x["l"].copy(), x["p"].copy())
+    del bn, x
+    # rows go to disk one window at a time (a full day is ~1-2 M rows: too big to hold as tuples);
+    # windows arrive in time order, so the file is ordered by window close, not by (asset, tf, epoch)
+    st, n, path = {}, 0, a.res / f"mom-{day}.csv"
+    tmp = path.with_suffix(".part")
+    pd.DataFrame(columns=COLS).to_csv(tmp, index=False)
     for r in se.iter_windows(files, stats=st):
-        out[int(se.wkey(r[:1])[0])] = window_rows(r[np.argsort(r["x"], kind="stable")], B, scen, day, a)
-    rows = [x for k in sorted(out) for x in out[k]]
-    pd.DataFrame(rows, columns=COLS).to_csv(a.res / f"mom-{day}.csv", index=False)
-    return dict(day=day, rows=len(rows), d10=round(float(d10), 1), d50=round(float(d50), 1), late_rows=st["late_rows"])
+        rows = window_rows(r[np.argsort(r["x"], kind="stable")], B, scen, day, a)
+        if rows:
+            pd.DataFrame(rows, columns=COLS).to_csv(tmp, mode="a", header=False, index=False)
+            n += len(rows)
+    tmp.replace(path)
+    return dict(day=day, rows=n, d10=round(float(d10), 1), d50=round(float(d50), 1), late_rows=st["late_rows"])
 
 
 def window_rows(r, B, scen, day, a):
