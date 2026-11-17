@@ -532,7 +532,7 @@ def _book_features(pp, i, x, tok, p, others, ms=500):
     sgn = 1 if tok == 0 else -1
     bid, bsz, asz = (b / 1e4, float(pp["bs"][i]), float(pp["ks"][i])) if tok == 0 else (1 - k / 1e4, float(pp["ks"][i]), float(pp["bs"][i]))
     chg = np.flatnonzero((pp["b"][1 : i + 1] != pp["b"][:i]) | (pp["k"][1 : i + 1] != pp["k"][:i]))
-    f = dict(tick=round((p - bid) * 100), spr=round((k - b) / 100), imb=(bsz - asz) / (bsz + asz) if bsz + asz > 0 else float("nan"),
+    f = dict(tick=round((p - bid) * 100), spr=round((k - b) / 100), imb=(bsz - asz) / (bsz + asz) if bsz + asz > 0 else float("nan"), lvl=bsz,
              calm=float(x - int(pp["x"][chg[-1] + 1])) if len(chg) else float(x - int(pp["x"][0])))  # fmt: skip
 
     def mid_at(q, t):
@@ -584,6 +584,20 @@ def _fills_summary(rows, out=print):
     out(f"settled fills {len(rows)}: pnl {pnl.sum():+,.0f} $ on ${usd.sum():,.0f} ({100 * pnl.sum() / usd.sum():+.2f} c/$), "
         f"win rate {np.mean([r['out'] == 'W' for r in rows]):.3f}")  # fmt: skip
 
+    # how much of the result is a few markets: fills in one market share one outcome, so resample whole markets
+    uk, inv = np.unique([r["key"] for r in rows], return_inverse=True)
+    mp, mu = np.bincount(inv, pnl), np.bincount(inv, usd)
+    pick = np.random.default_rng(0).integers(0, len(uk), (2000, len(uk)))
+    lo, hi = np.percentile(100 * mp[pick].sum(1) / mu[pick].sum(1), [5, 95])
+    srt = np.sort(mp)
+    out(f"  by market ({len(uk)}): 90% CI {lo:+.2f} .. {hi:+.2f} c/$; best 5 markets {srt[-5:].sum():+,.0f} $, worst 5 {srt[:5].sum():+,.0f} $; "
+        f"markets won {int((mp > 0).sum())}, lost {int((mp < 0).sum())}")  # fmt: skip
+    days = {}
+    for r, v in zip(rows, pnl):
+        d = time.strftime("%m-%d", time.gmtime(r["x"] / 1000))
+        days[d] = days.get(d, 0.0) + float(v)
+    out("  by day ($): " + " | ".join(f"{d} {v:+,.0f}" for d, v in sorted(days.items())))
+
     def table(name, vals, edges, fmt):
         v = np.array(vals, float)
         cells = []
@@ -591,7 +605,7 @@ def _fills_summary(rows, out=print):
             m = (v >= lo) & (v < hi)
             if m.sum():
                 lab = f"{'' if lo < -1e8 else fmt.format(lo)}..{'' if hi > 1e8 else fmt.format(hi)}"
-                cells.append(f"{lab} n={int(m.sum())} {100 * pnl[m].sum() / max(usd[m].sum(), 1e-9):+.1f}c/$")
+                cells.append(f"{lab} n={int(m.sum())} {100 * pnl[m].sum() / max(usd[m].sum(), 1e-9):+.1f}c/$ ({pnl[m].sum():+,.0f}$)")
         out(f"  {name:>17}: " + " | ".join(cells))
 
     inf = 1e9
@@ -604,6 +618,10 @@ def _fills_summary(rows, out=print):
     nan = float("nan")
     out("  Polymarket books just before the fill (the token's side):")
     table("vs best bid (ticks)", [r.get("tick", nan) for r in rows], (-inf, -1.5, -0.5, 0.5, 1.5, inf), "{:g}")
+    # at the best bid: was the level thick (it joined) or about its own size (its order made the level)?
+    at = [r.get("lvl", nan) if r.get("tick") == 0 else nan for r in rows]
+    table("level size (sh)", at, (0, 20, 60, 200, 1000, inf), "{:g}")
+    table("fill / level size", [r["sz"] / v if v == v and v > 0 else nan for r, v in zip(rows, at)], (0, 0.1, 0.5, 0.9, inf), "{:g}")
     table("spread (ticks)", [r.get("spr", nan) for r in rows], (0.5, 1.5, 2.5, 3.5, inf), "{:g}")
     table("book imbalance", [r.get("imb", nan) for r in rows], (-1.01, -0.6, -0.3, 0.3, 0.6, 1.01), "{:g}")
     table("ms best unchanged", [r.get("calm", nan) for r in rows], (0, 100, 300, 1000, 3000, inf), "{:g}")

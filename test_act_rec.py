@@ -146,10 +146,12 @@ class TestAct(unittest.TestCase):
         line = [ln for ln in out.splitlines() if "taker" in ln][0]
         self.assertIn(" 199.8 UP   BUY  taker  0.52     600", line)  # exchange ms 100.200 s into a 300 s window
         self.assertIn("  +30.0  +30.0  +30.0  0.510 W    1: 0x444444", line)  # +0.3% since open, in 1 s and 5 s; mid
-        self.assertIn("bn move 1s (bp): 5.. n=1 +88.9c/$", out)  # ((1 - .52) * 600 - fee) / (.52 * 600)
+        self.assertIn("bn move 1s (bp): 5.. n=1 +88.9c/$ (+278$)", out)  # ((1 - .52) * 600 - fee) / (.52 * 600)
+        self.assertIn("by market (1): 90% CI +88.95 .. +88.95 c/$; best 5 markets +278 $", out)
+        self.assertIn("by day ($): 11-02 +278", out)
         self.assertIn("taker: n=1 +88.95 c/$, median price - mid +1.00c", out)
-        self.assertIn("vs best bid (ticks): 1.5.. n=1", out)  # bought at the ask of a 50/52 book
-        self.assertIn("spread (ticks): 1.5..2.5 n=1", out)
+        self.assertIn("vs best bid (ticks): 1.5.. n=1 ", out)  # bought at the ask of a 50/52 book
+        self.assertIn("spread (ticks): 1.5..2.5 n=1 ", out)
         self.assertIn("pairs: 1 markets, both sides bought in 0", out)
 
     def test_book_features_and_pairs(self):
@@ -166,7 +168,7 @@ class TestAct(unittest.TestCase):
         pp = book([(1000, 4500, 4700, 10, 10), (2100, 4600, 4700, 80, 20), (2600, 4600, 4700, 60, 20)])
         alt = book([(1000, 5000, 5100, 1, 1), (2900, 5100, 5200, 1, 1)])    # another asset's UP mid +1c at 2.9 s
         f = ar._book_features(pp, 2, 3000, 0, 0.46, [alt])                   # UP bought at its best bid at 3.0 s
-        self.assertEqual((f["tick"], f["spr"], f["calm"]), (0, 1, 900.0))
+        self.assertEqual((f["tick"], f["spr"], f["calm"], f["lvl"]), (0, 1, 900.0, 60.0))
         self.assertAlmostEqual(f["imb"], 0.5)
         self.assertAlmostEqual(f["own1s"], 0.5)                             # mid 0.46 -> 0.465 over the last second
         self.assertAlmostEqual(f["alt"], 1.0)
