@@ -12,6 +12,7 @@ Latency scenarios (ms, exchange clock), dsim conventions:
 
 import csv
 import json
+import os
 import sys
 import time
 import urllib.request
@@ -33,7 +34,11 @@ SC = {
     "tokyo": dict(book=116.0, order=120.0, cancel=120.0, hold=50.0),
     # stress: this box's p90-ish delays (receive p90 ~23 ms; probe send->visible p90 33-95 ms by hour; cancel p90 54-69 ms in good hours)
     "dublin_p90": dict(book=23.0, order=52.0, cancel=69.0, hold=50.0),
+    # measured live on dublin 2 (2026-11-17): order ack/visible +200, cancel lands +130, taker hold 150
+    "live_ack": dict(book=9.0, order=200.0, cancel=130.0, hold=150.0),
+    "live_hold150": dict(book=9.0, order=22.0, cancel=21.0, hold=150.0),
 }
+MAXDAY = os.environ.get("PMLAT_MAXDAY")  # e.g. 2026-11-16: hour h+1 of the last hour would otherwise read the next day
 DEV = ("2026-11-14", "2026-11-15")
 HOLD = ("2026-11-16",)
 
@@ -46,6 +51,8 @@ def _hour_file(day, h, kind, dt, a, tf):
         d, h = d - timedelta(days=1), h + 24
     elif h > 23:
         d, h = d + timedelta(days=1), h - 24
+    if MAXDAY and d.isoformat() > MAXDAY:  # hard cap: never read a recording day after MAXDAY
+        return np.zeros(0, dt)
     f = REC / d.isoformat() / f"{kind}-{h:02d}.bin"
     if not f.exists():
         return np.zeros(0, dt)

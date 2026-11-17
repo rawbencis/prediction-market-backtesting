@@ -95,7 +95,7 @@ def f6(days, scn):
 def main():
     days = sys.argv[1:]
     print("days", days)
-    for scn in ("dublin", "dublin_p90", "tokyo"):
+    for scn in os.environ.get("PMLAT_SCNS", "dublin dublin_p90 tokyo").split():
         if SFX:  # strict fill model only changes the improve-makers
             f3i(days, scn)
             f7i(days, scn)

@@ -27,6 +27,7 @@ import dsim
 
 DEP = 0.5
 STRICT = os.environ.get("PMLAT_STRICT") == "1"  # dsim_strict.maker_strict: through-prints fill only their own size
+ACKC = os.environ.get("PMLAT_ACKC") == "1"  # cancel no earlier than order-on-book + cancel (output suffix -ackc)
 SIZE = float(os.environ.get("PMLAT_SIZE", "5"))  # order size (shares); output files get a -s{SIZE} suffix if != 5
 TTLS = (5000,)
 MODELS = ("pess", "prop", "front")
@@ -107,6 +108,8 @@ def run_market(m, sc, winner, rules_list):
                     if t_dec < busy.get((rules, ttl), -1):
                         continue
                     t_cxl = pull_time(m, r0, side, q, sz0, t_arr, ttl, sc, rules)
+                    if ACKC:  # a cancel needs the order id from the ack: it cannot land before arrival + cancel latency
+                        t_cxl = max(t_cxl, t_arr + sc["cancel"])
                     busy[(rules, ttl)] = t_cxl
                     for model in MODELS:
                         res = MAKER(m, t_arr, tok, price, SIZE, t_cxl, model=model)
