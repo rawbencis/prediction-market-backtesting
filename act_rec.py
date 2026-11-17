@@ -22,6 +22,7 @@ carries a fee, so fee > 0 marks the taker side.
 
 import argparse
 import asyncio
+import calendar
 import collections
 import json
 import re
@@ -450,8 +451,26 @@ def cmd_fills(a):
     opens = [int(e) * 1000 for e in me["e"].tolist()]
     assets = np.unique(me["a"])
     bn = _load(a.rec, "bn", se.BN_DT, _hours(fill_ms + opens), lambda x: (x["src"] == 0) & np.isin(x["a"], assets))
-    epochs = np.unique(me["e"])
-    pm = _load(a.rec, "pm", se.PM_DT, _hours(fill_ms), lambda x: np.isin(x["e"], epochs) & np.isin(x["a"], assets))
+    # Book mid just before each match, streamed one fill-hour at a time (that hour's and the previous hour's file,
+    # filtered to the windows filled in that hour): a wallet active in hundreds of markets never holds more than two
+    # filtered hours of book rows. Loading all of them at once was OOM-killed at the 1.2 GB cap (2026-11-16).
+    mids = np.full(len(me), np.nan)
+    by_hour = {}
+    for k, x in enumerate(fill_ms):
+        by_hour.setdefault(next(iter(_hours([x], 0))), []).append(k)
+    for hk, ks in by_hour.items():
+        eps = np.unique(me["e"][ks])
+        prev = time.gmtime(calendar.timegm(time.strptime(f"{hk[0]} {hk[1]:02d}", "%Y-%m-%d %H")) - 3600)
+        hours = {hk, (time.strftime("%Y-%m-%d", prev), prev.tm_hour)}
+        pm = _load(a.rec, "pm", se.PM_DT, hours, lambda x, eps=eps: np.isin(x["e"], eps) & np.isin(x["a"], assets))
+        for k in ks:
+            row, x = me[k], fill_ms[k]
+            pp = pm[(pm["a"] == row["a"]) & (pm["tf"] == row["tf"]) & (pm["e"] == row["e"])]
+            pp = pp[np.argsort(pp["x"], kind="stable")]
+            i = np.searchsorted(pp["x"], x - 1, "right") - 1  # book standing just before the match
+            mid = (int(pp["b"][i]) + int(pp["k"][i])) / 2e4 if i >= 0 else float("nan")
+            mids[k] = mid if row["tok"] == 0 else 1 - mid
+        del pm
     print(f"{who}: {len(me)} rows, {sum(t in xms for t in txl.tolist())} of {len(txl)} txs found in trade prints")
     pnl, _ = settled_pnl(me, win)
     rows = []
@@ -466,11 +485,7 @@ def cmd_fills(a):
             return float(bb["p"][i]) if i >= 0 else float("nan")
 
         p_now = px(x)
-        pp = pm[(pm["a"] == row["a"]) & (pm["tf"] == row["tf"]) & (pm["e"] == row["e"])]
-        pp = pp[np.argsort(pp["x"], kind="stable")]
-        i = np.searchsorted(pp["x"], x - 1, "right") - 1  # book standing just before the match
-        mid = (int(pp["b"][i]) + int(pp["k"][i])) / 2e4 if i >= 0 else float("nan")
-        mid = mid if row["tok"] == 0 else 1 - mid
+        mid = float(mids[k])
         key = f"{ASSETS[row['a']]}-updown-{row['tf']}m-{row['e']}"
         rows.append(dict(
             x=x, left=(end - x) / 1000, tok="UP" if row["tok"] == 0 else "DOWN", side="BUY" if row["sd"] == 0 else "SELL",
