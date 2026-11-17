@@ -138,28 +138,57 @@ def cmd_eval(a):
         print(eval_day(a.rec, d, a), flush=True)
 
 
+SCENS = pd.CategoricalDtype(["tokyo", "colo-0", "colo-10", "colo-20"])
+SIDES = pd.CategoricalDtype(["UP", "DOWN"])
+RDT = {"asset": "int8", "tf": "int8", "epoch": "int64", "src": "int8", "scen": SCENS, "M": "float64", "win": "float64",
+       "cap": "float64", "mode": pd.CategoricalDtype(["first", "multi"]), "filled": "int8", "side": SIDES, "px": "float64"}  # fmt: skip
+
+
 def cmd_report(a):
-    O = pd.concat([pd.read_csv(f) for f in sorted(a.res.glob("mom-*.csv")) if f.stem[4:] >= a.since], ignore_index=True)
-    O["asset"] = O.asset.map(dict(enumerate(rec.ASSETS)))
-    O["src"] = O.src.map(dict(enumerate(se.SRC)))
-    O["slug"] = O.asset + "-updown-" + O.tf.astype(str) + "m-" + O.epoch.astype(str)
-    W = se.settle(a.res / "settlements.csv", sorted(set(O.slug)), not a.no_fetch)
-    O["w"] = O.slug.map(W)
-    O = O[O.w.notna()]
-    days = sorted(O.day.unique())
-    nd = max(len(days), 1)
-    F = O[O.filled == 1].copy()
-    F["pps"] = (F.side == F.w).astype(float) - F.px - fee(F.px, a.fee_rate)
-    print(f"settled days {days[:1]}..{days[-1:]} ({nd}), markets {O.slug.nunique()}")
+    """Streams the result files (a day is ~1-2 M rows): per-config sums are added up chunk by chunk;
+    only the primary's and the BTC 5m uplift rows are kept."""
+    files = [f for f in sorted(a.res.glob("mom-*.csv")) if f.stem[4:] >= a.since]
+    U = set()
+    for f in files:
+        for c in pd.read_csv(f, usecols=["asset", "tf", "epoch"], dtype="int64", chunksize=1_000_000):
+            U.update(map(tuple, c.drop_duplicates().to_numpy().tolist()))
+    slug = {u: f"{rec.ASSETS[u[0]]}-updown-{u[1]}m-{u[2]}" for u in U}
+    W = se.settle(a.res / "settlements.csv", sorted(set(slug.values())), not a.no_fetch)
+    win = {u[0] * 2**40 + u[1] * 2**32 + u[2]: W[s] for u, s in slug.items() if s in W}
     keys = ["asset", "tf", "src", "scen", "M", "win", "cap", "mode"]
-    G = F.groupby(keys).pps.agg(["size", "mean", "sum"])
-    G = pd.DataFrame({"fills_day": (G["size"] / nd).round(1), "c_share": (100 * G["mean"]).round(2),
+    agg, Ps, Ss, days = [], [], [], []
+    for f in files:
+        day = f.stem[4:]
+        for c in pd.read_csv(f, usecols=list(RDT), dtype=RDT, chunksize=500_000):
+            c["w"] = (c.asset.astype(np.int64) * 2**40 + c.tf.astype(np.int64) * 2**32 + c.epoch).map(win)
+            c = c[c.w.notna()]
+            if not len(c):
+                continue
+            if day not in days:
+                days.append(day)
+            F = c[c.filled == 1].copy()
+            F["asset"] = pd.Categorical.from_codes(F.asset, categories=list(rec.ASSETS))
+            F["src"] = pd.Categorical.from_codes(F.src, categories=list(se.SRC))
+            F["pps"] = (F.side.astype(object) == F.w).astype(float) - F.px - fee(F.px, a.fee_rate)
+            F["day"] = day
+            agg.append(F.groupby(keys, observed=True).pps.agg(["size", "sum"]))
+            Ps.append(F[np.logical_and.reduce([F[k] == v for k, v in PRIMARY.items()])][["day", "pps"]])
+            m = (F.asset == "btc") & (F.tf == 5) & (F.src == "spot") & (F.M == 2.0) & (F.win == 5.0) & (F.cap == 0.02) & (F["mode"] == "first")
+            Ss.append(F[m][["day", "scen", "pps"]])
+    days = sorted(days)
+    if not days:
+        print(f"no settled markets yet in {len(files)} result files")
+        return
+    nd = len(days)
+    print(f"settled days {days[:1]}..{days[-1:]} ({nd}), markets {len(win)}")
+    G = pd.concat(agg).groupby(level=keys, observed=True).sum()
+    G = pd.DataFrame({"fills_day": (G["size"] / nd).round(1), "c_share": (100 * G["sum"] / G["size"]).round(2),
                       "usd_day_5sh": (G["sum"] * se.SIZE / nd).round(2)}).reset_index()  # fmt: skip
     pd.set_option("display.width", 250)
     pd.set_option("display.max_rows", 400)
-    base = G[(G.mode == "first") & (G.cap == PRIMARY["cap"]) & (G.win == PRIMARY["win"])]
+    base = G[(G["mode"] == "first") & (G.cap == PRIMARY["cap"]) & (G.win == PRIMARY["win"])]
     print("\nfirst fill per market, WIN 5 s, CAP 2c (all assets/tf/src/scen/M):\n", base.to_string(index=False))
-    P = F[np.logical_and.reduce([F[k] == v for k, v in PRIMARY.items()])]
+    P = pd.concat(Ps, ignore_index=True)
     D = P.groupby("day").pps.mean().reindex(days)
     m, lo, hi = boot(P.groupby("day").pps.mean().to_numpy() * 100)
     pooled = 100 * P.pps.mean() if len(P) else np.nan
@@ -171,9 +200,9 @@ def cmd_report(a):
         verdict = "KILL"
     print(f"  verdict: {verdict}  (pass: >=14 days, >=500 fills, net >= +1.0c, CI lb > 0; kill: CI ub < +1.0c after 14 days)")
     print("  by day (c/share):", (100 * D).round(2).to_dict())
-    S = F[(F.asset == "btc") & (F.tf == 5) & (F.src == "spot") & (F.M == 2.0) & (F.win == 5.0) & (F.cap == 0.02) & (F["mode"] == "first")]
-    T = S.pivot_table(index="day", columns="scen", values="pps", aggfunc="sum").reindex(days).fillna(0) * se.SIZE
-    for c in [c for c in T.columns if c != "tokyo"]:
+    S = pd.concat(Ss, ignore_index=True)
+    T = S.pivot_table(index="day", columns="scen", values="pps", aggfunc="sum", observed=True).reindex(days).fillna(0) * se.SIZE
+    for c in [str(c) for c in T.columns if c != "tokyo"]:
         mm, l2, h2 = boot((T[c] - T["tokyo"]).to_numpy())
         print(f"  uplift {c} vs tokyo: {mm:+.2f} $/day [{l2:+.2f}, {h2:+.2f}]")
 
