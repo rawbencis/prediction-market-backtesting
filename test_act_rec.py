@@ -148,6 +148,39 @@ class TestAct(unittest.TestCase):
         self.assertIn("  +30.0  +30.0  +30.0  0.510 W    1: 0x444444", line)  # +0.3% since open, in 1 s and 5 s; mid
         self.assertIn("bn move 1s (bp): 5.. n=1 +88.9c/$", out)  # ((1 - .52) * 600 - fee) / (.52 * 600)
         self.assertIn("taker: n=1 +88.95 c/$, median price - mid +1.00c", out)
+        self.assertIn("vs best bid (ticks): 1.5.. n=1", out)  # bought at the ask of a 50/52 book
+        self.assertIn("spread (ticks): 1.5..2.5 n=1", out)
+        self.assertIn("pairs: 1 markets, both sides bought in 0", out)
+
+    def test_book_features_and_pairs(self):
+        import numpy as np
+
+        import shadow_eval as se
+
+        def book(rows):
+            x = np.zeros(len(rows), se.PM_DT)
+            for i, (t, b, k, bs, ks) in enumerate(rows):
+                x[i] = (t * 1000, t, 0, 5, 0, b, k, bs, ks)
+            return x
+
+        pp = book([(1000, 4500, 4700, 10, 10), (2100, 4600, 4700, 80, 20), (2600, 4600, 4700, 60, 20)])
+        alt = book([(1000, 5000, 5100, 1, 1), (2900, 5100, 5200, 1, 1)])    # another asset's UP mid +1c at 2.9 s
+        f = ar._book_features(pp, 2, 3000, 0, 0.46, [alt])                   # UP bought at its best bid at 3.0 s
+        self.assertEqual((f["tick"], f["spr"], f["calm"]), (0, 1, 900.0))
+        self.assertAlmostEqual(f["imb"], 0.5)
+        self.assertAlmostEqual(f["own1s"], 0.5)                             # mid 0.46 -> 0.465 over the last second
+        self.assertAlmostEqual(f["alt"], 1.0)
+        g = ar._book_features(pp, 2, 3000, 1, 0.52, [alt])                   # DOWN: best bid 1 - 0.47 = 0.53, one tick behind
+        self.assertEqual(g["tick"], -1)
+        self.assertAlmostEqual(g["imb"], -0.5)
+        self.assertAlmostEqual(g["alt"], -1.0)
+        out = []
+        rows = [dict(key="m1", tok="UP", side="BUY", sz=10, usd=4.0, pnl=6.0), dict(key="m1", tok="DOWN", side="BUY", sz=5, usd=2.5, pnl=-2.5),
+                dict(key="m2", tok="UP", side="BUY", sz=5, usd=3.0, pnl=-3.0)]
+        ar._pairs_summary(rows, out.append)
+        self.assertIn("2 markets, both sides bought in 1; 10 of 20 shares paired (50%) at an average pair cost of 0.900", out[0])
+        self.assertIn("pnl locked in pairs +0 $, from unpaired shares +0 $", out[0])     # 5 x (1 - 0.9) = +0.5; total +0.5
+
 
 
 if __name__ == "__main__":

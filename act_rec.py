@@ -455,6 +455,7 @@ def cmd_fills(a):
     # filtered to the windows filled in that hour): a wallet active in hundreds of markets never holds more than two
     # filtered hours of book rows. Loading all of them at once was OOM-killed at the 1.2 GB cap (2026-11-16).
     mids = np.full(len(me), np.nan)
+    feat = [None] * len(me)  # Polymarket-only state just before each match (see _book_features)
     by_hour = {}
     for k, x in enumerate(fill_ms):
         by_hour.setdefault(next(iter(_hours([x], 0))), []).append(k)
@@ -462,15 +463,22 @@ def cmd_fills(a):
         eps = np.unique(me["e"][ks])
         prev = time.gmtime(calendar.timegm(time.strptime(f"{hk[0]} {hk[1]:02d}", "%Y-%m-%d %H")) - 3600)
         hours = {hk, (time.strftime("%Y-%m-%d", prev), prev.tm_hour)}
-        pm = _load(a.rec, "pm", se.PM_DT, hours, lambda x, eps=eps: np.isin(x["e"], eps) & np.isin(x["a"], assets))
+        tfs = np.unique(me["tf"][ks])
+        # every asset's book for those windows: the other assets' books are the Polymarket-only lead signal
+        pm = _load(a.rec, "pm", se.PM_DT, hours, lambda x, eps=eps, tfs=tfs: np.isin(x["e"], eps) & np.isin(x["tf"], tfs))
+        pm = pm[np.lexsort((pm["x"], pm["e"], pm["tf"], pm["a"]))]
+        gk = (pm["a"].astype(np.int64) << 40) | (pm["tf"].astype(np.int64) << 32) | pm["e"]
+        cuts = np.r_[0, np.flatnonzero(np.diff(gk)) + 1, len(pm)]
+        books = {(int(pm["a"][c0]), int(pm["tf"][c0]), int(pm["e"][c0])): pm[c0:c1] for c0, c1 in zip(cuts[:-1], cuts[1:]) if c1 > c0}
         for k in ks:
             row, x = me[k], fill_ms[k]
-            pp = pm[(pm["a"] == row["a"]) & (pm["tf"] == row["tf"]) & (pm["e"] == row["e"])]
-            pp = pp[np.argsort(pp["x"], kind="stable")]
-            i = np.searchsorted(pp["x"], x - 1, "right") - 1  # book standing just before the match
+            pp = books.get((int(row["a"]), int(row["tf"]), int(row["e"])))
+            i = np.searchsorted(pp["x"], x - 1, "right") - 1 if pp is not None else -1  # book standing just before the match
             mid = (int(pp["b"][i]) + int(pp["k"][i])) / 2e4 if i >= 0 else float("nan")
             mids[k] = mid if row["tok"] == 0 else 1 - mid
-        del pm
+            others_ = [v for (aa, tf, e), v in books.items() if aa != row["a"] and tf == row["tf"] and e == row["e"]]
+            feat[k] = _book_features(pp, i, x, int(row["tok"]), float(row["p"]), others_) if i >= 0 else {}
+        del pm, books
     print(f"{who}: {len(me)} rows, {sum(t in xms for t in txl.tolist())} of {len(txl)} txs found in trade prints")
     pnl, _ = settled_pnl(me, win)
     rows = []
@@ -493,7 +501,7 @@ def cmd_fills(a):
             mv_open=sgn * 1e4 * np.log(p_now / px(e0)), mv_1s=sgn * 1e4 * np.log(p_now / px(x - 1000)),
             mv_5s=sgn * 1e4 * np.log(p_now / px(x - 5000)), mid=mid, vs_mid=float(row["p"]) - mid,
             out="?" if win.get(key) is None else "W" if win.get(key) == ("UP" if row["tok"] == 0 else "DOWN") else "L",
-            pnl=float(pnl[k]), usd=float(row["p"]) * float(row["sz"]),
+            pnl=float(pnl[k]), usd=float(row["p"]) * float(row["sz"]), key=key, **(feat[k] or {}),
             cps=sorted(others.get(row["tx"], set()) - {who})))  # fmt: skip
     if a.summary:
         _fills_summary(rows)
@@ -505,6 +513,62 @@ def cmd_fills(a):
         print(f"{time.strftime('%m-%d %H:%M:%S', time.gmtime(x / 1000))}.{x % 1000:03d} {r['left']:6.1f} {r['tok']:4} "
               f"{r['side']:4} {r['role']:5} {r['p']:5.2f} {r['sz']:7.0f} {r['mv_open']:+7.1f} {r['mv_1s']:+6.1f} "
               f"{r['mv_5s']:+6.1f} {r['mid']:6.3f} {r['out']:3}  {len(r['cps'])}: " + " ".join(c[:8] for c in r["cps"][:4]))  # fmt: skip
+
+
+def _book_features(pp, i, x, tok, p, others, ms=500):
+    """State of Polymarket's own books just before a fill at exchange time x, seen from the token bought.
+    pp: this market's UP top-of-book rows sorted by x; i: last row before the match; others: the other assets' rows.
+      tick     fill price minus the token's best bid, in ticks (0 = at the best bid, -1 = one behind, +1 = improved)
+      spr      spread in ticks
+      imb      (size at the token's best bid - size at its best ask) / sum; the wallet's own order is part of the bid
+      calm     ms since the best bid or ask last changed
+      own1s    this book's mid move over the last 1 s toward the token, cents
+      alt      the largest other-asset UP-mid move over the last `ms` ms, signed toward the token, cents"""
+    import numpy as np
+
+    b, k = int(pp["b"][i]), int(pp["k"][i])
+    if b <= 0 or k <= b:
+        return {}
+    sgn = 1 if tok == 0 else -1
+    bid, bsz, asz = (b / 1e4, float(pp["bs"][i]), float(pp["ks"][i])) if tok == 0 else (1 - k / 1e4, float(pp["ks"][i]), float(pp["bs"][i]))
+    chg = np.flatnonzero((pp["b"][1 : i + 1] != pp["b"][:i]) | (pp["k"][1 : i + 1] != pp["k"][:i]))
+    f = dict(tick=round((p - bid) * 100), spr=round((k - b) / 100), imb=(bsz - asz) / (bsz + asz) if bsz + asz > 0 else float("nan"),
+             calm=float(x - int(pp["x"][chg[-1] + 1])) if len(chg) else float(x - int(pp["x"][0])))  # fmt: skip
+
+    def mid_at(q, t):
+        j = np.searchsorted(q["x"], t, "right") - 1
+        return (int(q["b"][j]) + int(q["k"][j])) / 2e4 if j >= 0 and q["b"][j] > 0 and q["k"][j] > q["b"][j] else float("nan")
+
+    f["own1s"] = 100 * sgn * (mid_at(pp, x - 1) - mid_at(pp, x - 1000))
+    mv = [mid_at(q, x - 1) - mid_at(q, x - ms) for q in others]
+    mv = [m for m in mv if m == m]
+    f["alt"] = 100 * sgn * max(mv, key=abs) if mv else float("nan")
+    return f
+
+
+def _pairs_summary(rows, out=print):
+    """Per market: shares and average price bought on each side; how much of the book is paired and at what cost."""
+    by = {}
+    for r in rows:
+        if r["side"] != "BUY":
+            continue
+        d = by.setdefault(r["key"], {"UP": [0.0, 0.0], "DOWN": [0.0, 0.0], "pnl": 0.0})
+        d[r["tok"]][0] += r["sz"]
+        d[r["tok"]][1] += r["usd"]
+        d["pnl"] += r["pnl"]
+    both = [d for d in by.values() if d["UP"][0] > 0 and d["DOWN"][0] > 0]
+    paired = sum(min(d["UP"][0], d["DOWN"][0]) for d in both)
+    cost = sum(min(d["UP"][0], d["DOWN"][0]) * (d["UP"][1] / d["UP"][0] + d["DOWN"][1] / d["DOWN"][0]) for d in both)
+    shares = sum(d["UP"][0] + d["DOWN"][0] for d in by.values())
+    locked = paired - cost
+    total = sum(d["pnl"] for d in by.values())
+    out(f"  pairs: {len(by)} markets, both sides bought in {len(both)}; {2 * paired:,.0f} of {shares:,.0f} shares paired "
+        f"({100 * 2 * paired / max(shares, 1e-9):.0f}%) at an average pair cost of {cost / max(paired, 1e-9):.3f}; "
+        f"pnl locked in pairs {locked:+,.0f} $, from unpaired shares {total - locked:+,.0f} $")  # fmt: skip
+    n = [len([r for r in rows if r["key"] == key]) for key in by]
+    out(f"  fills per market: median {sorted(n)[len(n) // 2]}, max {max(n)}; fill size $: median "
+        f"{sorted(r['usd'] for r in rows)[len(rows) // 2]:.1f}, p90 {sorted(r['usd'] for r in rows)[int(0.9 * len(rows))]:.1f}; "
+        f"sells: {sum(r['side'] == 'SELL' for r in rows)}")  # fmt: skip
 
 
 def _fills_summary(rows, out=print):
@@ -536,6 +600,16 @@ def _fills_summary(rows, out=print):
     table("bn since open (bp)", [r["mv_open"] for r in rows], (-inf, -10, -5, -2, 0, 2, 5, 10, 20, inf), "{:g}")
     table("price - mid (c)", [100 * r["vs_mid"] for r in rows], (-inf, -2, -1, -0.5, 0, 0.5, 1, 2, inf), "{:g}")
     table("time left (s)", [r["left"] for r in rows], (-inf, 10, 30, 60, 120, 180, inf), "{:g}")
+    table("token price", [r["p"] for r in rows], (0, 0.1, 0.25, 0.4, 0.6, 0.75, 0.9, 1.01), "{:g}")
+    nan = float("nan")
+    out("  Polymarket books just before the fill (the token's side):")
+    table("vs best bid (ticks)", [r.get("tick", nan) for r in rows], (-inf, -1.5, -0.5, 0.5, 1.5, inf), "{:g}")
+    table("spread (ticks)", [r.get("spr", nan) for r in rows], (0.5, 1.5, 2.5, 3.5, inf), "{:g}")
+    table("book imbalance", [r.get("imb", nan) for r in rows], (-1.01, -0.6, -0.3, 0.3, 0.6, 1.01), "{:g}")
+    table("ms best unchanged", [r.get("calm", nan) for r in rows], (0, 100, 300, 1000, 3000, inf), "{:g}")
+    table("own mid move 1s (c)", [r.get("own1s", nan) for r in rows], (-inf, -1.5, -0.25, 0.25, 1.5, inf), "{:g}")
+    table("alt move 500ms (c)", [r.get("alt", nan) for r in rows], (-inf, -0.75, -0.25, 0.25, 0.75, inf), "{:g}")
+    _pairs_summary(rows, out)
     for role in ("taker", "maker"):
         m = np.array([r["role"] == role for r in rows])
         if m.any():
