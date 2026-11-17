@@ -1,0 +1,7 @@
+{"frozen_utc": "2026-11-17T22:11:11Z", "rule_file": "frozen/F9_rule.json", "scenario": "live", "target": "BTC 5m",
+ "picks": ["calm|0.3|-1|close", "calm|0.3|-1|30000"],
+ "definition": "f9_grid.run_calm: when the BTC 5m best bid and ask have been unchanged for 1 s (seen +9 ms), BUY 5 post-only one tick BELOW the best bid of the token whose own top-of-book imbalance > 0.3 (UP: (bid size - ask size)/sum; DOWN: the negative); cancel on an ETH/SOL/XRP/DOGE 5m UP-mid move >= 0.5c in 500 ms against that token (+9 +90 ms, never before order-on-book + 90); TTL to 20 s before the close (pick 1) or 30 s (pick 2); one live order per token; hold to settlement; pess queue, dsim fills.",
+ "dev": {"calm|0.3|-1|close": {"fills": 417, "settle_c": 3.02, "ci_market": [-0.09, 6.36], "mo1s_c": -0.36},
+         "calm|0.3|-1|30000": {"fills": 414, "settle_c": 3.04, "ci_market": [-0.09, 6.38], "mo1s_c": -0.34}},
+ "configs_tried_dev": 59,
+ "note": "the two picks are nearly the same rule (alt pulls end orders long before either TTL); neither had a dev CI lower bound > 0; 2026-11-16 is a re-used holdout (F7i, F8 used it)"}

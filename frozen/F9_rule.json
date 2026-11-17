@@ -1,0 +1,7 @@
+{"written_utc": "2026-11-17T19:26:36Z", "before": "any F9 grid result (items 2-7) was computed",
+ "scenario": "live (book +9; post +55 if BTC best bid/ask unchanged 1 s else +190; cancel +90 after the signal and never before order-on-book + 90; pess queue; dsim fills)",
+ "dev": ["2026-11-14", "2026-11-15"], "holdout": ["2026-11-16"], "read_cap": "PMLAT_MAXDAY=2026-11-16",
+ "rank": "dev settle c/share (share-weighted, makers pay no fee), 90% market-bootstrap CI lower bound; eligible rows need >= 200 filled orders over the 2 dev days; ties -> higher 1 s markout",
+ "item3": "the hedge is added to the best item-2 row by the same rank (chosen before item-3 rows are computed)",
+ "freeze": "the best 2 rows overall (items 2-7, item 3 included) go to frozen/F9.json, then run once on 2026-11-16",
+ "note": "2026-11-16 was already used as the holdout for F7i and F8; F9 reuses it, so a holdout pass here is weaker evidence than a fresh day"}
