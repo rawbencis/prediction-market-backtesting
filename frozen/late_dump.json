@@ -1,0 +1,8 @@
+{"frozen_utc": "2026-11-18T10:02:03Z", "before": "any 2026-11-17 data was read for this job (dev runs used PMLAT_MAXDAY=2026-11-16)",
+ "rule": "ld_sim.py: in the last T s of a BTC 5m window, at the first seen moment when one token's best bid >= X, post-only BUY 5 of that token at its best bid (join; = sell 5 of the other token at 1 - bid); one order per window; rest to the close, or pull when that bid falls 2 ticks (seen +9 ms, cancel +90, never before order-on-book + 90). Placebo 'plac': same trigger, BUY the other token at its best bid.",
+ "execution": "live (post +55 ms if the BTC 5m best bid/ask were unchanged 1 s, else +190; cancel +90; book +9) primary, dublin beside it; pess queue (behind all displayed size at our price); strict fills; settle-only P&L",
+ "cells": "all 64: side {fav, plac} x T {120, 60, 30, 15} s x X {0.95, 0.97, 0.98, 0.99} x pull {none, drop2}",
+ "primary": "fav|60|9700|drop2 (best dev live settle CI lower bound: +0.72 c/share [-0.64, +1.90], 0.35 fill rate, ~440 shares/day)",
+ "dev_summary": "0 of 64 cells had a settle CI lower bound > 0 under live or dublin",
+ "pass": "holdout 2026-11-17, live: primary settle market-CI lower bound > 0; placebo cells should be <= 0",
+ "holdout": "2026-11-17 00:00-24:00 UTC, run once (live and dublin)"}
