@@ -155,10 +155,11 @@ def cmd_eval(a):
             row += f"{p:+7.2f} +-{se:4.2f} z{p / se:+5.1f} n{k.sum():6d}"
         print(row)
 
-    print("\nB. After L equal outcomes in a row: how often the next one is the same. points vs 50% +- SE")
+    print("\nB. After L equal outcomes in a row: how often the next one is the same, in points vs 50% +- SE (n)."
+          "\n   Negative = the streak tends to break. L2 is 'two the same, what about the third'.")
     for lab, msk in parts:
         S = streaks(E[msk], U[msk])
-        print(f"   {lab:18s} " + " | ".join(f"L{L}{'+' if L == 7 else ''} {pts(k, n)[0]:+.1f}+-{pts(k, n)[1]:.1f}" for L, (n, k) in sorted(S.items())))
+        print(f"   {lab:18s} " + " | ".join(f"L{L}{'+' if L == 7 else ''} {pts(k, n)[0]:+.2f}+-{pts(k, n)[1]:.2f} ({n})" for L, (n, k) in sorted(S.items())))
 
     print("\nC. By month, betting against the previous window (N=1): points, n")
     i, w = bets(E, U, 1, -1)
@@ -184,11 +185,14 @@ def cmd_eval(a):
                 if e not in O or e - 300 not in O:
                     continue
                 pu, up = O[e - 300] == "UP", O[e] == "UP"
+                L = 1   # length of the streak that ended with the previous window, capped at 4
+                while L < 4 and O.get(e - 300 * (L + 1)) == O[e - 300]:
+                    L += 1
                 for s in R:
                     q = quote_at(m, s * 1_000_000)
                     if q:
                         b, k = (1 - q[1], 1 - q[0]) if pu else q   # the side that lost the previous window: its bid, ask
-                        R[s].append((pu, (q[0] + q[1]) / 2, b, k, int(up != pu)))
+                        R[s].append((pu, (q[0] + q[1]) / 2, b, k, int(up != pu), L))
         print("\nE. Is it priced? The side that LOST the previous window, quoted s seconds after the open (June-July book cache)")
         print("   s    n      UP mid after UP / after DOWN   side: mid   wins    edge at mid +-SE   at its bid   at its ask+fee")
         for s, rows in R.items():
@@ -199,6 +203,15 @@ def cmd_eval(a):
             se = 100 * (win - mid).std() / np.sqrt(len(x))
             print(f"   {s:<4d} {len(x):6d}   {x[x[:, 0] == 1, 1].mean():.4f} / {x[x[:, 0] == 0, 1].mean():.4f}            {mid.mean():.4f}   {win.mean():.4f}   "
                   f"{100 * (win - mid).mean():+.2f} +-{se:.2f}        {100 * (win - x[:, 2]).mean():+.2f}        {100 * (win - x[:, 3] - fee(x[:, 3])).mean():+.2f}")
+        print("\nF. The same at 5 s after the open, by the length of the streak the previous window ended (4 = four or more)."
+              "\n   Does the book lean further against a longer streak, and is anything left?")
+        x = np.array(R[5], float) if R[5] else np.zeros((0, 6))
+        for L in (1, 2, 3, 4):
+            y = x[x[:, 5] == L]
+            if len(y):
+                mid, win = (y[:, 2] + y[:, 3]) / 2, y[:, 4]
+                print(f"   streak {L}{'+' if L == 4 else ' '} n {len(y):6d}   side against the streak: mid {mid.mean():.4f}   wins {win.mean():.4f}   "
+                      f"edge at mid {100 * (win - mid).mean():+.2f} +-{100 * (win - mid).std() / np.sqrt(len(y)):.2f}   at its bid {100 * (win - y[:, 2]).mean():+.2f}")
 
 
 if __name__ == "__main__":
