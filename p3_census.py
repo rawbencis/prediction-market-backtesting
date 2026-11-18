@@ -35,9 +35,9 @@ def main():
     R = R[R.win.notna() & (R.sz > 0)].copy()
     pay = np.where((R.win == "UP") == (R.tok == 0), 1.0, 0.0)
     buy = R.sd == 0
-    R["pnl"] = np.where(buy, R.sz * (pay - R.p), R.sz * (R.p - pay)) - R.fee
+    R["pnl"] = np.where(buy, R.sz * (pay - R.p), R.sz * (R.p - pay)) - R.fee.clip(lower=0)  # fee -1 = maker sentinel
     R["usd"] = R.sz * R.p
-    R["role"] = np.where(R.fee > 0, "taker", "maker")
+    R["role"] = np.where(R.fee > 0, "taker", "maker")  # census: fee > 0 taker, -1 maker (no fee)
     R["mkt"] = R.day + R.e.astype(str)
     print(f"BTC 15m census rows {len(R):,} in {R.e.nunique()} settled markets, days {days}\n")
     rows = []
