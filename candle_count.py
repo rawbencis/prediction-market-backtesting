@@ -227,8 +227,9 @@ def cmd_eval(a):
                 row += f" | {lab} {pts(win[k].sum(), k.sum())[0]:+.2f}+-{pts(0, k.sum())[1]:.2f} ({k.sum()}) | {pts(win[k2].sum(), k2.sum())[0]:+.2f}+-{pts(0, max(1, k2.sum()))[1]:.2f}"
         print(row)
 
-    for src, it in (("June-July book cache", a.cache and cache_quotes(a.cache, (5, 30))),
-                    ("recordings " + str(a.rec), a.rec and rec_quotes(a.rec, (5, 30)))):
+    S = (1, 5, 30)   # 1 s: the cleanest read of the book's lean, before the window's own price move adds noise
+    for src, it in (("June-July book cache", a.cache and cache_quotes(a.cache, S)),
+                    ("recordings " + str(a.rec), a.rec and rec_quotes(a.rec, S))):
         if not it:
             continue
 
@@ -243,7 +244,7 @@ def cmd_eval(a):
                "against majority of last 20": side_map(20), "  last 20 was 13-7 or more": side_map(20, 0.25),
                "against majority of last 50": side_map(50)}
         fee = lambda p: 0.07 * p * (1 - p)  # noqa: E731
-        R, RS = {(g, s): [] for g in SIG for s in (5, 30)}, []
+        R, RS = {(g, s): [] for g in SIG for s in S}, []
         for e, s, q in it:
             if e not in O:
                 continue
@@ -252,7 +253,7 @@ def cmd_eval(a):
                 if e in mp:
                     b, k = q if mp[e] else (1 - q[1], 1 - q[0])   # the chosen side's bid, ask
                     R[(g, s)].append((b, k, int(up == mp[e])))
-            if s == 5 and e - 300 in O:
+            if s == 1 and e - 300 in O:
                 L = 1   # length of the streak the previous window ended, capped at 5
                 while L < 5 and O.get(e - 300 * (L + 1)) == O[e - 300]:
                     L += 1
@@ -269,12 +270,12 @@ def cmd_eval(a):
 
         print(f"\nE. Is it priced? The side each rule would buy, as quoted after the open ({src}). 'its mid' above"
               "\n   0.5000 means the book already leans that way; 'edge at mid' is what is left, in points.")
-        for s in (5, 30):
+        for s in S:
             print(f"   -- {s} s after the open")
             for g in SIG:
                 if R[(g, s)]:
                     print(line(g, R[(g, s)]))
-        print("\nF. The side AGAINST the streak, 5 s after the open, by the length of the streak (5 = five or more)")
+        print("\nF. The side AGAINST the streak, 1 s after the open, by the length of the streak (5 = five or more)")
         for L in (1, 2, 3, 4, 5):
             rows = [r[:3] for r in RS if r[3] == L]
             if rows:
