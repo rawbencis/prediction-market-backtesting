@@ -3,7 +3,8 @@
 opening price?  Polymarket data only (Gamma winners; optional June-July book cache from same_token_wf2 prep).
 
   candle_count.py fetch --start 2026-06-01 --end 2026-11-17 --out ~/cc-outcomes.csv [--seed ~/stwf2-cache/settlements.csv]
-  candle_count.py eval  --outcomes ~/cc-outcomes.csv [--split 2026-08-01] [--cache ~/stwf2-cache]
+  candle_count.py eval  --outcomes ~/cc-outcomes.csv [--split 2026-08-01] [--cache ~/stwf2-cache] [--rec ~/shadow-rec]
+--cache: June-July books (same_token_wf2 prep). --rec: shadow_rec recordings (BTC 5m rows only, one hour file at a time).
 
 A 1c/share edge is a 1-point shift in win probability, so everything is reported in points with its standard error.
 """
@@ -134,6 +135,43 @@ def quote_at(m, s_us, age=2_000_000, gap=10_000_000):
     return m["bid"][j, 0] / 1000, m["ask"][j, 0] / 1000
 
 
+PM_DT = np.dtype([("l", "<i8"), ("x", "<i8"), ("a", "u1"), ("tf", "u1"), ("e", "<u4"),
+                  ("b", "<u2"), ("k", "<u2"), ("bs", "<f4"), ("ks", "<f4")])  # shadow_rec pm row; asset 0 = btc
+
+
+def cache_quotes(cache, S):
+    from same_token_wf2 import done_days, markets
+    for ddir in done_days(Path(cache)):
+        for e, m in markets(ddir):
+            for s in S:
+                q = quote_at(m, s * 1_000_000)
+                if q:
+                    yield e, s, q
+
+
+def rec_quotes(root, S, gap_ms=15_000, files=None):
+    """BTC 5m UP bid/ask standing s seconds after each window's open, from shadow_rec hour files. The quote is the
+    last row at or before that instant (rows from just before the open count); None-like cases are skipped:
+    a gap marker (bid = ask = 0), a crossed or one-sided book, or no row in the gap_ms before it."""
+    best = {}
+    for f in files or sorted(Path(root).glob("????-??-??/pm-*.bin")):
+        r = np.fromfile(f, dtype=PM_DT, count=f.stat().st_size // PM_DT.itemsize)
+        r = r[(r["a"] == 0) & (r["tf"] == 5)]
+        e_ms = r["e"].astype(np.int64) * 1000
+        for s in S:
+            m = (r["x"] <= e_ms + s * 1000) & (r["x"] > e_ms + s * 1000 - gap_ms)
+            q = r[m]
+            q = q[np.lexsort((q["l"], q["x"], q["e"]))]
+            last = np.r_[np.flatnonzero(np.diff(q["e"])), len(q) - 1] if len(q) else []
+            for j in last:
+                key, row = (int(q["e"][j]), s), (int(q["x"][j]), int(q["l"][j]), int(q["b"][j]), int(q["k"][j]))
+                if key not in best or row[:2] > best[key][:2]:
+                    best[key] = row
+    for (e, s), (_, _, b, k) in sorted(best.items()):
+        if 0 < b < k:
+            yield e, s, (b / 1e4, k / 1e4)
+
+
 # ---------------------------------------------------------------- report
 def cmd_eval(a):
     O = read(a.outcomes)
@@ -189,8 +227,10 @@ def cmd_eval(a):
                 row += f" | {lab} {pts(win[k].sum(), k.sum())[0]:+.2f}+-{pts(0, k.sum())[1]:.2f} ({k.sum()}) | {pts(win[k2].sum(), k2.sum())[0]:+.2f}+-{pts(0, max(1, k2.sum()))[1]:.2f}"
         print(row)
 
-    if a.cache:
-        from same_token_wf2 import done_days, markets
+    for src, it in (("June-July book cache", a.cache and cache_quotes(a.cache, (5, 30))),
+                    ("recordings " + str(a.rec), a.rec and rec_quotes(a.rec, (5, 30)))):
+        if not it:
+            continue
 
         def side_map(n, lo=0.0):
             """epoch -> True if the bet is UP: against the majority of the last n, where lopsidedness > lo."""
@@ -204,26 +244,21 @@ def cmd_eval(a):
                "against majority of last 50": side_map(50)}
         fee = lambda p: 0.07 * p * (1 - p)  # noqa: E731
         R, RS = {(g, s): [] for g in SIG for s in (5, 30)}, []
-        for ddir in done_days(Path(a.cache)):
-            for e, m in markets(ddir):
-                if e not in O:
-                    continue
-                up = O[e] == "UP"
-                for s in (5, 30):
-                    q = quote_at(m, s * 1_000_000)
-                    if not q:
-                        continue
-                    for g, mp in SIG.items():
-                        if e in mp:
-                            b, k = q if mp[e] else (1 - q[1], 1 - q[0])   # the chosen side's bid, ask
-                            R[(g, s)].append((b, k, int(up == mp[e])))
-                    if s == 5 and e - 300 in O:
-                        L = 1   # length of the streak the previous window ended, capped at 5
-                        while L < 5 and O.get(e - 300 * (L + 1)) == O[e - 300]:
-                            L += 1
-                        pu = O[e - 300] == "UP"
-                        b, k = (1 - q[1], 1 - q[0]) if pu else q
-                        RS.append((b, k, int(up != pu), L))
+        for e, s, q in it:
+            if e not in O:
+                continue
+            up = O[e] == "UP"
+            for g, mp in SIG.items():
+                if e in mp:
+                    b, k = q if mp[e] else (1 - q[1], 1 - q[0])   # the chosen side's bid, ask
+                    R[(g, s)].append((b, k, int(up == mp[e])))
+            if s == 5 and e - 300 in O:
+                L = 1   # length of the streak the previous window ended, capped at 5
+                while L < 5 and O.get(e - 300 * (L + 1)) == O[e - 300]:
+                    L += 1
+                pu = O[e - 300] == "UP"
+                b, k = (1 - q[1], 1 - q[0]) if pu else q
+                RS.append((b, k, int(up != pu), L))
 
         def line(lab, rows):
             x = np.array(rows, float)
@@ -232,8 +267,8 @@ def cmd_eval(a):
                     f"edge at mid {100 * (win - mid).mean():+.2f} +-{100 * (win - mid).std() / np.sqrt(len(x)):.2f}   "
                     f"at its bid {100 * (win - x[:, 0]).mean():+.2f}   at its ask+fee {100 * (win - x[:, 1] - fee(x[:, 1])).mean():+.2f}")
 
-        print("\nE. Is it priced? The side each rule would buy, as quoted after the open (book cache). 'its mid' above 0.5000"
-              "\n   means the book already leans that way; 'edge at mid' is what is left, in points.")
+        print(f"\nE. Is it priced? The side each rule would buy, as quoted after the open ({src}). 'its mid' above"
+              "\n   0.5000 means the book already leans that way; 'edge at mid' is what is left, in points.")
         for s in (5, 30):
             print(f"   -- {s} s after the open")
             for g in SIG:
@@ -259,7 +294,7 @@ if __name__ == "__main__":
     f.set_defaults(fn=cmd_fetch)
     e = sp.add_parser("eval")
     e.add_argument("--outcomes", type=Path, required=True), e.add_argument("--split", default="2026-08-01")
-    e.add_argument("--cache", type=Path)
+    e.add_argument("--cache", type=Path), e.add_argument("--rec", type=Path)
     e.set_defaults(fn=cmd_eval)
     a = ap.parse_args()
     a.fn(a)

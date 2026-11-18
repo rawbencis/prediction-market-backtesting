@@ -66,6 +66,26 @@ class T(unittest.TestCase):
         self.assertIsNone(C.quote_at(m, 17_000_000))      # no book event for 10 s
         self.assertIsNone(C.quote_at(m, 31_000_000))      # UP side stale at the last event
 
+    def test_rec_quotes(self):
+        rows = [  # l, x, a, tf, e, b, k, bs, ks
+            (1, E0 * 1000 - 2000, 0, 5, E0, 4900, 5100, 9, 9),           # standing before the open
+            (2, E0 * 1000 + 3000, 0, 5, E0, 5000, 5200, 9, 9),           # the quote at 5 s
+            (3, E0 * 1000 + 6000, 0, 5, E0, 5300, 5500, 9, 9),
+            (4, E0 * 1000 + 3000, 1, 5, E0, 1000, 1200, 9, 9),           # another asset
+            (5, E0 * 1000 + 3000, 0, 15, E0, 1000, 1200, 9, 9),          # 15m
+            (6, (E0 + 300) * 1000 + 1000, 0, 5, E0 + 300, 4800, 5000, 9, 9),
+            (7, (E0 + 300) * 1000 + 4000, 0, 5, E0 + 300, 0, 0, 0, 0),   # gap marker is the last row before 5 s
+            (8, (E0 + 600) * 1000 - 20000, 0, 5, E0 + 600, 4800, 5000, 9, 9),   # nothing in the 15 s before 5 s
+            (9, (E0 + 900) * 1000 + 1000, 0, 5, E0 + 900, 0, 5000, 0, 9),       # one-sided
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            dd = Path(d) / "2026-06-01"
+            dd.mkdir()
+            np.array(rows[:5], C.PM_DT).tofile(dd / "pm-00.bin")
+            np.array(rows[5:], C.PM_DT).tofile(dd / "pm-01.bin")
+            got = list(C.rec_quotes(d, (5, 30)))
+        self.assertEqual(got, [(E0, 5, (0.5, 0.52))])              # at 30 s the last row is 24 s old: skipped
+
     def test_eval_runs(self):
         E, U = series(288 * 70, 0.48)
         with tempfile.TemporaryDirectory() as d:
@@ -76,7 +96,7 @@ class T(unittest.TestCase):
                 w.writerows((f"btc-updown-5m-{e}", "UP" if u else "DOWN") for e, u in zip(E, U))
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                C.cmd_eval(SimpleNamespace(outcomes=p, split="2026-07-10", cache=None))
+                C.cmd_eval(SimpleNamespace(outcomes=p, split="2026-07-10", cache=None, rec=None))
         s = out.getvalue()
         self.assertIn("A. Bet AGAINST", s)
         self.assertIn("D. Walk-forward", s)
