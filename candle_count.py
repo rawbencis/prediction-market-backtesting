@@ -176,42 +176,77 @@ def cmd_eval(a):
         print(f"   bets {len(W)}, points {pts(W.sum(), len(W))[0]:+.2f} +-{pts(W.sum(), len(W))[1]:.2f}, 90% by days {day_ci(D, W)}; "
               f"most picked {collections.Counter(picks).most_common(4)}")
 
+    print("\nG. Dose: bet against the majority of the last N, by how lopsided the count was (majority's share)."
+          f"\n   points +- SE (n): all | from {a.split}. A real effect should grow with the share.")
+    for n in (3, 5, 10, 20, 50):
+        i, f = rolling(E, U, n)
+        lop, win = np.abs(f - 0.5) * 2, (U[i] == (f < 0.5)).astype(int)
+        row = f"   N={n:<3d}"
+        for lo, hi, lab in ((0, .25, "51-62%"), (.25, .5, "63-75%"), (.5, .75, "76-87%"), (.75, 1, "88-100%")):
+            k = (lop > lo) & (lop <= hi)
+            k2 = k & (E[i] >= split)
+            if k.sum() >= 200:
+                row += f" | {lab} {pts(win[k].sum(), k.sum())[0]:+.2f}+-{pts(0, k.sum())[1]:.2f} ({k.sum()}) | {pts(win[k2].sum(), k2.sum())[0]:+.2f}+-{pts(0, max(1, k2.sum()))[1]:.2f}"
+        print(row)
+
     if a.cache:
         from same_token_wf2 import done_days, markets
+
+        def side_map(n, lo=0.0):
+            """epoch -> True if the bet is UP: against the majority of the last n, where lopsidedness > lo."""
+            i, f = rolling(E, U, n)
+            k = np.abs(f - 0.5) * 2 > lo
+            return dict(zip(E[i[k]].tolist(), (f[k] < 0.5).tolist()))
+
+        SIG = {"against the previous window": side_map(1), "against majority of last 3": side_map(3),
+               "against majority of last 5": side_map(5), "  last 5 was 4-1 or 5-0": side_map(5, 0.5),
+               "against majority of last 20": side_map(20), "  last 20 was 13-7 or more": side_map(20, 0.25),
+               "against majority of last 50": side_map(50)}
         fee = lambda p: 0.07 * p * (1 - p)  # noqa: E731
-        R = {s: [] for s in (2, 5, 15, 30, 60)}
+        R, RS = {(g, s): [] for g in SIG for s in (5, 30)}, []
         for ddir in done_days(Path(a.cache)):
             for e, m in markets(ddir):
-                if e not in O or e - 300 not in O:
+                if e not in O:
                     continue
-                pu, up = O[e - 300] == "UP", O[e] == "UP"
-                L = 1   # length of the streak that ended with the previous window, capped at 4
-                while L < 4 and O.get(e - 300 * (L + 1)) == O[e - 300]:
-                    L += 1
-                for s in R:
+                up = O[e] == "UP"
+                for s in (5, 30):
                     q = quote_at(m, s * 1_000_000)
-                    if q:
-                        b, k = (1 - q[1], 1 - q[0]) if pu else q   # the side that lost the previous window: its bid, ask
-                        R[s].append((pu, (q[0] + q[1]) / 2, b, k, int(up != pu), L))
-        print("\nE. Is it priced? The side that LOST the previous window, quoted s seconds after the open (June-July book cache)")
-        print("   s    n      UP mid after UP / after DOWN   side: mid   wins    edge at mid +-SE   at its bid   at its ask+fee")
-        for s, rows in R.items():
-            if not rows:
-                continue
+                    if not q:
+                        continue
+                    for g, mp in SIG.items():
+                        if e in mp:
+                            b, k = q if mp[e] else (1 - q[1], 1 - q[0])   # the chosen side's bid, ask
+                            R[(g, s)].append((b, k, int(up == mp[e])))
+                    if s == 5 and e - 300 in O:
+                        L = 1   # length of the streak the previous window ended, capped at 5
+                        while L < 5 and O.get(e - 300 * (L + 1)) == O[e - 300]:
+                            L += 1
+                        pu = O[e - 300] == "UP"
+                        b, k = (1 - q[1], 1 - q[0]) if pu else q
+                        RS.append((b, k, int(up != pu), L))
+
+        def line(lab, rows):
             x = np.array(rows, float)
-            mid, win = (x[:, 2] + x[:, 3]) / 2, x[:, 4]
-            se = 100 * (win - mid).std() / np.sqrt(len(x))
-            print(f"   {s:<4d} {len(x):6d}   {x[x[:, 0] == 1, 1].mean():.4f} / {x[x[:, 0] == 0, 1].mean():.4f}            {mid.mean():.4f}   {win.mean():.4f}   "
-                  f"{100 * (win - mid).mean():+.2f} +-{se:.2f}        {100 * (win - x[:, 2]).mean():+.2f}        {100 * (win - x[:, 3] - fee(x[:, 3])).mean():+.2f}")
-        print("\nF. The same at 5 s after the open, by the length of the streak the previous window ended (4 = four or more)."
-              "\n   Does the book lean further against a longer streak, and is anything left?")
-        x = np.array(R[5], float) if R[5] else np.zeros((0, 6))
-        for L in (1, 2, 3, 4):
-            y = x[x[:, 5] == L]
-            if len(y):
-                mid, win = (y[:, 2] + y[:, 3]) / 2, y[:, 4]
-                print(f"   streak {L}{'+' if L == 4 else ' '} n {len(y):6d}   side against the streak: mid {mid.mean():.4f}   wins {win.mean():.4f}   "
-                      f"edge at mid {100 * (win - mid).mean():+.2f} +-{100 * (win - mid).std() / np.sqrt(len(y)):.2f}   at its bid {100 * (win - y[:, 2]).mean():+.2f}")
+            mid, win = (x[:, 0] + x[:, 1]) / 2, x[:, 2]
+            return (f"   {lab:30s} n {len(x):6d}   its mid {mid.mean():.4f} +-{mid.std() / np.sqrt(len(x)):.4f}   wins {win.mean():.4f}   "
+                    f"edge at mid {100 * (win - mid).mean():+.2f} +-{100 * (win - mid).std() / np.sqrt(len(x)):.2f}   "
+                    f"at its bid {100 * (win - x[:, 0]).mean():+.2f}   at its ask+fee {100 * (win - x[:, 1] - fee(x[:, 1])).mean():+.2f}")
+
+        print("\nE. Is it priced? The side each rule would buy, as quoted after the open (book cache). 'its mid' above 0.5000"
+              "\n   means the book already leans that way; 'edge at mid' is what is left, in points.")
+        for s in (5, 30):
+            print(f"   -- {s} s after the open")
+            for g in SIG:
+                if R[(g, s)]:
+                    print(line(g, R[(g, s)]))
+        print("\nF. The side AGAINST the streak, 5 s after the open, by the length of the streak (5 = five or more)")
+        for L in (1, 2, 3, 4, 5):
+            rows = [r[:3] for r in RS if r[3] == L]
+            if rows:
+                print(line(f"streak {L}{'+' if L == 5 else ''}", rows))
+        rows = [r[:3] for r in RS if r[3] >= 3]
+        if rows:
+            print(line("streak 3 or more", rows))
 
 
 if __name__ == "__main__":
