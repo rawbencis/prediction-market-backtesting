@@ -1,0 +1,36 @@
+
+===== OOS 11-17: fills 816, markets 148, days 1
+role: {'maker': 471, 'taker': 345}  side: {'buy': 816}  token: {1: 426, 0: 390}
+long-token price q10/25/50/75/90: [0.95, 0.98, 0.99, 0.99, 0.99]
+price buckets: {'<90': 22, '90-95': 69, '95-97': 21, '97-98': 53, '98-99': 202, '99+': 449}
+seconds left q10/50/90: [16.8, 105.8, 172.3]  share <=60/30/10 s: [np.float64(0.24), np.float64(0.15), np.float64(0.05)]
+fill size q10/50/90: [5.0, 33.4, 225.3]  sum per market median: 292.5
+how vs book (makers): {'at best bid (join)': 309, 'at/over ask (take)': 141, 'inside spread (improve)': 12, 'below bid / unknown': 9}
+bid size at its price before the match (makers, join) q50/q90: [1500.0, 22668.0]
+P&L: $+813 on $66,711: +1.22 c/$  CI market [+0.14, +2.03]  CI day [+nan, +nan]
+by day: {'2026-11-17': '+1.22 c/$ $+813'}
+fills on the losing token: 12 (1.5%), in 4 markets; their loss $-454; win fills profit $+1,267
+profit from fills with <= 60 s left: $+437 (54% of total), +2.17 c/$
+profit from fills with <= 30 s left: $+193 (24% of total), +1.63 c/$
+profit from fills with <= 10 s left: $+59 (7% of total), +1.70 c/$
+by price bucket (c/$, $): {'[0.0, 0.9)': '+10.25 / $+104 / n 22', '[0.9, 0.95)': '+4.45 / $+173 / n 69', '[0.95, 0.97)': '+3.93 / $+71 / n 21', '[0.97, 0.98)': '-5.98 / $-243 / n 53', '[0.98, 0.99)': '+1.94 / $+315 / n 202', '[0.99, 1.001)': '+0.99 / $+393 / n 449'}
+
+===== in-sample 11-14..16: fills 3468, markets 427, days 3
+role: {'taker': 1906, 'maker': 1562}  side: {'buy': 3468}  token: {1: 2030, 0: 1438}
+long-token price q10/25/50/75/90: [0.97, 0.98, 0.99, 0.99, 0.99]
+price buckets: {'<90': 17, '90-95': 99, '95-97': 125, '97-98': 193, '98-99': 897, '99+': 2137}
+seconds left q10/50/90: [16.2, 97.1, 165.7]  share <=60/30/10 s: [np.float64(0.29), np.float64(0.16), np.float64(0.07)]
+fill size q10/50/90: [5.0, 30.0, 222.0]  sum per market median: 634.0
+how vs book (makers): {'at best bid (join)': 982, 'at/over ask (take)': 531, 'inside spread (improve)': 37, 'below bid / unknown': 12}
+bid size at its price before the match (makers, join) q50/q90: [2028.0, 68353.0]
+P&L: $+2,879 on $292,460: +0.98 c/$  CI market [+0.18, +1.51]  CI day [+0.44, +1.47]
+by day: {'2026-11-14': '+1.45 c/$ $+276', '2026-11-15': '+1.47 c/$ $+2,129', '2026-11-16': '+0.37 c/$ $+474'}
+fills on the losing token: 25 (0.7%), in 9 markets; their loss $-1,552; win fills profit $+4,430
+profit from fills with <= 60 s left: $+1,411 (49% of total), +1.27 c/$
+profit from fills with <= 30 s left: $+851 (30% of total), +1.41 c/$
+profit from fills with <= 10 s left: $+280 (10% of total), +1.07 c/$
+by price bucket (c/$, $): {'[0.0, 0.9)': '+14.35 / $+42 / n 17', '[0.9, 0.95)': '+6.01 / $+530 / n 99', '[0.95, 0.97)': '+3.91 / $+318 / n 125', '[0.97, 0.98)': '+1.42 / $+170 / n 193', '[0.98, 0.99)': '+1.63 / $+1,022 / n 897', '[0.99, 1.001)': '+0.40 / $+796 / n 2137'}
+IS maker: fills 1562, $158,520, +0.67 c/$ [-0.14, +1.30], $+1,061; price q50 0.99; left q50 59 s; lost fills 18 cost $-1,076; fee c/share 0.000
+IS taker: fills 1906, $133,940, +1.36 c/$ [+0.67, +1.83], $+1,817; price q50 0.99; left q50 121 s; lost fills 7 cost $-475; fee c/share 0.122
+OOS maker: fills 471, $42,531, +0.54 c/$ [-1.15, +1.44], $+229; price q50 0.99; left q50 96 s; lost fills 7 cost $-353; fee c/share 0.000
+OOS taker: fills 345, $24,180, +2.41 c/$ [+1.35, +3.28], $+584; price q50 0.98; left q50 123 s; lost fills 5 cost $-101; fee c/share 0.196
