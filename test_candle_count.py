@@ -86,6 +86,43 @@ class T(unittest.TestCase):
             got = list(C.rec_quotes(d, (5, 30)))
         self.assertEqual(got, [(E0, 5, (0.5, 0.52))])              # at 30 s the last row is 24 s old: skipped
 
+    def test_window_dips(self):
+        nan = float("nan")
+        t = np.array([0, 1000, 3000, 5000, 9000, 12000])
+        bid = np.array([0.48, 0.48, 0.44, 0.36, nan, 0.30])
+        ask = np.array([0.50, 0.50, 0.46, 0.38, 0.35, 0.33])
+        b0, a0, ts, tl = C.window_dips(t, bid, ask, P=(0.30, 0.35, 0.40, 0.49), t0=2000)
+        self.assertEqual((b0, a0), (0.48, 0.50))
+        self.assertEqual(list(ts), [C.NEVER, 9000, 5000, 3000])      # first time the ask is at or under P
+        self.assertEqual(list(tl), [C.NEVER, 12000, 5000, 3000])     # first time the best bid is under P
+        self.assertIsNone(C.window_dips(np.array([5000]), np.array([0.4]), np.array([0.5]), t0=2000)[2])   # no quote yet
+
+    def test_dip_rows_and_sequences(self):
+        # outcomes: three DOWN closes, then windows 3..6 are bet UP at 0.35 (run of 3+): lose, lose, win, then no signal
+        seq = ["DOWN", "DOWN", "DOWN", "DOWN", "DOWN", "UP", "UP"]
+        O = {E0 + 300 * i: v for i, v in enumerate(seq)}
+        def win(fill_at):
+            t = np.array([0, 1000, 50000])
+            ub = np.array([0.50, 0.50, 0.30 if fill_at else 0.50])
+            return C._both_sides(t, ub, ub + 0.02)
+        W = {E0 + 300 * i: win(True) for i in range(3, 7)}
+        W[E0 + 300 * 4] = win(True)
+        pi = C.DIP_P.index(0.35)
+        rows = C.dip_rows(W, O, C.dip_signals(O)["run of 3+, against it"], pi)
+        self.assertEqual([(r[1], r[2], r[4]) for r in rows], [("placed", True, False), ("placed", True, False), ("placed", True, True)])
+        self.assertEqual(C.dip_stat(rows, 2)[:3], (3, 3, 1))
+        flat = C.dip_sequences(W, O, 3, pi, "flat", 99)
+        self.assertEqual((flat["seqs"], flat["fills"], flat["unrecovered"]), (1, 3, 0))
+        self.assertAlmostEqual(flat["pnl"], -0.35 - 0.35 + 0.65)
+        rec = C.dip_sequences(W, O, 3, pi, "recover", 4)
+        self.assertAlmostEqual(rec["pnl"], 0.65)                     # the win pays back both losses plus one unit's profit
+        self.assertAlmostEqual(rec["max_units"], (0.35 + 0.35 * (1 + 0.35 / 0.65) + 0.65) / 0.65)
+        W[E0 + 300 * 5] = win(False)                                 # not filled in the window that wins
+        rec = C.dip_sequences(W, O, 3, pi, "recover", 4)
+        self.assertEqual(rec["unrecovered"], 1)
+        self.assertAlmostEqual(rec["pnl"], rec["worst"])
+        self.assertEqual(C.streak_before(O, E0 + 300 * 5), 5)
+
     def test_eval_runs(self):
         E, U = series(288 * 70, 0.48)
         with tempfile.TemporaryDirectory() as d:
