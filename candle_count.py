@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
+STEP, TF, ASSET, AIDX = 300, 5, "btc", 0     # window length (s), minutes, asset; set by --tf / --asset
 NS = (1, 2, 3, 5, 10, 20, 50, 100, 288)   # rolling lengths, in 5m windows (288 = one day)
 GAMMA = "https://gamma-api.polymarket.com/markets?closed=true&limit=500&"
 
@@ -33,11 +34,11 @@ def cmd_fetch(a):
     have = {}
     for p in (a.seed or []) + [a.out]:
         have.update(read(p))
-    todo = [e for e in range(ep(a.start), ep(a.end) + 86400, 300) if e not in have and e + 900 < time.time()]
+    todo = [e for e in range(ep(a.start), ep(a.end) + 86400, STEP) if e not in have and e + 900 < time.time()]
     print(f"have {len(have)}, to fetch {len(todo)}", flush=True)
 
     def get(batch):
-        url = GAMMA + "&".join(f"slug=btc-updown-5m-{e}" for e in batch)
+        url = GAMMA + "&".join(f"slug={ASSET}-updown-{TF}m-{e}" for e in batch)
         with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "research"}), timeout=30) as r:
             return json.load(r)
 
@@ -45,7 +46,7 @@ def cmd_fetch(a):
         with Path(a.out).open("w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["slug", "winner"])
-            w.writerows((f"btc-updown-5m-{e}", v) for e, v in sorted(have.items()))
+            w.writerows((f"{ASSET}-updown-{TF}m-{e}", v) for e, v in sorted(have.items()))
 
     for i in range(0, len(todo), 50):
         try:
@@ -68,7 +69,7 @@ def rolling(E, U, n):
     """-> (idx, f): windows whose n predecessors are all present, and the UP share of those n."""
     c = np.r_[0, np.cumsum(U)]
     i = np.arange(n, len(E))
-    i = i[E[i] - E[i - n] == 300 * n]
+    i = i[E[i] - E[i - n] == STEP * n]
     return i, (c[i] - c[i - n]) / n
 
 
@@ -89,13 +90,13 @@ def streaks(E, U, cap=7):
     """-> {L: (n, continued)}: after exactly L equal outcomes in a row (L capped), how often the next was the same."""
     out, run = {}, 1
     for i in range(1, len(U)):
-        if E[i] - E[i - 1] != 300:
+        if E[i] - E[i - 1] != STEP:
             run = 0   # unknown history: the run restarts with this window
         elif run:
             L = min(run, cap)
             n, k = out.get(L, (0, 0))
             out[L] = (n + 1, k + int(U[i] == U[i - 1]))
-        run = run + 1 if run and E[i] - E[i - 1] == 300 and U[i] == U[i - 1] else 1
+        run = run + 1 if run and E[i] - E[i - 1] == STEP and U[i] == U[i - 1] else 1
     return out
 
 
@@ -159,7 +160,7 @@ def rec_quotes(root, S, gap_ms=15_000, files=None):
     best = {}
     for f in files or sorted(Path(root).glob("????-??-??/pm-*.bin")):
         r = np.fromfile(f, dtype=PM_DT, count=f.stat().st_size // PM_DT.itemsize)
-        r = r[(r["a"] == 0) & (r["tf"] == 5)]
+        r = r[(r["a"] == AIDX) & (r["tf"] == TF)]
         e_ms = r["e"].astype(np.int64) * 1000
         for s in S:
             m = (r["x"] <= e_ms + s * 1000) & (r["x"] > e_ms + s * 1000 - gap_ms)
@@ -228,7 +229,7 @@ def rec_paths(root, files=None):
 
     for f in files or sorted(Path(root).glob("????-??-??/pm-*.bin")):
         r = np.fromfile(f, dtype=PM_DT, count=f.stat().st_size // PM_DT.itemsize)
-        r = r[(r["a"] == 0) & (r["tf"] == 5)]
+        r = r[(r["a"] == AIDX) & (r["tf"] == TF)]
         for e in np.unique(r["e"]):
             acc.setdefault(int(e), []).append(r[r["e"] == e])
         if len(r):
@@ -238,23 +239,62 @@ def rec_paths(root, files=None):
         yield emit(e)
 
 
+LB_DT = np.dtype([("l", "<i8"), ("x", "<i8"), ("a", "u1"), ("tf", "u1"), ("e", "<u4")]
+                 + [(f"{sd}{i}{f}", t) for sd in "bk" for i in (1, 2, 3) for f, t in (("", "<u2"), ("s", "<f4"))])   # lighter_rec book
+LT_DT = np.dtype([("l", "<i8"), ("T", "<i8"), ("a", "u1"), ("tf", "u1"), ("e", "<u4"), ("p", "<u2"), ("s", "<f4"),
+                  ("buy", "u1"), ("aa", "<i8"), ("ba", "<i8"), ("id", "<i8")])                                      # lighter_rec trades
+
+
+def lighter_paths(root):
+    """Lighter up/down windows (one book, quoted as the UP price). The makers there are few and mostly post-only, so
+    a quote reaching our price is not a fill. Fills come from recorded TAKER trades only:
+      strict: a taker traded through our price (a sell below P for an UP bid; a buy above 1-P for a DOWN bid);
+      loose:  a taker traded at our price or through it (our place in the queue is ignored).
+    The quote at placement comes from the book."""
+    rd = lambda kind, dt: [np.fromfile(f, dtype=dt, count=f.stat().st_size // dt.itemsize)  # noqa: E731
+                           for f in sorted(Path(root).glob(f"????-??-??/{kind}-*.bin"))]
+    cat = lambda v, dt: np.concatenate(v) if v else np.zeros(0, dt)  # noqa: E731
+    LB, LT = cat(rd("lb", LB_DT), LB_DT), cat(rd("lt", LT_DT), LT_DT)
+    LB, LT = LB[(LB["a"] == AIDX) & (LB["tf"] == TF)], LT[(LT["a"] == AIDX) & (LT["tf"] == TF)]
+    LT = LT[np.sort(np.unique(LT["id"], return_index=True)[1])]
+    nz = lambda v: np.where(v == 0, np.nan, v / 1e4)  # noqa: E731
+    for e in np.unique(LB["e"]):
+        e = int(e)
+        b = LB[LB["e"] == e]
+        b = b[np.lexsort((b["l"], b["x"]))]
+        tb, ub, ua = b["x"] - e * 1000, nz(b["b1"].astype(float)), nz(b["k1"].astype(float))
+        tr = LT[LT["e"] == e]
+        tr = tr[np.argsort(tr["T"], kind="stable")]
+        tt, px, buy = tr["T"] - e * 1000, tr["p"] / 1e4, tr["buy"] == 1
+        out = {}
+        for side in (True, False):
+            b0, a0, _, _ = window_dips(tb, ub, ua) if side else window_dips(tb, 1 - ua, 1 - ub)
+            p = px[~buy] if side else 1 - px[buy]          # the price a taker sold this side at
+            t = tt[~buy] if side else tt[buy]
+            k = t > DIP_T0
+            # a print at p acts like "ask = p + 1c, bid = p - 1c": strict needs p <= P - 1c, loose p <= P
+            _, _, ts, tl = window_dips(np.r_[0, t[k]], np.r_[np.nan, p[k] - 0.01], np.r_[np.nan, p[k] + 0.01], t0=0)
+            out[side] = (np.inf if not np.isnan(a0) else np.nan, a0, ts, tl)
+        yield e, out
+
+
 def streak_before(O, e, cap=8):
-    """Length of the run of equal outcomes ending with window e-300 (0 if that window is unknown)."""
-    if e - 300 not in O:
+    """Length of the run of equal outcomes ending with the window before e (0 if that window is unknown)."""
+    if e - STEP not in O:
         return 0
     L = 1
-    while L < cap and O.get(e - 300 * (L + 1)) == O[e - 300]:
+    while L < cap and O.get(e - STEP * (L + 1)) == O[e - STEP]:
         L += 1
     return L
 
 
 def dip_signals(O):
     """name -> f(e) -> True (bid UP) / False (bid DOWN) / None (no order)."""
-    rev = lambda e: O[e - 300] != "UP"  # noqa: E731   the side that lost the previous window
+    rev = lambda e: O[e - STEP] != "UP"  # noqa: E731   the side that lost the previous window
     def run(lo, hi=99, with_it=False):
         return lambda e: (None if not lo <= streak_before(O, e) <= hi else (not rev(e)) if with_it else rev(e))
     def last5(e):
-        v = [O.get(e - 300 * k) for k in range(1, 6)]
+        v = [O.get(e - STEP * k) for k in range(1, 6)]
         n = sum(x == "UP" for x in v)
         return None if None in v or n in (2, 3) else n <= 1
     return {"any window, against the previous close": run(1), "run of 1-2, against it (no signal)": run(1, 2),
@@ -263,12 +303,12 @@ def dip_signals(O):
             "run of 3+, WITH it (placebo)": run(3, with_it=True)}
 
 
-def dip_rows(W, O, sig, pi, t1=270_000):
+def dip_rows(W, O, sig, pi, t1=None):
     """-> list of (epoch, status, strict fill, loose fill, win) for one signal and price index.
     status: 'placed', 'below' (the ask was already at or under P at placement: no order), 'nodata'."""
-    out = []
+    out, t1 = [], (STEP - 30) * 1000 if t1 is None else t1
     for e in sorted(W):
-        if e not in O or e - 300 not in O:
+        if e not in O or e - STEP not in O:
             continue
         side = sig(e)
         if side is None:
@@ -295,13 +335,13 @@ def dip_stat(rows, col):
     return len(pl), len(f), sum(r[4] for r in f), (sum(r[4] for r in nf) / len(nf) if nf else float("nan"))
 
 
-def dip_sequences(W, O, K, pi, scheme, cap, t1=270_000):
+def dip_sequences(W, O, K, pi, scheme, cap, t1=None):
     """Bet the reversal side at P in every window of a run of K or more equal closes, until the run breaks.
     scheme 'flat': 1 unit each time. 'recover': sized so that a win pays back the sequence's losses plus one
     unit's profit; after `cap` losing fills the sequence is abandoned. Strict fills.
     -> dict(seqs, bets, fills, staked, pnl, worst, max_units, unrecovered), in units of the first bet's shares."""
     P = DIP_P[pi]
-    sig = lambda e: None if streak_before(O, e) < K else O[e - 300] != "UP"  # noqa: E731
+    sig = lambda e: None if streak_before(O, e) < K else O[e - STEP] != "UP"  # noqa: E731
     R = {r[0]: r for r in dip_rows(W, O, sig, pi, t1)}
     out = dict(seqs=0, bets=0, fills=0, staked=0.0, pnl=0.0, worst=0.0, max_units=0.0, unrecovered=0)
     lost, nloss = 0.0, 0
@@ -343,13 +383,17 @@ def dip_sequences(W, O, K, pi, scheme, cap, t1=270_000):
 
 def cmd_dip(a):
     O = read(a.outcomes)
-    for src, it in (("June-July book cache", a.cache and cache_paths(a.cache)), ("recordings " + str(a.rec), a.rec and rec_paths(a.rec))):
+    book = "strict: the ask reached P (certain fill). loose: the best bid fell below P (likely fill)."
+    for src, it, how in (("June-July book cache", a.cache and cache_paths(a.cache), book),
+                         ("recordings " + str(a.rec), a.rec and rec_paths(a.rec), book),
+                         ("Lighter " + str(a.lighter), a.lighter and lighter_paths(a.lighter),
+                          "Fills from recorded taker trades only. strict: a taker traded through P. loose: at P or through.")):
         if not it:
             continue
         W = {e: w for e, w in it if e in O}
-        print(f"\n=== {src}: {len(W)} windows with a known outcome. A bid of P on the reversal side rests from 2 s after the open"
-              f"\n    to 30 s before the close. Edge = wins - P, in cents per filled share, +- 1 SE. strict: the ask reached P"
-              f"\n    (certain fill). loose: the best bid fell below P (likely fill). No fee, no rebate (maker).")
+        print(f"\n=== {src}, {ASSET} {TF}m: {len(W)} windows with a known outcome. A bid of P on the reversal side rests from 2 s"
+              f"\n    after the open to 30 s before the close. Edge = wins - P, in cents per filled share, +- 1 SE."
+              f"\n    {how} No fee, no rebate (maker).")
         S = dip_signals(O)
         for name, sig in S.items():
             print(f"\n  {name}")
@@ -364,10 +408,10 @@ def cmd_dip(a):
                 e2, s2 = 100 * (w2 / f2 - P), 100 * np.sqrt(max(w2 / f2 * (1 - w2 / f2), 1e-9) / f2)
                 print(f"     {P:.2f} {n:7d} {sum(r[1] == 'below' for r in rows):7d}            {100 * f / n:5.1f}  {w:5d}/{f:<5d}  {e1:+6.2f} +-{s1:4.2f} z{e1 / s1:+5.1f} | {100 * f2 / n2:5.1f} {e2:+6.2f} +-{s2:4.2f} | {100 * nfw:5.1f}%")
         print("\n  By how long the bid rests (run of 3+, against it; strict): edge in cents/share (fills)")
-        print("     P     " + "".join(f"{lab:>18s}" for lab in ("first 60 s", "first 150 s", "to 60 s left", "to 30 s left", "to 5 s left")))
+        print("     P     " + "".join(f"{lab:>18s}" for lab in ("first 20%", "first half", "to 60 s left", "to 30 s left", "to 5 s left")))
         for pi, P in enumerate(DIP_P):
             row = f"     {P:.2f}  "
-            for t1 in (60_000, 150_000, 240_000, 270_000, 295_000):
+            for t1 in (STEP * 200, STEP * 500, (STEP - 60) * 1000, (STEP - 30) * 1000, (STEP - 5) * 1000):
                 n, f, w, _ = dip_stat(dip_rows(W, O, S["run of 3+, against it"], pi, t1), 2)
                 row += f"{100 * (w / f - P):+8.2f} ({f:5d})  " if f else f"{'-':>18s}"
             print(row)
@@ -464,11 +508,11 @@ def cmd_eval(a):
                 if e in mp:
                     b, k = q if mp[e] else (1 - q[1], 1 - q[0])   # the chosen side's bid, ask
                     R[(g, s)].append((b, k, int(up == mp[e])))
-            if s == 1 and e - 300 in O:
+            if s == 1 and e - STEP in O:
                 L = 1   # length of the streak the previous window ended, capped at 5
-                while L < 5 and O.get(e - 300 * (L + 1)) == O[e - 300]:
+                while L < 5 and O.get(e - STEP * (L + 1)) == O[e - STEP]:
                     L += 1
-                pu = O[e - 300] == "UP"
+                pu = O[e - STEP] == "UP"
                 b, k = (1 - q[1], 1 - q[0]) if pu else q
                 RS.append((b, k, int(up != pu), L))
 
@@ -510,6 +554,11 @@ if __name__ == "__main__":
     e.set_defaults(fn=cmd_eval)
     d = sp.add_parser("dip")
     d.add_argument("--outcomes", type=Path, required=True), d.add_argument("--cache", type=Path), d.add_argument("--rec", type=Path)
+    d.add_argument("--lighter", type=Path)
     d.set_defaults(fn=cmd_dip)
+    for q in (f, e, d):
+        q.add_argument("--asset", default="btc", choices=("btc", "eth", "sol", "xrp", "doge")), q.add_argument("--tf", type=int, default=5)
     a = ap.parse_args()
+    ASSET, TF = a.asset, a.tf
+    STEP, AIDX = TF * 60, ("btc", "eth", "sol", "xrp", "doge").index(ASSET)
     a.fn(a)

@@ -123,6 +123,35 @@ class T(unittest.TestCase):
         self.assertAlmostEqual(rec["pnl"], rec["worst"])
         self.assertEqual(C.streak_before(O, E0 + 300 * 5), 5)
 
+    def test_lighter_paths_fill_from_taker_trades_only(self):
+        e = E0
+        lb = np.zeros(3, C.LB_DT)
+        for i, (x, b, k) in enumerate(((e * 1000 - 5000, 100, 9900), (e * 1000 + 1000, 4800, 5200), (e * 1000 + 60000, 3000, 3400))):
+            lb[i] = (x * 1000, x, 0, 15, e, b, 50, 0, 0, 0, 0, k, 50, 0, 0, 0, 0)
+        lt = np.zeros(5, C.LT_DT)
+        for i, (T, px, buy) in enumerate(((1500, 3000, 0),      # before the bid is placed: ignored
+                                          (50000, 3500, 0),     # a taker sells UP at 0.35: at a 0.35 bid's price
+                                          (70000, 3300, 0),     # ... and at 0.33: through it
+                                          (80000, 6800, 1),     # a taker buys UP at 0.68 = sells DOWN at 0.32
+                                          (80000, 6800, 1))):   # duplicate id below
+            lt[i] = (0, e * 1000 + T, 0, 15, e, px, 10, buy, 1, 2, min(i, 3))
+        old = (C.STEP, C.TF)
+        C.STEP, C.TF = 900, 15
+        self.addCleanup(lambda: (setattr(C, "STEP", old[0]), setattr(C, "TF", old[1])))
+        with tempfile.TemporaryDirectory() as d:
+            dd = Path(d) / "2026-06-01"
+            dd.mkdir()
+            lb.tofile(dd / "lb-00.bin"), lt.tofile(dd / "lt-00.bin")
+            (ee, w), = list(C.lighter_paths(d))
+        pi = {p: i for i, p in enumerate(C.DIP_P)}
+        self.assertEqual(ee, e)
+        self.assertEqual((w[True][1], w[False][1]), (0.52, 0.52))                     # asks at placement: UP 0.52, DOWN 1 - 0.48
+        self.assertEqual((w[True][2][pi[0.35]], w[True][3][pi[0.35]]), (70000, 50000))   # through at 70 s, touched at 50 s
+        self.assertEqual((w[True][2][pi[0.30]], w[True][3][pi[0.30]]), (C.NEVER, C.NEVER))
+        self.assertEqual((w[False][2][pi[0.35]], w[False][3][pi[0.35]]), (80000, 80000))  # DOWN sold at 0.32
+        self.assertEqual(w[False][2][pi[0.30]], C.NEVER)
+        self.assertEqual(w[True][2][pi[0.45]], 50000)                                   # the book quote alone (ask 0.34 at 60 s) fills nothing
+
     def test_eval_runs(self):
         E, U = series(288 * 70, 0.48)
         with tempfile.TemporaryDirectory() as d:
