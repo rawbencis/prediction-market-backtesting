@@ -152,6 +152,22 @@ class T(unittest.TestCase):
         self.assertEqual(w[False][2][pi[0.30]], C.NEVER)
         self.assertEqual(w[True][2][pi[0.45]], 50000)                                   # the book quote alone (ask 0.34 at 60 s) fills nothing
 
+    def test_window_confirm(self):
+        nan = float("nan")
+        t = np.array([0, 1000, 3000, 5000, 5300, 9000, 12000])
+        bid = np.array([0.50, 0.50, 0.58, 0.66, 0.66, nan, 0.81])
+        ask = np.array([0.52, 0.52, 0.60, 0.68, 0.70, nan, 0.83])
+        b0, tx, a0, a1 = C.window_confirm(t, bid, ask, X=(0.50, 0.55, 0.65, 0.80, 0.90), t0=2000, lat=500)
+        self.assertEqual(b0, 0.50)
+        self.assertEqual(list(tx), [-1, 3000, 5000, 12000, C.NEVER])     # already there / crossings / never
+        self.assertEqual(list(a0[1:4]), [0.60, 0.68, 0.83])
+        self.assertEqual(list(a1[1:4]), [0.60, 0.70, 0.83])              # 500 ms later the ask had moved to 0.70
+        O = {E0 + 300 * i: v for i, v in enumerate(["DOWN", "DOWN", "DOWN", "UP"])}
+        W = {E0 + 900: C._both_sides(t, bid, ask, fn=lambda *a: C.window_confirm(*a, X=(0.55, 0.65)))}
+        rows = C.confirm_rows(W, O, lambda e: True, 1)                   # buy UP once its bid reaches 0.65
+        self.assertEqual(rows, [(True, 0.68, 0.70)])
+        self.assertEqual(C.confirm_rows(W, O, lambda e: False, 1), [])   # DOWN never gets there
+
     def test_eval_runs(self):
         E, U = series(288 * 70, 0.48)
         with tempfile.TemporaryDirectory() as d:

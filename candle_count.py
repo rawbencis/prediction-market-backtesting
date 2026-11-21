@@ -203,21 +203,53 @@ def window_dips(t, bid, ask, P=DIP_P, t0=DIP_T0):
     return (last(bid), last(ask), np.array([first(ca, p + 1e-9) for p in P]), np.array([first(cb, p - 0.005) for p in P]))
 
 
-def _both_sides(t, ub, ua, db=None, da=None):
+def window_confirm(t, bid, ask, X=None, t0=DIP_T0, lat=500):
+    """One side of one window: 'buy it once the price agrees'. Per level X: the first time after t0 that this side's
+    best bid is at or above X, having been below X at t0.
+    -> (bid0, tx, a0, a1): tx = that time (NEVER if none, -1 if already at or above X at t0), a0 = the ask standing
+       then, a1 = the ask standing `lat` ms later (nan if there is none)."""
+    X = CONF_X if X is None else X
+    j0 = int(np.searchsorted(t, t0, "right")) - 1
+    nx = len(X)
+    if j0 < 0:
+        return np.nan, np.full(nx, NEVER), np.full(nx, np.nan), np.full(nx, np.nan)
+    ok = ~np.isnan(ask)
+    last = np.maximum.accumulate(np.where(ok, np.arange(len(t)), -1))       # index of the last valid ask so far
+    ask_at = lambda j: ask[last[j]] if j >= 0 and last[j] >= 0 else np.nan  # noqa: E731
+    kb = np.flatnonzero(~np.isnan(bid[:j0 + 1]))
+    bid0 = bid[kb[-1]] if len(kb) else np.nan
+    b = np.where(np.isnan(bid), -np.inf, bid)
+    cm = np.maximum.accumulate(b[j0 + 1:]) if j0 + 1 < len(t) else np.zeros(0)
+    tx, a0, a1 = np.full(nx, NEVER), np.full(nx, np.nan), np.full(nx, np.nan)
+    for i, x in enumerate(X):
+        if not np.isnan(bid0) and bid0 >= x - 1e-9:
+            tx[i] = -1
+        elif len(cm) and cm[-1] >= x - 1e-9:
+            k = j0 + 1 + int(np.argmax(cm >= x - 1e-9))
+            tx[i], a0[i] = t[k], ask_at(k)
+            a1[i] = ask_at(int(np.searchsorted(t, t[k] + lat, "right")) - 1)
+    return bid0, tx, a0, a1
+
+
+CONF_X = (0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85)
+
+
+def _both_sides(t, ub, ua, db=None, da=None, fn=None):
     """-> {True: UP result, False: DOWN result}. Without a DOWN book it is the mirror of UP's."""
     db, da = (1 - ua, 1 - ub) if db is None else (db, da)
-    return {True: window_dips(t, ub, ua), False: window_dips(t, db, da)}
+    fn = fn or window_dips
+    return {True: fn(t, ub, ua), False: fn(t, db, da)}
 
 
-def cache_paths(cache):
+def cache_paths(cache, fn=None):
     from same_token_wf2 import done_days, markets
     nan = lambda v: np.where(v < 0, np.nan, v / 1000.0)  # noqa: E731
     for ddir in done_days(Path(cache)):
         for e, m in markets(ddir):
-            yield e, _both_sides(m["t"] // 1000, nan(m["bid"][:, 0]), nan(m["ask"][:, 0]), nan(m["bid"][:, 1]), nan(m["ask"][:, 1]))
+            yield e, _both_sides(m["t"] // 1000, nan(m["bid"][:, 0]), nan(m["ask"][:, 0]), nan(m["bid"][:, 1]), nan(m["ask"][:, 1]), fn)
 
 
-def rec_paths(root, files=None):
+def rec_paths(root, files=None, fn=None):
     """BTC 5m windows from shadow_rec hour files (UP book only). A window is emitted once a later hour is read."""
     acc = {}
 
@@ -225,7 +257,7 @@ def rec_paths(root, files=None):
         r = np.concatenate(acc.pop(e))
         r = r[np.lexsort((r["l"], r["x"]))]
         nz = lambda v: np.where(v == 0, np.nan, v / 1e4)  # noqa: E731   0 = no quote / gap marker
-        return e, _both_sides(r["x"] - e * 1000, nz(r["b"].astype(float)), nz(r["k"].astype(float)))
+        return e, _both_sides(r["x"] - e * 1000, nz(r["b"].astype(float)), nz(r["k"].astype(float)), fn=fn)
 
     for f in files or sorted(Path(root).glob("????-??-??/pm-*.bin")):
         r = np.fromfile(f, dtype=PM_DT, count=f.stat().st_size // PM_DT.itemsize)
@@ -379,6 +411,58 @@ def dip_sequences(W, O, K, pi, scheme, cap, t1=None):
             nloss += 1
     close()
     return out
+
+
+def confirm_rows(W, O, sig, xi, fee=0.05, t1=None):
+    """Taker buy of the chosen side once its bid has risen to X. -> list of (win, ask then, ask 500 ms later);
+    the edge of a row is win - ask - fee * ask * (1 - ask)."""
+    out, t1 = [], (STEP - 30) * 1000 if t1 is None else t1
+    for e in sorted(W):
+        if e not in O or e - STEP not in O:
+            continue
+        side = sig(e)
+        if side is None:
+            continue
+        _, tx, a0, a1 = W[e][side]
+        if 0 <= tx[xi] <= t1 and not np.isnan(a0[xi]) and a0[xi] < 0.995:
+            out.append(((O[e] == "UP") == side, a0[xi], a1[xi]))
+    return out
+
+
+def cmd_confirm(a):
+    O = read(a.outcomes)
+    run = lambda lo, hi, with_it: (lambda e: None if not lo <= streak_before(O, e) <= hi  # noqa: E731
+                                   else (O[e - STEP] == "UP") == with_it)
+    S = {"run of 1-2: the side AGAINST it (no signal)": run(1, 2, False), "run of 1-2: the side WITH it (no signal)": run(1, 2, True),
+         "run of 3+: the reversal side": run(3, 99, False), "run of 3+: the side WITH the run": run(3, 99, True),
+         "run of 4+: the reversal side": run(4, 99, False), "run of 4+: the side WITH the run": run(4, 99, True),
+         "run of 5+: the reversal side": run(5, 99, False), "run of 5+: the side WITH the run": run(5, 99, True)}
+    fee = lambda p: a.fee * p * (1 - p)  # noqa: E731
+    for src, it in (("June-July book cache", a.cache and cache_paths(a.cache, window_confirm)),
+                    ("recordings " + str(a.rec), a.rec and rec_paths(a.rec, fn=window_confirm))):
+        if not it:
+            continue
+        W = {e: w for e, w in it if e in O}
+        print(f"\n=== {src}, {ASSET} {TF}m: {len(W)} windows. Buy a side as a TAKER the first time its best bid rises to X (from below,"
+              f"\n    2 s after the open to 30 s before the close), at the ask standing then / 500 ms later, fee {a.fee} p (1-p)."
+              f"\n    Edge = wins - price paid - fee, cents per share +- 1 SE. Not modelled: the taker hold, quotes pulled while"
+              f"\n    our order is held, size. Live, taker orders sent on a move filled ~11% of the time and at worse prices.")
+        for name, sig in S.items():
+            print(f"\n  {name}")
+            print("     X     buys   paid   wins     edge at the trigger      edge 500 ms later        (bought 500 ms later)")
+            for xi, X in enumerate(CONF_X):
+                R = confirm_rows(W, O, sig, xi, a.fee)
+                if len(R) < 30:
+                    continue
+                w, p0 = np.array([r[0] for r in R], float), np.array([r[1] for r in R])
+                e0 = 100 * (w - p0 - fee(p0))
+                k = np.array([not np.isnan(r[2]) and r[2] < 0.995 for r in R])
+                p1 = np.array([r[2] for r in R])[k]
+                e1 = 100 * (w[k] - p1 - fee(p1))
+                se = lambda v: v.std() / np.sqrt(len(v))  # noqa: E731
+                print(f"     {X:.2f} {len(R):6d}  {p0.mean():.3f}  {w.mean():.3f}   {e0.mean():+6.2f} +-{se(e0):4.2f} z{e0.mean() / se(e0):+5.1f}   "
+                      f"{e1.mean():+6.2f} +-{se(e1):4.2f} z{e1.mean() / se(e1):+5.1f}   ({len(p1)}, paid {p1.mean():.3f})")
+        print(f"  cells: {len(S) * len(CONF_X)}; expect ~{len(S) * len(CONF_X) // 20} beyond 2 SE by chance.")
 
 
 def cmd_dip(a):
@@ -556,7 +640,11 @@ if __name__ == "__main__":
     d.add_argument("--outcomes", type=Path, required=True), d.add_argument("--cache", type=Path), d.add_argument("--rec", type=Path)
     d.add_argument("--lighter", type=Path)
     d.set_defaults(fn=cmd_dip)
-    for q in (f, e, d):
+    c = sp.add_parser("confirm")
+    c.add_argument("--outcomes", type=Path, required=True), c.add_argument("--cache", type=Path), c.add_argument("--rec", type=Path)
+    c.add_argument("--fee", type=float, default=0.05)
+    c.set_defaults(fn=cmd_confirm)
+    for q in (f, e, d, c):
         q.add_argument("--asset", default="btc", choices=("btc", "eth", "sol", "xrp", "doge")), q.add_argument("--tf", type=int, default=5)
     a = ap.parse_args()
     ASSET, TF = a.asset, a.tf
