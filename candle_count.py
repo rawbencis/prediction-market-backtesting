@@ -413,6 +413,88 @@ def dip_sequences(W, O, K, pi, scheme, cap, t1=None):
     return out
 
 
+OFF_K = (0, 1, 2, 3, 4, 5, 7, 10)     # ticks below the best bid
+
+
+def window_offsets(t, bid, ask, ks=OFF_K, every=20_000, rest=60_000, first=5_000, last=None):
+    """One side of one window: every `every` ms place a bid k ticks below this side's best bid and rest it `rest` ms.
+    -> list of (k index, price, strict fill, loose fill). strict: the ask came down to our price (certain fill).
+    loose: or the best bid fell below our price (everything at or above us is gone)."""
+    last = (STEP - 75) * 1000 if last is None else last
+    a = np.where(np.isnan(ask), np.inf, ask)
+    b = np.where(np.isnan(bid), np.inf, bid)
+    out = []
+    for tau in range(first, last + 1, every):
+        j = int(np.searchsorted(t, tau, "right")) - 1
+        if j < 0 or np.isnan(bid[j]) or np.isnan(ask[j]) or ask[j] <= bid[j]:
+            continue
+        j2 = int(np.searchsorted(t, tau + rest, "right"))
+        if j2 <= j + 1:
+            amin = bmin = np.inf
+        else:
+            amin, bmin = a[j + 1:j2].min(), b[j + 1:j2].min()
+        for ki, k in enumerate(ks):
+            P = round(float(bid[j]) - 0.01 * k, 2)
+            if P < 0.02:
+                break
+            strict = amin <= P + 1e-9
+            out.append((ki, P, bool(strict), bool(strict or bmin < P - 0.005)))
+    return out
+
+
+def cmd_offset(a):
+    O = read(a.outcomes)
+    bands = (("all prices", 0.0, 1.0), ("our price 40c or more (the bid40 rule)", 0.40, 1.0), ("our price under 40c", 0.0, 0.40))
+    for src, it in (("June-July book cache", a.cache and cache_paths(a.cache, window_offsets)),
+                    ("recordings " + str(a.rec), a.rec and rec_paths(a.rec, fn=window_offsets))):
+        if not it:
+            continue
+        # cell -> [placements, per-window list of (sum of win - P over fills, fills)] for strict and loose
+        C_ = {}
+        nw = 0
+        for e, w in it:
+            if e not in O:
+                continue
+            nw += 1
+            acc = {}
+            for side in (True, False):
+                win = float((O[e] == "UP") == side)
+                for ki, P, st, lo in w[side]:
+                    for bi, (_, lo_p, hi_p) in enumerate(bands):
+                        if lo_p <= P < hi_p:
+                            c = acc.setdefault((bi, ki), [0, 0.0, 0, 0.0, 0])
+                            c[0] += 1
+                            if st:
+                                c[1] += win - P
+                                c[2] += 1
+                            if lo:
+                                c[3] += win - P
+                                c[4] += 1
+            for key, c in acc.items():
+                C_.setdefault(key, []).append(c)
+        print(f"\n=== {src}, {ASSET} {TF}m: {nw} windows. Every 20 s, on each side, a bid k ticks below that side's best bid, resting"
+              f"\n    60 s, held to settlement. Edge = wins - our price, cents per filled share, +- 1 SE (by window). No fee, no rebate."
+              f"\n    strict: the ask came down to our price. loose: or the best bid fell below it. k = 0 is joining the bid, where"
+              f"\n    both rules miss fills taken while the bid holds, so k = 0 is a floor on fills, not the live bot's result.")
+        for bi, (name, _, _) in enumerate(bands):
+            print(f"\n  {name}")
+            print("     ticks below  orders   fill% strict   edge strict            fill% loose   edge loose")
+            for ki, k in enumerate(OFF_K):
+                rows = np.array(C_.get((bi, ki), []), float)
+                if not len(rows) or rows[:, 2].sum() < 30:
+                    continue
+                def stat(xc, nc):
+                    n = rows[:, nc].sum()
+                    m = rows[:, xc].sum() / n
+                    se = np.sqrt(((rows[:, xc] - m * rows[:, nc]) ** 2).sum()) / n
+                    return n, 100 * m, 100 * se
+                n1, m1, s1 = stat(1, 2)
+                n2, m2, s2 = stat(3, 4)
+                pl = rows[:, 0].sum()
+                print(f"     {k:5d}      {int(pl):8d}   {100 * n1 / pl:6.1f}      {m1:+6.2f} +-{s1:4.2f} z{m1 / s1:+5.1f}      {100 * n2 / pl:6.1f}      {m2:+6.2f} +-{s2:4.2f} z{m2 / s2:+5.1f}")
+        print(f"  cells: {len(bands) * len(OFF_K) * 2}; expect ~{len(bands) * len(OFF_K) * 2 // 20} beyond 2 SE by chance.")
+
+
 def confirm_rows(W, O, sig, xi, fee=0.05, t1=None):
     """Taker buy of the chosen side once its bid has risen to X. -> list of (win, ask then, ask 500 ms later);
     the edge of a row is win - ask - fee * ask * (1 - ask)."""
@@ -644,7 +726,10 @@ if __name__ == "__main__":
     c.add_argument("--outcomes", type=Path, required=True), c.add_argument("--cache", type=Path), c.add_argument("--rec", type=Path)
     c.add_argument("--fee", type=float, default=0.05)
     c.set_defaults(fn=cmd_confirm)
-    for q in (f, e, d, c):
+    o = sp.add_parser("offset")
+    o.add_argument("--outcomes", type=Path, required=True), o.add_argument("--cache", type=Path), o.add_argument("--rec", type=Path)
+    o.set_defaults(fn=cmd_offset)
+    for q in (f, e, d, c, o):
         q.add_argument("--asset", default="btc", choices=("btc", "eth", "sol", "xrp", "doge")), q.add_argument("--tf", type=int, default=5)
     a = ap.parse_args()
     ASSET, TF = a.asset, a.tf

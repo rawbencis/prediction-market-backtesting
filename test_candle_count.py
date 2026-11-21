@@ -168,6 +168,19 @@ class T(unittest.TestCase):
         self.assertEqual(rows, [(True, 0.68, 0.70)])
         self.assertEqual(C.confirm_rows(W, O, lambda e: False, 1), [])   # DOWN never gets there
 
+    def test_window_offsets(self):
+        t = np.array([0, 4000, 30000, 50000, 90000])
+        bid = np.array([0.50, 0.50, 0.47, 0.44, 0.50])
+        ask = np.array([0.52, 0.52, 0.49, 0.46, 0.52])
+        r = C.window_offsets(t, bid, ask, ks=(0, 2, 4, 5, 7), every=100_000, rest=60_000, first=5_000, last=5_000)
+        # placed at 5 s off a 0.50 bid; in the next 60 s the ask comes down to 0.46 and the bid to 0.44
+        self.assertEqual(r, [(0, 0.50, True, True), (1, 0.48, True, True), (2, 0.46, True, True),
+                             (3, 0.45, False, True), (4, 0.43, False, False)])   # 0.45: not traded through, but left as the best bid
+        r = C.window_offsets(t, bid, ask, ks=(5, 6), every=100_000, rest=20_000, first=31_000, last=31_000)
+        self.assertEqual(r, [(0, 0.42, False, False), (1, 0.41, False, False)])   # off 0.47; the bid only falls to 0.44
+        r = C.window_offsets(t, bid, ask, ks=(2, 3), every=100_000, rest=20_000, first=31_000, last=31_000)
+        self.assertEqual(r, [(0, 0.45, False, True), (1, 0.44, False, False)])
+
     def test_eval_runs(self):
         E, U = series(288 * 70, 0.48)
         with tempfile.TemporaryDirectory() as d:
