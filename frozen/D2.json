@@ -1,0 +1,16 @@
+{
+  "name": "D2 level-map cells, Dublin, frozen 2026-11-24 ~00:05 UTC before any 11-19..23 D2 sample was generated",
+  "code": "dublin1124/d2_samples.py (sampler) + dublin1124/d2_cells.py (cells); this commit",
+  "definitions": "see d2_samples.py docstring: S = Binance spot as received; K = Chainlink twap60 at the start second (+-2 s) else 60 s Binance mean; sigma_l 30 min / sigma_s 60 s of 1 s log returns; tau_eff = tau - 40 (tau >= 60); z = ln(S/K)/(sigma_l sqrt(tau_eff)) toward the side; r = sigma_s/sigma_l; samples every 5 s from open+10 s to close-10 s; one taker BUY per window per side per cell (first sample); FAK at the ask seen, matched at exchange time t+205 ms against the standing top of book with >= 5 shown; pessimistic fill also needs >= 5 shown at the paid price at t+305 ms; fee 0.05 p(1-p); cell code = 100*z_bucket + 10*tau_bucket + r_bucket",
+  "cells": [
+    {"id": "D2-A", "market": "btc 5m", "code": 612, "z": ">2", "tau": "[60,120)", "r": ">1.4",
+     "dev": {"windows": 127, "edge_net_c": 6.78, "se_c": 2.01, "edge_net_pess_c": 6.47, "fill": 0.84}},
+    {"id": "D2-B", "market": "btc 5m", "code": 622, "z": ">2", "tau": "[120,180)", "r": ">1.4",
+     "dev": {"windows": 144, "edge_net_c": 5.87, "se_c": 1.77, "edge_net_pess_c": 5.16, "fill": 0.79}},
+    {"id": "D2-C", "market": "btc 15m", "code": 622, "z": ">2", "tau": "[120,180)", "r": ">1.4",
+     "dev": {"windows": 32, "edge_net_c": 6.01, "se_c": 2.32, "edge_net_pess_c": 4.71, "fill": 0.84}}
+  ],
+  "dev": "2026-11-14..18", "holdout": "2026-11-19..23, read once",
+  "pass": "holdout edge_net >= +1.0 c/share AND edge_net / SE >= 2 (live fill); pessimistic-fill edge_net also > 0",
+  "kill": "anything else"
+}
