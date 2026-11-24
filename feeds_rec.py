@@ -1,8 +1,11 @@
 """Extra feed recorder (Dublin): Chainlink spot + 60 s TWAP (legacy RTDS), Coinbase, Deribit, Polymarket BTC 5m/15m depth.
 Hourly gzip JSONL under OUT/YYYY-MM-DD/<feed>-HH.jsonl.gz. Row: {"r": local ns, "x": venue ms, ...}. Read-only, no keys.
-Usage: python feeds_rec.py --out ~/feeds-rec
+Usage: python feeds_rec.py --out ~/feeds-rec [--keep-days 30] [--no-coinbase] [--no-deribit] [--no-pmbook]
+  --keep-days N  delete OUT/YYYY-MM-DD folders older than N days (checked at start and hourly; 0 = never)
+  --no-coinbase / --no-deribit / --no-pmbook  do not open that stream (Chainlink and TWAP60 are always on)
 """
-import argparse, asyncio, gzip, json, time, urllib.request
+import argparse, asyncio, gzip, json, shutil, time, urllib.request
+from datetime import timedelta, timezone
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -264,23 +267,48 @@ async def pm_sched(out):
         await asyncio.sleep(1)
 
 
-async def housekeeping(out):
+def prune(root, keep):
+    if keep <= 0:
+        return
+    cut = (datetime.now(timezone.utc) - timedelta(days=keep)).date().isoformat()
+    for d in Path(root).glob("????-??-??"):
+        if d.is_dir() and d.name < cut:
+            shutil.rmtree(d)
+            log("pruned", d.name)
+
+
+async def housekeeping(out, keep=0):
     k = 0
+    prune(out.root, keep)
     while True:
         await asyncio.sleep(5)
         out.flush()
         k += 1
         if k % 60 == 0:
             log("rows", dict(out.n), "stats", dict(STATS))
+        if k % 720 == 360:  # hourly
+            prune(out.root, keep)
 
 
 async def run(a):
     out = Out(a.out)
-    await asyncio.gather(keep("rtds", rtds, out), keep("coinbase", coinbase, out), keep("deribit", deribit, out),
-                         pm_sched(out), housekeeping(out))
+    jobs = [keep("rtds", rtds, out), housekeeping(out, a.keep_days)]
+    if not a.no_coinbase:
+        jobs.append(keep("coinbase", coinbase, out))
+    if not a.no_deribit:
+        jobs.append(keep("deribit", deribit, out))
+    if not a.no_pmbook:
+        jobs.append(pm_sched(out))
+    log("start", {"out": a.out, "keep_days": a.keep_days, "coinbase": not a.no_coinbase, "deribit": not a.no_deribit,
+                  "pmbook": not a.no_pmbook})
+    await asyncio.gather(*jobs)
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(Path.home() / "feeds-rec"))
+    ap.add_argument("--keep-days", type=int, default=30, help="delete day folders older than this (0 = never)")
+    ap.add_argument("--no-coinbase", action="store_true")
+    ap.add_argument("--no-deribit", action="store_true")
+    ap.add_argument("--no-pmbook", action="store_true", help="also drops the BTC/ETH 1h pmbook1h stream")
     asyncio.run(run(ap.parse_args()))
