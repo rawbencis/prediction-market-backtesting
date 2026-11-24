@@ -1,0 +1,98 @@
+=== 
+truncated: rec_20261112_21.jsonl.gz after 4242 rows (EOFError)
+truncated: rec_20261113_11.jsonl.gz after 7339 rows (error)
+truncated: rec_20261113_23.jsonl.gz after 1245585 rows (EOFError)
+params {'SIZE': 50, 'MAX_INV': 250, 'MIN_EDGE': 0.02, 'MIN_SPREAD': 0.02, 'PMIN': 0.05, 'PMAX': 0.97, 'IMPROVE': 1, 'LAT': 0.3, 'PULL_SIG': 2.0, 'STOP_H': 1.0, 'QUEUE': 'prop'}
+{
+ "t": 1794612093,
+ "total": -144.09,
+ "spread": 249.41,
+ "settle": -124.66,
+ "rebate": 20.92,
+ "unreal": -289.76,
+ "inv_cost": 1728.61,
+ "cash": -1603.87,
+ "mkts": 57,
+ "live_orders": 21,
+ "n_touch": 3,
+ "n_xB": 514,
+ "n_fillS": 41,
+ "n_xS": 252,
+ "n_fillB": 67,
+ "n_settle": 1
+}
+day            n picked    volume   spread   settle      net
+2026-11-13   874    766      9718   249.41  -124.66   124.75
+=== LAT=1 PULL_SIG=3 SIZE=100 QUEUE=trades
+truncated: rec_20261112_21.jsonl.gz after 4242 rows (EOFError)
+truncated: rec_20261113_11.jsonl.gz after 7339 rows (error)
+truncated: rec_20261113_23.jsonl.gz after 1245585 rows (EOFError)
+params {'SIZE': 100, 'MAX_INV': 250, 'MIN_EDGE': 0.02, 'MIN_SPREAD': 0.02, 'PMIN': 0.05, 'PMAX': 0.97, 'IMPROVE': 1, 'LAT': 1.0, 'PULL_SIG': 3.0, 'STOP_H': 1.0, 'QUEUE': 'trades'}
+{
+ "t": 1794612093,
+ "total": 74.14,
+ "spread": 200.35,
+ "settle": 0.0,
+ "rebate": 18.96,
+ "unreal": -145.17,
+ "inv_cost": 2051.3,
+ "cash": -1850.95,
+ "mkts": 57,
+ "live_orders": 20,
+ "n_touch": 3,
+ "n_xB": 404,
+ "n_xS": 295,
+ "n_fillS": 14,
+ "n_fillB": 16
+}
+day            n picked    volume   spread   settle      net
+2026-11-13   729    699      9883   200.35     0.00   200.35
+=== LAT=1 PULL_SIG=3 SIZE=100 QUEUE=prop
+truncated: rec_20261112_21.jsonl.gz after 4242 rows (EOFError)
+truncated: rec_20261113_11.jsonl.gz after 7339 rows (error)
+truncated: rec_20261113_23.jsonl.gz after 1245585 rows (EOFError)
+params {'SIZE': 100, 'MAX_INV': 250, 'MIN_EDGE': 0.02, 'MIN_SPREAD': 0.02, 'PMIN': 0.05, 'PMAX': 0.97, 'IMPROVE': 1, 'LAT': 1.0, 'PULL_SIG': 3.0, 'STOP_H': 1.0, 'QUEUE': 'prop'}
+{
+ "t": 1794612093,
+ "total": 75.1,
+ "spread": 201.21,
+ "settle": 0.0,
+ "rebate": 18.98,
+ "unreal": -145.09,
+ "inv_cost": 2037.01,
+ "cash": -1835.8,
+ "mkts": 57,
+ "live_orders": 19,
+ "n_touch": 3,
+ "n_xB": 404,
+ "n_fillS": 15,
+ "n_fillB": 17,
+ "n_xS": 294
+}
+day            n picked    volume   spread   settle      net
+2026-11-13   730    698      9906   201.21     0.00   201.21
+=== LAT=0.3 PULL_SIG=4 SIZE=50 QUEUE=trades
+truncated: rec_20261112_21.jsonl.gz after 4242 rows (EOFError)
+truncated: rec_20261113_11.jsonl.gz after 7339 rows (error)
+truncated: rec_20261113_23.jsonl.gz after 1245585 rows (EOFError)
+params {'SIZE': 50, 'MAX_INV': 250, 'MIN_EDGE': 0.02, 'MIN_SPREAD': 0.02, 'PMIN': 0.05, 'PMAX': 0.97, 'IMPROVE': 1, 'LAT': 0.3, 'PULL_SIG': 4.0, 'STOP_H': 1.0, 'QUEUE': 'trades'}
+{
+ "t": 1794612093,
+ "total": 64.02,
+ "spread": 51.02,
+ "settle": 0.0,
+ "rebate": 6.5,
+ "unreal": 6.5,
+ "inv_cost": 852.05,
+ "cash": -801.03,
+ "mkts": 57,
+ "live_orders": 13,
+ "n_touch": 3,
+ "n_xB": 119,
+ "n_xS": 67,
+ "n_fillS": 10,
+ "n_fillB": 1
+}
+day            n picked    volume   spread   settle      net
+2026-11-13   197    186      3373    51.02     0.00    51.02
+OTDONE

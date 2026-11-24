@@ -1,0 +1,325 @@
+17304 markets / 61 days 2026-06-01..2026-07-31 (dev 45d, hold 13d)
+P(outcome == previous outcome) = 0.48531881623906875
+
+ATLAS (flat 1-share rung, cancel 300s, s=5, step 10/30): milli/share gross | +rebate
+  through st10 rungs   0-0 px  200-399 dev  n=   1894   -34.09 |   -30.91  se 10.67
+  through st10 rungs   0-0 px  200-399 hold n=    449    -1.58 |     1.59  se 22.41
+  through st10 rungs   0-0 px  400-599 dev  n=  19861    -43.3 |   -39.83  se 3.52
+  through st10 rungs   0-0 px  400-599 hold n=   5507    -44.7 |   -41.23  se 6.68
+  through st10 rungs   0-0 px  600-799 dev  n=   1722   -29.86 |   -26.64  se 11.74
+  through st10 rungs   0-0 px  600-799 hold n=    428   -50.12 |   -46.91  se 23.71
+  through st10 rungs   1-2 px  200-399 dev  n=   5350   -33.73 |   -30.55  se 6.35
+  through st10 rungs   1-2 px  200-399 hold n=   1264   -26.27 |    -23.1  se 13.17
+  through st10 rungs   1-2 px  400-599 dev  n=  37957   -43.14 |   -39.67  se 2.54
+  through st10 rungs   1-2 px  400-599 hold n=  10534   -44.64 |   -41.17  se 4.82
+  through st10 rungs   1-2 px  600-799 dev  n=   2402   -28.03 |   -24.81  se 9.94
+  through st10 rungs   1-2 px  600-799 hold n=    617   -42.88 |   -39.67  se 19.71
+  through st10 rungs   3-5 px    0-199 dev  n=     74   -30.95 |   -29.02  se 39.39
+  through st10 rungs   3-5 px  200-399 dev  n=  11954   -33.81 |   -30.66  se 4.23
+  through st10 rungs   3-5 px  200-399 hold n=   2937    -22.5 |   -19.34  se 8.62
+  through st10 rungs   3-5 px  400-599 dev  n=  51669   -44.06 |    -40.6  se 2.17
+  through st10 rungs   3-5 px  400-599 hold n=  14333   -46.85 |   -43.38  se 4.11
+  through st10 rungs   3-5 px  600-799 dev  n=   1925   -19.12 |   -15.88  se 11.07
+  through st10 rungs   3-5 px  600-799 hold n=    532   -46.86 |   -43.62  se 21.31
+  through st10 rungs  6-11 px    0-199 dev  n=    680   -37.79 |   -35.88  se 12.67
+  through st10 rungs  6-11 px    0-199 hold n=    161   -66.27 |   -64.41  se 22.73
+  through st10 rungs  6-11 px  200-399 dev  n=  49226   -38.13 |    -35.0  se 2.07
+  through st10 rungs  6-11 px  200-399 hold n=  13059   -24.82 |   -21.67  se 4.08
+  through st10 rungs  6-11 px  400-599 dev  n=  70571    -45.0 |   -41.56  se 1.84
+  through st10 rungs  6-11 px  400-599 hold n=  19802   -45.55 |   -42.12  se 3.47
+  through st10 rungs  6-11 px  600-799 dev  n=   1226   -24.05 |   -20.78  se 13.93
+  through st10 rungs  6-11 px  600-799 hold n=    314   -62.64 |   -59.38  se 27.94
+  through st30 rungs   0-0 px  200-399 dev  n=   1894   -34.09 |   -30.91  se 10.67
+  through st30 rungs   0-0 px  200-399 hold n=    449    -1.58 |     1.59  se 22.41
+  through st30 rungs   0-0 px  400-599 dev  n=  19861    -43.3 |   -39.83  se 3.52
+  through st30 rungs   0-0 px  400-599 hold n=   5507    -44.7 |   -41.23  se 6.68
+  through st30 rungs   0-0 px  600-799 dev  n=   1722   -29.86 |   -26.64  se 11.74
+  through st30 rungs   0-0 px  600-799 hold n=    428   -50.12 |   -46.91  se 23.71
+  through st30 rungs   1-2 px    0-199 dev  n=     65   -43.38 |   -41.45  se 40.46
+  through st30 rungs   1-2 px  200-399 dev  n=   8879   -33.45 |   -30.29  se 4.91
+  through st30 rungs   1-2 px  200-399 hold n=   2176   -17.31 |   -14.15  se 10.04
+  through st30 rungs   1-2 px  400-599 dev  n=  33236   -44.49 |   -41.04  se 2.7
+  through st30 rungs   1-2 px  400-599 hold n=   9293   -47.14 |   -43.68  se 5.1
+  through st30 rungs   1-2 px  600-799 dev  n=   1201   -22.51 |   -19.27  se 14.04
+  through st30 rungs   1-2 px  600-799 hold n=    325   -43.94 |   -40.69  se 27.25
+  through st30 rungs   3-5 px    0-199 dev  n=    852   -23.44 |   -21.59  se 11.66
+  through st30 rungs   3-5 px    0-199 hold n=    218   -50.09 |   -48.22  se 21.04
+  through st30 rungs   3-5 px  200-399 dev  n=  35725   -38.93 |   -35.84  se 2.4
+  through st30 rungs   3-5 px  200-399 hold n=   9822   -30.42 |   -27.33  se 4.64
+  through st30 rungs   3-5 px  400-599 dev  n=  20851    -47.1 |   -43.67  se 3.37
+  through st30 rungs   3-5 px  400-599 hold n=   5722    -44.0 |   -40.57  se 6.45
+  through st30 rungs   3-5 px  600-799 dev  n=    229   -30.96 |   -27.69  se 32.24
+  through st30 rungs   3-5 px  600-799 hold n=     60    -55.0 |   -51.71  se 63.84
+  through st30 rungs  6-11 px    0-199 dev  n=  28708   -27.28 |   -25.58  se 1.88
+  through st30 rungs  6-11 px    0-199 hold n=   7550   -21.01 |   -19.28  se 3.78
+  through st30 rungs  6-11 px  200-399 dev  n=  63338   -37.09 |   -34.34  se 1.68
+  through st30 rungs  6-11 px  200-399 hold n=  17588   -38.37 |   -35.62  se 3.18
+  through st30 rungs  6-11 px  400-599 dev  n=   3464    -39.1 |   -35.68  se 8.28
+  through st30 rungs  6-11 px  400-599 hold n=    886   -37.72 |   -34.29  se 16.43
+  touch   st10 rungs   0-0 px  200-399 dev  n=   1916   -26.05 |   -22.88  se 10.69
+  touch   st10 rungs   0-0 px  200-399 hold n=    456     8.29 |    11.46  se 22.38
+  touch   st10 rungs   0-0 px  400-599 dev  n=  20302   -31.47 |    -28.0  se 3.49
+  touch   st10 rungs   0-0 px  400-599 hold n=   5655   -30.57 |    -27.1  se 6.61
+  touch   st10 rungs   0-0 px  600-799 dev  n=   1776   -18.02 |    -14.8  se 11.5
+  touch   st10 rungs   0-0 px  600-799 hold n=    440   -38.66 |   -35.45  se 23.3
+  touch   st10 rungs   1-2 px  200-399 dev  n=   5436    -23.0 |   -19.82  se 6.36
+  touch   st10 rungs   1-2 px  200-399 hold n=   1287   -14.13 |   -10.96  se 13.17
+  touch   st10 rungs   1-2 px  400-599 dev  n=  38639   -33.38 |   -29.91  se 2.52
+  touch   st10 rungs   1-2 px  400-599 hold n=  10732   -34.32 |   -30.85  se 4.79
+  touch   st10 rungs   1-2 px  600-799 dev  n=   2456    -19.3 |   -16.08  se 9.79
+  touch   st10 rungs   1-2 px  600-799 hold n=    626   -36.95 |   -33.73  se 19.52
+  touch   st10 rungs   3-5 px    0-199 dev  n=     74   -30.95 |   -29.02  se 39.39
+  touch   st10 rungs   3-5 px  200-399 dev  n=  12144   -23.13 |   -19.97  se 4.23
+  touch   st10 rungs   3-5 px  200-399 hold n=   2974   -14.03 |   -10.88  se 8.63
+  touch   st10 rungs   3-5 px  400-599 dev  n=  52632   -33.69 |   -30.23  se 2.15
+  touch   st10 rungs   3-5 px  400-599 hold n=  14590    -36.8 |   -33.34  se 4.08
+  touch   st10 rungs   3-5 px  600-799 dev  n=   1965   -11.27 |    -8.03  se 10.92
+  touch   st10 rungs   3-5 px  600-799 hold n=    553   -31.54 |   -28.29  se 20.77
+  touch   st10 rungs  6-11 px    0-199 dev  n=    688   -28.84 |   -26.93  se 12.97
+  touch   st10 rungs  6-11 px    0-199 hold n=    163   -55.15 |   -53.29  se 23.77
+  touch   st10 rungs  6-11 px  200-399 dev  n=  49917   -28.68 |   -25.55  se 2.07
+  touch   st10 rungs  6-11 px  200-399 hold n=  13236   -15.93 |   -12.79  se 4.08
+  touch   st10 rungs  6-11 px  400-599 dev  n=  71806   -34.87 |   -31.43  se 1.83
+  touch   st10 rungs  6-11 px  400-599 hold n=  20116    -36.5 |   -33.07  se 3.45
+  touch   st10 rungs  6-11 px  600-799 dev  n=   1261   -13.17 |    -9.91  se 13.66
+  touch   st10 rungs  6-11 px  600-799 hold n=    319   -55.58 |   -52.31  se 27.68
+  touch   st30 rungs   0-0 px  200-399 dev  n=   1916   -26.05 |   -22.88  se 10.69
+  touch   st30 rungs   0-0 px  200-399 hold n=    456     8.29 |    11.46  se 22.38
+  touch   st30 rungs   0-0 px  400-599 dev  n=  20302   -31.47 |    -28.0  se 3.49
+  touch   st30 rungs   0-0 px  400-599 hold n=   5655   -30.57 |    -27.1  se 6.61
+  touch   st30 rungs   0-0 px  600-799 dev  n=   1776   -18.02 |    -14.8  se 11.5
+  touch   st30 rungs   0-0 px  600-799 hold n=    440   -38.66 |   -35.45  se 23.3
+  touch   st30 rungs   1-2 px    0-199 dev  n=     67   -17.46 |   -15.53  se 43.2
+  touch   st30 rungs   1-2 px  200-399 dev  n=   9011   -23.39 |   -20.24  se 4.91
+  touch   st30 rungs   1-2 px  200-399 hold n=   2203    -9.49 |    -6.33  se 10.04
+  touch   st30 rungs   1-2 px  400-599 dev  n=  33823   -34.64 |   -31.18  se 2.68
+  touch   st30 rungs   1-2 px  400-599 hold n=   9446   -37.87 |   -34.42  se 5.07
+  touch   st30 rungs   1-2 px  600-799 dev  n=   1228   -14.09 |   -10.85  se 13.83
+  touch   st30 rungs   1-2 px  600-799 hold n=    332   -35.18 |   -31.94  se 26.88
+  touch   st30 rungs   3-5 px    0-199 dev  n=    862    -16.8 |   -14.95  se 11.83
+  touch   st30 rungs   3-5 px    0-199 hold n=    221    -38.1 |   -36.23  se 21.86
+  touch   st30 rungs   3-5 px  200-399 dev  n=  36221   -29.39 |   -26.31  se 2.41
+  touch   st30 rungs   3-5 px  200-399 hold n=   9957   -21.04 |   -17.94  se 4.65
+  touch   st30 rungs   3-5 px  400-599 dev  n=  21259    -35.6 |   -32.17  se 3.36
+  touch   st30 rungs   3-5 px  400-599 hold n=   5821   -34.05 |   -30.62  se 6.42
+  touch   st30 rungs   3-5 px  600-799 dev  n=    236   -19.36 |   -16.09  se 31.58
+  touch   st30 rungs   3-5 px  600-799 hold n=     61   -47.54 |   -44.25  se 63.23
+  touch   st30 rungs  6-11 px    0-199 dev  n=  29217   -18.98 |   -17.29  se 1.91
+  touch   st30 rungs  6-11 px    0-199 hold n=   7675   -13.02 |   -11.31  se 3.84
+  touch   st30 rungs  6-11 px  200-399 dev  n=  64153   -27.83 |   -25.07  se 1.69
+  touch   st30 rungs  6-11 px  200-399 hold n=  17820   -28.71 |   -25.96  se 3.2
+  touch   st30 rungs  6-11 px  400-599 dev  n=   3528   -28.17 |   -24.75  se 8.24
+  touch   st30 rungs  6-11 px  400-599 hold n=    895   -31.62 |   -28.19  se 16.39
+  level   st10 rungs   0-0 px  200-399 dev  n=   1923   -24.18 |    -21.0  se 10.68
+  level   st10 rungs   0-0 px  200-399 hold n=    456     8.29 |    11.46  se 22.38
+  level   st10 rungs   0-0 px  400-599 dev  n=  20439   -27.95 |   -24.48  se 3.48
+  level   st10 rungs   0-0 px  400-599 hold n=   5669   -29.41 |   -25.94  se 6.6
+  level   st10 rungs   0-0 px  600-799 dev  n=   1795   -14.03 |   -10.81  se 11.41
+  level   st10 rungs   0-0 px  600-799 hold n=    444   -34.91 |    -31.7  se 23.16
+  level   st10 rungs   1-2 px  200-399 dev  n=   5472    -19.0 |   -15.82  se 6.35
+  level   st10 rungs   1-2 px  200-399 hold n=   1288   -13.63 |   -10.46  se 13.17
+  level   st10 rungs   1-2 px  400-599 dev  n=  38941   -29.18 |   -25.72  se 2.51
+  level   st10 rungs   1-2 px  400-599 hold n=  10787   -31.73 |   -28.26  se 4.78
+  level   st10 rungs   1-2 px  600-799 dev  n=   2496   -13.26 |   -10.03  se 9.68
+  level   st10 rungs   1-2 px  600-799 hold n=    632   -33.47 |   -30.25  se 19.39
+  level   st10 rungs   3-5 px    0-199 dev  n=     75    -19.6 |   -17.67  se 40.47
+  level   st10 rungs   3-5 px  200-399 dev  n=  12229   -18.72 |   -15.57  se 4.23
+  level   st10 rungs   3-5 px  200-399 hold n=   2979   -12.92 |    -9.77  se 8.63
+  level   st10 rungs   3-5 px  400-599 dev  n=  53167   -28.15 |   -24.69  se 2.14
+  level   st10 rungs   3-5 px  400-599 hold n=  14692   -33.03 |   -29.57  se 4.07
+  level   st10 rungs   3-5 px  600-799 dev  n=   1999     -4.8 |    -1.56  se 10.79
+  level   st10 rungs   3-5 px  600-799 hold n=    559   -27.32 |   -24.08  se 20.62
+  level   st10 rungs  6-11 px    0-199 dev  n=    691   -28.05 |   -26.14  se 12.98
+  level   st10 rungs  6-11 px    0-199 hold n=    163   -55.15 |   -53.29  se 23.77
+  level   st10 rungs  6-11 px  200-399 dev  n=  50348   -22.93 |    -19.8  se 2.07
+  level   st10 rungs  6-11 px  200-399 hold n=  13310    -12.3 |    -9.16  se 4.08
+  level   st10 rungs  6-11 px  400-599 dev  n=  72604   -28.59 |   -25.15  se 1.82
+  level   st10 rungs  6-11 px  400-599 hold n=  20266    -32.3 |   -28.87  se 3.45
+  level   st10 rungs  6-11 px  600-799 dev  n=   1293    -3.67 |    -0.41  se 13.43
+  level   st10 rungs  6-11 px  600-799 hold n=    325   -47.82 |   -44.55  se 27.35
+  level   st30 rungs   0-0 px  200-399 dev  n=   1923   -24.18 |    -21.0  se 10.68
+  level   st30 rungs   0-0 px  200-399 hold n=    456     8.29 |    11.46  se 22.38
+  level   st30 rungs   0-0 px  400-599 dev  n=  20439   -27.95 |   -24.48  se 3.48
+  level   st30 rungs   0-0 px  400-599 hold n=   5669   -29.41 |   -25.94  se 6.6
+  level   st30 rungs   0-0 px  600-799 dev  n=   1795   -14.03 |   -10.81  se 11.41
+  level   st30 rungs   0-0 px  600-799 hold n=    444   -34.91 |    -31.7  se 23.16
+  level   st30 rungs   1-2 px    0-199 dev  n=     68    -5.15 |    -3.21  se 44.29
+  level   st30 rungs   1-2 px  200-399 dev  n=   9084   -18.21 |   -15.05  se 4.91
+  level   st30 rungs   1-2 px  200-399 hold n=   2206    -8.56 |     -5.4  se 10.04
+  level   st30 rungs   1-2 px  400-599 dev  n=  34183   -28.83 |   -25.37  se 2.67
+  level   st30 rungs   1-2 px  400-599 hold n=   9513   -34.04 |   -30.59  se 5.06
+  level   st30 rungs   1-2 px  600-799 dev  n=   1250    -7.21 |    -3.97  se 13.66
+  level   st30 rungs   1-2 px  600-799 hold n=    337   -29.73 |   -26.49  se 26.6
+  level   st30 rungs   3-5 px    0-199 dev  n=    867   -14.19 |   -12.33  se 11.88
+  level   st30 rungs   3-5 px    0-199 hold n=    221    -38.1 |   -36.23  se 21.86
+  level   st30 rungs   3-5 px  200-399 dev  n=  36558   -23.16 |   -20.08  se 2.41
+  level   st30 rungs   3-5 px  200-399 hold n=  10037   -15.75 |   -12.65  se 4.65
+  level   st30 rungs   3-5 px  400-599 dev  n=  21498   -29.09 |   -25.66  se 3.35
+  level   st30 rungs   3-5 px  400-599 hold n=   5862    -30.2 |   -26.78  se 6.4
+  level   st30 rungs   3-5 px  600-799 dev  n=    246    -3.41 |    -0.14  se 30.7
+  level   st30 rungs   3-5 px  600-799 hold n=     63   -33.49 |    -30.2  se 62.0
+  level   st30 rungs  6-11 px    0-199 dev  n=  29498    -13.1 |   -11.41  se 1.94
+  level   st30 rungs  6-11 px    0-199 hold n=   7749    -6.37 |    -4.65  se 3.9
+  level   st30 rungs  6-11 px  200-399 dev  n=  64846   -20.52 |   -17.77  se 1.7
+  level   st30 rungs  6-11 px  200-399 hold n=  17978   -22.96 |   -20.21  se 3.21
+  level   st30 rungs  6-11 px  400-599 dev  n=   3566   -21.81 |   -18.39  se 8.22
+  level   st30 rungs  6-11 px  400-599 hold n=    903   -26.63 |   -23.21  se 16.34
+  queue   st10 rungs   0-0 px  200-399 dev  n=   1972    -7.59 |    -4.41  se 10.68
+  queue   st10 rungs   0-0 px  200-399 hold n=    468    24.76 |    27.94  se 22.31
+  queue   st10 rungs   0-0 px  400-599 dev  n=  21596     0.15 |     3.62  se 3.39
+  queue   st10 rungs   0-0 px  400-599 hold n=   5996     -0.5 |     2.98  se 6.43
+  queue   st10 rungs   0-0 px  600-799 dev  n=   1907     8.22 |    11.44  se 10.94
+  queue   st10 rungs   0-0 px  600-799 hold n=    458   -22.86 |   -19.65  se 22.68
+  queue   st10 rungs   1-2 px  200-399 dev  n=   5529   -12.08 |     -8.9  se 6.35
+  queue   st10 rungs   1-2 px  200-399 hold n=   1307    -3.87 |     -0.7  se 13.17
+  queue   st10 rungs   1-2 px  400-599 dev  n=  39643   -19.66 |   -16.19  se 2.5
+  queue   st10 rungs   1-2 px  400-599 hold n=  11017   -20.42 |   -16.95  se 4.74
+  queue   st10 rungs   1-2 px  600-799 dev  n=   2552     -4.9 |    -1.67  se 9.53
+  queue   st10 rungs   1-2 px  600-799 hold n=    645   -25.26 |   -22.04  se 19.14
+  queue   st10 rungs   3-5 px    0-199 dev  n=     76    -8.42 |    -6.49  se 41.45
+  queue   st10 rungs   3-5 px  200-399 dev  n=  12397    -9.59 |    -6.43  se 4.23
+  queue   st10 rungs   3-5 px  200-399 hold n=   3016    -4.78 |    -1.62  se 8.62
+  queue   st10 rungs   3-5 px  400-599 dev  n=  53967   -19.93 |   -16.47  se 2.13
+  queue   st10 rungs   3-5 px  400-599 hold n=  14938    -23.8 |   -20.34  se 4.05
+  queue   st10 rungs   3-5 px  600-799 dev  n=   2027     0.32 |     3.55  se 10.68
+  queue   st10 rungs   3-5 px  600-799 hold n=    572    -18.6 |   -15.36  se 20.29
+  queue   st10 rungs  6-11 px    0-199 dev  n=    698   -20.49 |   -18.58  se 13.21
+  queue   st10 rungs  6-11 px    0-199 hold n=    164   -49.88 |   -48.02  se 24.21
+  queue   st10 rungs  6-11 px  200-399 dev  n=  50998   -14.39 |   -11.26  se 2.07
+  queue   st10 rungs  6-11 px  200-399 hold n=  13468     -4.6 |    -1.46  se 4.08
+  queue   st10 rungs  6-11 px  400-599 dev  n=  73744   -19.75 |   -16.31  se 1.82
+  queue   st10 rungs  6-11 px  400-599 hold n=  20560   -24.11 |   -20.68  se 3.43
+  queue   st10 rungs  6-11 px  600-799 dev  n=   1323     4.95 |     8.21  se 13.21
+  queue   st10 rungs  6-11 px  600-799 hold n=    333   -37.87 |    -34.6  se 26.92
+  queue   st30 rungs   0-0 px  200-399 dev  n=   1972    -7.59 |    -4.41  se 10.68
+  queue   st30 rungs   0-0 px  200-399 hold n=    468    24.76 |    27.94  se 22.31
+  queue   st30 rungs   0-0 px  400-599 dev  n=  21596     0.15 |     3.62  se 3.39
+  queue   st30 rungs   0-0 px  400-599 hold n=   5996     -0.5 |     2.98  se 6.43
+  queue   st30 rungs   0-0 px  600-799 dev  n=   1907     8.22 |    11.44  se 10.94
+  queue   st30 rungs   0-0 px  600-799 hold n=    458   -22.86 |   -19.65  se 22.68
+  queue   st30 rungs   1-2 px    0-199 dev  n=     69     6.67 |      8.6  se 45.19
+  queue   st30 rungs   1-2 px  200-399 dev  n=   9207    -9.34 |    -6.18  se 4.91
+  queue   st30 rungs   1-2 px  200-399 hold n=   2243     2.36 |     5.52  se 10.03
+  queue   st30 rungs   1-2 px  400-599 dev  n=  34718   -20.19 |   -16.74  se 2.66
+  queue   st30 rungs   1-2 px  400-599 hold n=   9647   -26.21 |   -22.75  se 5.03
+  queue   st30 rungs   1-2 px  600-799 dev  n=   1269    -1.55 |     1.69  se 13.52
+  queue   st30 rungs   1-2 px  600-799 hold n=    347   -18.33 |   -15.09  se 26.07
+  queue   st30 rungs   3-5 px    0-199 dev  n=    869   -13.35 |    -11.5  se 11.9
+  queue   st30 rungs   3-5 px    0-199 hold n=    224   -26.29 |   -24.43  se 22.61
+  queue   st30 rungs   3-5 px  200-399 dev  n=  37011    -14.8 |   -11.72  se 2.41
+  queue   st30 rungs   3-5 px  200-399 hold n=  10166    -7.32 |    -4.22  se 4.65
+  queue   st30 rungs   3-5 px  400-599 dev  n=  21861    -19.5 |   -16.07  se 3.33
+  queue   st30 rungs   3-5 px  400-599 hold n=   5953   -21.59 |   -18.16  se 6.37
+  queue   st30 rungs   3-5 px  600-799 dev  n=    251     4.38 |     7.65  se 30.29
+  queue   st30 rungs   3-5 px  600-799 hold n=     64   -27.03 |   -23.74  se 61.36
+  queue   st30 rungs  6-11 px    0-199 dev  n=  29947    -4.75 |    -3.07  se 1.98
+  queue   st30 rungs  6-11 px    0-199 hold n=   7869     2.85 |     4.56  se 3.97
+  queue   st30 rungs  6-11 px  200-399 dev  n=  65604   -12.09 |    -9.34  se 1.71
+  queue   st30 rungs  6-11 px  200-399 hold n=  18205   -13.72 |   -10.97  se 3.23
+  queue   st30 rungs  6-11 px  400-599 dev  n=   3621   -12.95 |    -9.53  se 8.18
+  queue   st30 rungs  6-11 px  400-599 hold n=    916   -18.17 |   -14.74  se 16.27
+
+prev-winner split: [{'model': 'through', 'cond': 'side_won_prev', 'n': 128956, 'milli': -46.03}, {'model': 'through', 'cond': 'side_lost_prev', 'n': 127460, 'milli': -37.2}, {'model': 'touch', 'cond': 'side_won_prev', 'n': 131197, 'milli': -35.73}, {'model': 'touch', 'cond': 'side_lost_prev', 'n': 129719, 'milli': -27.26}, {'model': 'level', 'cond': 'side_won_prev', 'n': 132445, 'milli': -30.14}, {'model': 'level', 'cond': 'side_lost_prev', 'n': 130933, 'milli': -22.17}, {'model': 'queue', 'cond': 'side_won_prev', 'n': 134861, 'milli': -19.77}, {'model': 'queue', 'cond': 'side_lost_prev', 'n': 133473, 'milli': -11.76}]
+
+FAMILIES (best = highest dev t-stat incl. rebates, >=300 markets with fills):
+  F1/level     n= 9968 devCI>0 gross 0 reb 0 (naive 5% 498.4) median -7.517c/$
+       best F1 s60 st50 c120 fib K12 pmax300 level
+       dev {'usd': np.float64(10357.52), 'c_per_usd': np.float64(8.596), 'ci': [np.float64(-0.352), np.float64(17.988)], 'usd_day': np.float64(230.17), 'vol_k_usd': np.float64(120485.6)}
+       hold {'usd': np.float64(4478.53), 'c_per_usd': np.float64(13.367), 'ci': [np.float64(-9.444), np.float64(34.122)], 'usd_day': np.float64(344.5)}
+       risk {'worst_mkt_usd': -323.35, 'cost_p99_usd': 121.25, 'cost_max_usd': 325.6}
+  F1/queue     n= 9972 devCI>0 gross 219 reb 536 (naive 5% 498.6) median -2.941c/$
+       best F1 s60 st10 c300 flat K1 pmax990 queue
+       dev {'usd': np.float64(466.79), 'c_per_usd': np.float64(0.742), 'ci': [np.float64(0.633), np.float64(0.85)], 'usd_day': np.float64(10.37), 'vol_k_usd': np.float64(62945.2)}
+       hold {'usd': np.float64(81.02), 'c_per_usd': np.float64(0.475), 'ci': [np.float64(0.246), np.float64(0.687)], 'usd_day': np.float64(6.23)}
+       risk {'worst_mkt_usd': -4.4, 'cost_p99_usd': 4.95, 'cost_max_usd': 5.7}
+  F1/through   n= 9964 devCI>0 gross 0 reb 0 (naive 5% 498.2) median -12.094c/$
+       best F1 s60 st50 c120 fib K12 pmax300 through
+       dev {'usd': np.float64(931.55), 'c_per_usd': np.float64(0.903), 'ci': [np.float64(-8.026), np.float64(10.18)], 'usd_day': np.float64(20.7), 'vol_k_usd': np.float64(103171.7)}
+       hold {'usd': np.float64(1483.42), 'c_per_usd': np.float64(5.062), 'ci': [np.float64(-14.328), np.float64(22.619)], 'usd_day': np.float64(114.11)}
+       risk {'worst_mkt_usd': -323.35, 'cost_p99_usd': 114.85, 'cost_max_usd': 325.6}
+  F1/touch     n= 9968 devCI>0 gross 0 reb 0 (naive 5% 498.4) median -8.687c/$
+       best F1 s60 st50 c120 fib K12 pmax300 touch
+       dev {'usd': np.float64(5458.23), 'c_per_usd': np.float64(4.729), 'ci': [np.float64(-3.926), np.float64(14.06)], 'usd_day': np.float64(121.29), 'vol_k_usd': np.float64(115427.8)}
+       hold {'usd': np.float64(2715.01), 'c_per_usd': np.float64(8.328), 'ci': [np.float64(-11.659), np.float64(26.881)], 'usd_day': np.float64(208.85)}
+       risk {'worst_mkt_usd': -323.35, 'cost_p99_usd': 121.0, 'cost_max_usd': 325.6}
+  F2/queue     n=   64 devCI>0 gross 32 reb 46 (naive 5% 3.2) median 1.128c/$
+       best F2 tgt1000 e500 mart2.0 stop285 queue
+       dev {'usd': np.float64(86945.59), 'c_per_usd': np.float64(1.554), 'ci': [np.float64(1.324), np.float64(1.784)], 'usd_day': np.float64(1932.12), 'vol_k_usd': np.float64(5593617.1)}
+       hold {'usd': np.float64(18179.55), 'c_per_usd': np.float64(1.198), 'ci': [np.float64(0.615), np.float64(1.757)], 'usd_day': np.float64(1398.43)}
+       risk {'worst_mkt_usd': -264.92, 'cost_p99_usd': 496.55, 'cost_max_usd': 499.3}
+  F2/touch     n=   64 devCI>0 gross 0 reb 0 (naive 5% 3.2) median -6.224c/$
+       best F2 tgt950 e450 mart1.5 stop240 touch
+       dev {'usd': np.float64(-235714.0), 'c_per_usd': np.float64(-6.706), 'ci': [np.float64(-7.504), np.float64(-5.91)], 'usd_day': np.float64(-5238.09), 'vol_k_usd': np.float64(3514765.4)}
+       hold {'usd': np.float64(-51076.72), 'c_per_usd': np.float64(-5.317), 'ci': [np.float64(-7.333), np.float64(-3.42)], 'usd_day': np.float64(-3928.98)}
+       risk {'worst_mkt_usd': -310.11, 'cost_p99_usd': 468.07, 'cost_max_usd': 474.79}
+  F3/taker     n=  288 devCI>0 gross 0 reb 0 (naive 5% 14.4) median -2.152c/$
+       best F3 z200 t1.0 n8 s150 DN nocap
+       dev {'usd': np.float64(-2194.49), 'c_per_usd': np.float64(-0.281), 'ci': [np.float64(-1.114), np.float64(0.483)], 'usd_day': np.float64(-48.77), 'vol_k_usd': np.float64(781702.5)}
+       hold {'usd': np.float64(-3873.81), 'c_per_usd': np.float64(-1.951), 'ci': [np.float64(-3.971), np.float64(0.483)], 'usd_day': np.float64(-297.99)}
+       risk {'worst_mkt_usd': -3295.21, 'cost_p99_usd': 702.28, 'cost_max_usd': 962511.04}
+
+WALK-FORWARD OOS (incl. rebates):
+  F1/level         901.42 usd   0.284 c/$ CI [-4.434, 5.528] 20.49 usd/day
+  F1/queue         444.05 usd   0.734 c/$ CI [0.61, 0.87] 10.09 usd/day
+  F1/through       268.17 usd   0.392 c/$ CI [-9.72, 10.544] 6.09 usd/day
+  F1/touch        1660.43 usd   2.227 c/$ CI [-8.371, 12.925] 37.74 usd/day
+  F2/queue       55450.21 usd   1.127 c/$ CI [0.864, 1.398] 1260.23 usd/day
+  F2/touch     -220517.98 usd  -5.865 c/$ CI [-6.648, -5.077] -5011.77 usd/day
+  F3/taker      -29219.56 usd  -3.408 c/$ CI [-6.651, -1.001] -664.08 usd/day
+
+VOLUME COST (max maker volume at a given cost):
+  {'model': 'through', 'max_cost_c_per_usd': 0.25, 'config': np.str_('F1 s60 st50 c120 fib K12 pmax300 through'), 'dev_vol_usd_day': 2292.7, 'dev_c_per_usd': 0.903, 'hold_c_per_usd': 5.062, 'hold_vol_usd_day': 2254.1}
+  {'model': 'through', 'max_cost_c_per_usd': 0.5, 'config': np.str_('F1 s60 st50 c120 fib K12 pmax300 through'), 'dev_vol_usd_day': 2292.7, 'dev_c_per_usd': 0.903, 'hold_c_per_usd': 5.062, 'hold_vol_usd_day': 2254.1}
+  {'model': 'through', 'max_cost_c_per_usd': 1.0, 'config': np.str_('F1 s60 st50 c120 fib K12 pmax300 through'), 'dev_vol_usd_day': 2292.7, 'dev_c_per_usd': 0.903, 'hold_c_per_usd': 5.062, 'hold_vol_usd_day': 2254.1}
+  {'model': 'touch', 'max_cost_c_per_usd': 0.25, 'config': np.str_('F1 s60 st50 c120 geo2 K12 pmax300 touch'), 'dev_vol_usd_day': 10153.2, 'dev_c_per_usd': 2.164, 'hold_c_per_usd': 3.331, 'hold_vol_usd_day': 9270.5}
+  {'model': 'touch', 'max_cost_c_per_usd': 0.5, 'config': np.str_('F1 s60 st50 c120 geo2 K12 pmax300 touch'), 'dev_vol_usd_day': 10153.2, 'dev_c_per_usd': 2.164, 'hold_c_per_usd': 3.331, 'hold_vol_usd_day': 9270.5}
+  {'model': 'touch', 'max_cost_c_per_usd': 1.0, 'config': np.str_('F1 s60 st50 c120 geo2 K12 pmax500 touch'), 'dev_vol_usd_day': 21583.3, 'dev_c_per_usd': -0.796, 'hold_c_per_usd': -2.592, 'hold_vol_usd_day': 21414.6}
+  {'model': 'level', 'max_cost_c_per_usd': 0.25, 'config': np.str_('F1 s60 st50 c120 geo3 K12 pmax300 level'), 'dev_vol_usd_day': 30977.7, 'dev_c_per_usd': -0.021, 'hold_c_per_usd': 1.476, 'hold_vol_usd_day': 25574.6}
+  {'model': 'level', 'max_cost_c_per_usd': 0.5, 'config': np.str_('F1 s60 st50 c120 geo3 K12 pmax300 level'), 'dev_vol_usd_day': 30977.7, 'dev_c_per_usd': -0.021, 'hold_c_per_usd': 1.476, 'hold_vol_usd_day': 25574.6}
+  {'model': 'level', 'max_cost_c_per_usd': 1.0, 'config': np.str_('F1 s60 st50 c120 geo3 K12 pmax300 level'), 'dev_vol_usd_day': 30977.7, 'dev_c_per_usd': -0.021, 'hold_c_per_usd': 1.476, 'hold_vol_usd_day': 25574.6}
+  {'model': 'queue', 'max_cost_c_per_usd': 0.25, 'config': np.str_('F1 s60 st30 c120 geo3 K12 pmax300 queue'), 'dev_vol_usd_day': 147521.6, 'dev_c_per_usd': -0.174, 'hold_c_per_usd': 0.277, 'hold_vol_usd_day': 111089.0}
+  {'model': 'queue', 'max_cost_c_per_usd': 0.5, 'config': np.str_('F1 s60 st30 c120 geo3 K12 pmax300 queue'), 'dev_vol_usd_day': 147521.6, 'dev_c_per_usd': -0.174, 'hold_c_per_usd': 0.277, 'hold_vol_usd_day': 111089.0}
+  {'model': 'queue', 'max_cost_c_per_usd': 1.0, 'config': np.str_('F1 s60 st30 c120 geo3 K12 pmax300 queue'), 'dev_vol_usd_day': 147521.6, 'dev_c_per_usd': -0.174, 'hold_c_per_usd': 0.277, 'hold_vol_usd_day': 111089.0}
+
+F4 SEQUENCE SIZING:
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 level'), 'rule': 'mart r2 L4', 'pnl_lag1_corr': 0.0016, 'dev_c_per_usd': 1.765, 'dev_ci': [-10.356, 14.783], 'hold_c_per_usd': -0.478, 'max_dd_usd': 41337.35, 'base_c_per_usd': 8.596}
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 level'), 'rule': 'mart r2 L6', 'pnl_lag1_corr': 0.0016, 'dev_c_per_usd': 0.268, 'dev_ci': [-21.027, 22.166], 'hold_c_per_usd': 9.621, 'max_dd_usd': 107252.08, 'base_c_per_usd': 8.596}
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 level'), 'rule': 'mart r3 L4', 'pnl_lag1_corr': 0.0016, 'dev_c_per_usd': -1.722, 'dev_ci': [-19.155, 15.702], 'hold_c_per_usd': -2.702, 'max_dd_usd': 246378.77, 'base_c_per_usd': 8.596}
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 level'), 'rule': 'anti r2 L3', 'pnl_lag1_corr': 0.0016, 'dev_c_per_usd': 11.543, 'dev_ci': [-0.185, 24.359], 'hold_c_per_usd': 9.182, 'max_dd_usd': 5271.48, 'base_c_per_usd': 8.596}
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 level'), 'rule': 'dalembert r1 L8', 'pnl_lag1_corr': 0.0016, 'dev_c_per_usd': 6.1, 'dev_ci': [-3.988, 16.822], 'hold_c_per_usd': 17.553, 'max_dd_usd': 37781.82, 'base_c_per_usd': 8.596}
+  {'base': np.str_('F1 s60 st10 c300 flat K1 pmax990 queue'), 'rule': 'mart r2 L4', 'pnl_lag1_corr': 0.0047, 'dev_c_per_usd': 0.742, 'dev_ci': [0.632, 0.852], 'hold_c_per_usd': 0.491, 'max_dd_usd': 17.07, 'base_c_per_usd': 0.742}
+  {'base': np.str_('F1 s60 st10 c300 flat K1 pmax990 queue'), 'rule': 'mart r2 L6', 'pnl_lag1_corr': 0.0047, 'dev_c_per_usd': 0.742, 'dev_ci': [0.632, 0.852], 'hold_c_per_usd': 0.491, 'max_dd_usd': 17.07, 'base_c_per_usd': 0.742}
+  {'base': np.str_('F1 s60 st10 c300 flat K1 pmax990 queue'), 'rule': 'mart r3 L4', 'pnl_lag1_corr': 0.0047, 'dev_c_per_usd': 0.744, 'dev_ci': [0.635, 0.857], 'hold_c_per_usd': 0.506, 'max_dd_usd': 17.27, 'base_c_per_usd': 0.742}
+  {'base': np.str_('F1 s60 st10 c300 flat K1 pmax990 queue'), 'rule': 'anti r2 L3', 'pnl_lag1_corr': 0.0047, 'dev_c_per_usd': 0.736, 'dev_ci': [0.62, 0.848], 'hold_c_per_usd': 0.459, 'max_dd_usd': 141.13, 'base_c_per_usd': 0.742}
+  {'base': np.str_('F1 s60 st10 c300 flat K1 pmax990 queue'), 'rule': 'dalembert r1 L8', 'pnl_lag1_corr': 0.0047, 'dev_c_per_usd': 0.743, 'dev_ci': [0.632, 0.852], 'hold_c_per_usd': 0.491, 'max_dd_usd': 17.07, 'base_c_per_usd': 0.742}
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 through'), 'rule': 'mart r2 L4', 'pnl_lag1_corr': 0.0004, 'dev_c_per_usd': -5.651, 'dev_ci': [-17.436, 6.91], 'hold_c_per_usd': -4.32, 'max_dd_usd': 52437.41, 'base_c_per_usd': 0.903}
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 through'), 'rule': 'mart r2 L6', 'pnl_lag1_corr': 0.0004, 'dev_c_per_usd': -4.256, 'dev_ci': [-24.141, 18.144], 'hold_c_per_usd': 5.222, 'max_dd_usd': 102530.57, 'base_c_per_usd': 0.903}
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 through'), 'rule': 'mart r3 L4', 'pnl_lag1_corr': 0.0004, 'dev_c_per_usd': -8.567, 'dev_ci': [-25.704, 9.276], 'hold_c_per_usd': -5.703, 'max_dd_usd': 248790.05, 'base_c_per_usd': 0.903}
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 through'), 'rule': 'anti r2 L3', 'pnl_lag1_corr': 0.0004, 'dev_c_per_usd': 3.397, 'dev_ci': [-6.858, 14.857], 'hold_c_per_usd': 2.1, 'max_dd_usd': 5188.97, 'base_c_per_usd': 0.903}
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 through'), 'rule': 'dalembert r1 L8', 'pnl_lag1_corr': 0.0004, 'dev_c_per_usd': -0.74, 'dev_ci': [-11.146, 10.342], 'hold_c_per_usd': 13.368, 'max_dd_usd': 40007.2, 'base_c_per_usd': 0.903}
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 touch'), 'rule': 'mart r2 L4', 'pnl_lag1_corr': 0.0019, 'dev_c_per_usd': -2.032, 'dev_ci': [-14.001, 10.461], 'hold_c_per_usd': -2.269, 'max_dd_usd': 50856.67, 'base_c_per_usd': 4.729}
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 touch'), 'rule': 'mart r2 L6', 'pnl_lag1_corr': 0.0019, 'dev_c_per_usd': -5.154, 'dev_ci': [-25.038, 16.705], 'hold_c_per_usd': 8.718, 'max_dd_usd': 123221.29, 'base_c_per_usd': 4.729}
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 touch'), 'rule': 'mart r3 L4', 'pnl_lag1_corr': 0.0019, 'dev_c_per_usd': -5.779, 'dev_ci': [-22.356, 11.518], 'hold_c_per_usd': -4.235, 'max_dd_usd': 270498.46, 'base_c_per_usd': 4.729}
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 touch'), 'rule': 'anti r2 L3', 'pnl_lag1_corr': 0.0019, 'dev_c_per_usd': 8.038, 'dev_ci': [-3.745, 20.998], 'hold_c_per_usd': 3.798, 'max_dd_usd': 5433.11, 'base_c_per_usd': 4.729}
+  {'base': np.str_('F1 s60 st50 c120 fib K12 pmax300 touch'), 'rule': 'dalembert r1 L8', 'pnl_lag1_corr': 0.0019, 'dev_c_per_usd': 3.783, 'dev_ci': [-6.552, 14.668], 'hold_c_per_usd': 13.122, 'max_dd_usd': 39264.39, 'base_c_per_usd': 4.729}
+  {'base': np.str_('F2 tgt1000 e500 mart2.0 stop285 queue'), 'rule': 'mart r2 L4', 'pnl_lag1_corr': -0.0011, 'dev_c_per_usd': 1.557, 'dev_ci': [1.296, 1.827], 'hold_c_per_usd': 0.904, 'max_dd_usd': 8563.03, 'base_c_per_usd': 1.554}
+  {'base': np.str_('F2 tgt1000 e500 mart2.0 stop285 queue'), 'rule': 'mart r2 L6', 'pnl_lag1_corr': -0.0011, 'dev_c_per_usd': 1.564, 'dev_ci': [1.304, 1.832], 'hold_c_per_usd': 0.937, 'max_dd_usd': 10061.39, 'base_c_per_usd': 1.554}
+  {'base': np.str_('F2 tgt1000 e500 mart2.0 stop285 queue'), 'rule': 'mart r3 L4', 'pnl_lag1_corr': -0.0011, 'dev_c_per_usd': 1.557, 'dev_ci': [1.171, 1.931], 'hold_c_per_usd': 0.329, 'max_dd_usd': 29493.65, 'base_c_per_usd': 1.554}
+  {'base': np.str_('F2 tgt1000 e500 mart2.0 stop285 queue'), 'rule': 'anti r2 L3', 'pnl_lag1_corr': -0.0011, 'dev_c_per_usd': 1.625, 'dev_ci': [1.369, 1.863], 'hold_c_per_usd': 1.42, 'max_dd_usd': 14022.06, 'base_c_per_usd': 1.554}
+  {'base': np.str_('F2 tgt1000 e500 mart2.0 stop285 queue'), 'rule': 'dalembert r1 L8', 'pnl_lag1_corr': -0.0011, 'dev_c_per_usd': 1.565, 'dev_ci': [1.307, 1.814], 'hold_c_per_usd': 0.965, 'max_dd_usd': 6644.15, 'base_c_per_usd': 1.554}
+  {'base': np.str_('F2 tgt950 e450 mart1.5 stop240 touch'), 'rule': 'mart r2 L4', 'pnl_lag1_corr': 0.0005, 'dev_c_per_usd': -6.501, 'dev_ci': [-7.474, -5.462], 'hold_c_per_usd': -7.366, 'max_dd_usd': 1153548.24, 'base_c_per_usd': -6.706}
+  {'base': np.str_('F2 tgt950 e450 mart1.5 stop240 touch'), 'rule': 'mart r2 L6', 'pnl_lag1_corr': 0.0005, 'dev_c_per_usd': -6.271, 'dev_ci': [-7.589, -4.962], 'hold_c_per_usd': -9.835, 'max_dd_usd': 1886135.57, 'base_c_per_usd': -6.706}
+  {'base': np.str_('F2 tgt950 e450 mart1.5 stop240 touch'), 'rule': 'mart r3 L4', 'pnl_lag1_corr': 0.0005, 'dev_c_per_usd': -6.287, 'dev_ci': [-7.552, -5.008], 'hold_c_per_usd': -8.708, 'max_dd_usd': 3987389.37, 'base_c_per_usd': -6.706}
+  {'base': np.str_('F2 tgt950 e450 mart1.5 stop240 touch'), 'rule': 'anti r2 L3', 'pnl_lag1_corr': 0.0005, 'dev_c_per_usd': -6.324, 'dev_ci': [-7.239, -5.363], 'hold_c_per_usd': -4.819, 'max_dd_usd': 624178.22, 'base_c_per_usd': -6.706}
+  {'base': np.str_('F2 tgt950 e450 mart1.5 stop240 touch'), 'rule': 'dalembert r1 L8', 'pnl_lag1_corr': 0.0005, 'dev_c_per_usd': -7.054, 'dev_ci': [-7.806, -6.265], 'hold_c_per_usd': -5.429, 'max_dd_usd': 1979744.39, 'base_c_per_usd': -6.706}
+
+VERDICT: {
+ "F1/level": "FAIL",
+ "F1/queue": "PASS",
+ "F1/through": "FAIL",
+ "F1/touch": "FAIL",
+ "F2/queue": "PASS",
+ "F2/touch": "FAIL",
+ "F3/taker": "FAIL",
+ "overall": "QUEUE-ONLY: profitable only if we sit at the front of the queue; needs a live fill test, not more backtests"
+}

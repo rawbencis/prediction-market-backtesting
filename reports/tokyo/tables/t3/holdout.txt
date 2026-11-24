@@ -1,0 +1,21 @@
+holdout 2026-07-19..2026-07-31: 3517 windows (NB: already used by earlier studies)
+  frozen [180,290] >2 <0.7: n 48, edge_net -2.26 ± 4.64c, edge_mid -0.82 ± 4.55c, fill 0.98
+
+named cell W (holdout): d in [+5, +20] bp, tau in [120, 290], |1 s move| < 0.5 bp, ask <= mid + 1c
+  r <0.7: trades 930 (921 windows), ask 0.825, mid 0.821, win 0.830, edge_mid +0.94 ± 1.17, edge_net -0.10 ± 1.17, fill 0.99
+  r [0.7,1.4]: trades 1598 (1533 windows), ask 0.799, mid 0.795, win 0.798, edge_mid +0.29 ± 0.94, edge_net -0.92 ± 0.95, fill 0.99
+  r >1.4: trades 719 (697 windows), ask 0.818, mid 0.815, win 0.814, edge_mid -0.11 ± 1.38, edge_net -1.17 ± 1.38, fill 1.00
+  all r: trades 1995, edge_net -1.18 ± 0.85, edge_mid +0.11 ± 0.84
+  model logit(mid): coefs [0.02, 1.051], holdout log-loss 0.50505
+  model logit(mid)+z+z[r<0.7]+z[r>1.4]: coefs [0.022, 0.99, 0.086, 0.005, -0.022], holdout log-loss 0.50505
+  log-loss change (full - mid only): +0.00000 per sample; per-window mean -0.00006, 90% [-0.00038, +0.00027]
+  favourites (z > 0.3) edge_mid by 6-h UTC block, dev:
+    00-06h: n 4604, mid 0.658, win 0.667, edge_mid +0.86 ± 0.45c, edge_net -1.28 ± 0.46c
+    06-12h: n 4626, mid 0.652, win 0.665, edge_mid +1.23 ± 0.45c, edge_net -0.77 ± 0.46c
+    12-18h: n 4747, mid 0.644, win 0.668, edge_mid +2.39 ± 0.42c, edge_net +0.13 ± 0.43c
+    18-24h: n 4656, mid 0.657, win 0.670, edge_mid +1.25 ± 0.44c, edge_net -0.94 ± 0.45c
+  favourites (z > 0.3) edge_mid by 6-h UTC block, holdout:
+    00-06h: n 1257, mid 0.670, win 0.671, edge_mid +0.17 ± 0.89c, edge_net -1.71 ± 0.91c
+    06-12h: n 1199, mid 0.669, win 0.676, edge_mid +0.72 ± 0.90c, edge_net -0.82 ± 0.93c
+    12-18h: n 1290, mid 0.665, win 0.666, edge_mid +0.10 ± 0.80c, edge_net -1.80 ± 0.82c
+    18-24h: n 1280, mid 0.667, win 0.663, edge_mid -0.42 ± 0.85c, edge_net -2.70 ± 0.86c

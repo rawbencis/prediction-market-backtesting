@@ -1,0 +1,11 @@
+new-series markets 144, samples 8264, days 6.0
+model sanity (all samples): mean win 0.423, mean Phi(z_twap) 0.431, mean price 0.455; Brier price 0.1630 vs model 0.2079 vs endpoint-z model 0.1691
+buy the favourite (by z_twap) at the first |z| >= k in each minutes-left band; one per market; edge vs price (mid-like)
+  [50,60) |z|>=0.3: markets 132, price 0.586, model 0.687, win 0.682, edge_mid +9.55 ± 4.05c
+  [50,60) |z|>=1.0: markets 52, price 0.702, model 0.894, win 0.750, edge_mid +4.79 ± 6.06c
+  [30,50) |z|>=0.3: markets 144, price 0.652, model 0.767, win 0.660, edge_mid +0.75 ± 3.81c
+  [30,50) |z|>=1.0: markets 117, price 0.739, model 0.905, win 0.735, edge_mid -0.43 ± 3.99c
+  [10,30) |z|>=0.3: markets 144, price 0.766, model 0.899, win 0.736, edge_mid -2.99 ± 3.47c
+  [10,30) |z|>=1.0: markets 141, price 0.787, model 0.949, win 0.759, edge_mid -2.84 ± 3.42c
+  [2,10) |z|>=0.3: markets 144, price 0.809, model 0.985, win 0.799, edge_mid -1.04 ± 2.61c
+  [2,10) |z|>=1.0: markets 143, price 0.810, model 0.994, win 0.797, edge_mid -1.28 ± 2.61c

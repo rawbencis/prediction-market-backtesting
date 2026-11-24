@@ -1,0 +1,976 @@
+{
+ "rows_by_type": {
+  "TRADE": 71736,
+  "REDEEM": 27429,
+  "MAKER_REBATE": 125,
+  "REWARD": 12,
+  "TAKER_REBATE": 73
+ },
+ "range": [
+  "2026-04-17T15:35:08+00:00",
+  "2026-11-13T21:51:58+00:00"
+ ],
+ "usdc_by_type": {
+  "TRADE": 1735910.49,
+  "REDEEM": 1788045.57,
+  "MAKER_REBATE": 1607.58,
+  "REWARD": 96.12,
+  "TAKER_REBATE": 4145.58
+ },
+ "non_updown_trade_rows_top": [
+  [
+   "hype-updown-5m",
+   56
+  ],
+  [
+   "hype-updown-15m",
+   12
+  ]
+ ],
+ "markets_by_asset_kind": {
+  "btc-5m": 17958,
+  "btc-15m": 2045,
+  "eth-5m": 764,
+  "sol-5m": 162,
+  "xrp-5m": 77,
+  "bnb-5m": 54,
+  "doge-5m": 35,
+  "eth-15m": 21,
+  "doge-15m": 18,
+  "xrp-15m": 11,
+  "sol-15m": 9,
+  "bnb-15m": 4
+ },
+ "settled_markets": 21157,
+ "unsettled_markets": 1,
+ "pnl_usd": 52106.99,
+ "volume_usd": 1719428.33,
+ "c_per_usd": 3.03,
+ "monthly": {
+  "2026-04": {
+   "markets": 183,
+   "vol": 209757,
+   "pnl": 2117.02,
+   "c_per_usd": 1.009,
+   "pair_lock": 0.0,
+   "other_income": 63.29
+  },
+  "2026-05": {
+   "markets": 280,
+   "vol": 274455,
+   "pnl": 2772.42,
+   "c_per_usd": 1.01,
+   "pair_lock": 0.0,
+   "other_income": 45.21
+  },
+  "2026-06": {
+   "markets": 236,
+   "vol": 324007,
+   "pnl": 3116.74,
+   "c_per_usd": 0.962,
+   "pair_lock": 0.0,
+   "other_income": 41.64
+  },
+  "2026-07": {
+   "markets": 3522,
+   "vol": 109486,
+   "pnl": -2491.64,
+   "c_per_usd": -2.276,
+   "pair_lock": -156.35,
+   "other_income": 713.27
+  },
+  "2026-08": {
+   "markets": 3270,
+   "vol": 94471,
+   "pnl": 1510.01,
+   "c_per_usd": 1.598,
+   "pair_lock": -454.35,
+   "other_income": 661.86
+  },
+  "2026-09": {
+   "markets": 4634,
+   "vol": 205842,
+   "pnl": 11967.44,
+   "c_per_usd": 5.814,
+   "pair_lock": -442.38,
+   "other_income": 848.7
+  },
+  "2026-10": {
+   "markets": 6362,
+   "vol": 342458,
+   "pnl": 24904.59,
+   "c_per_usd": 7.272,
+   "pair_lock": -6777.69,
+   "other_income": 1796.7
+  },
+  "2026-11": {
+   "markets": 2670,
+   "vol": 158952,
+   "pnl": 8210.41,
+   "c_per_usd": 5.165,
+   "pair_lock": -1213.57,
+   "other_income": 1678.61
+  }
+ },
+ "daily_pnl": {
+  "days": 186,
+  "mean": 280.15,
+  "sd": 666.08,
+  "pct_positive": 0.801,
+  "worst": -1628.15,
+  "best": 3624.04
+ },
+ "structure": {
+  "btc-5m": {
+   "markets": 17957,
+   "pnl": 46447.43,
+   "c_per_usd": 3.106,
+   "pct_markets_positive": 0.527,
+   "pnl_per_market_q": [
+    -35.821,
+    -13.407,
+    1.603,
+    16.079,
+    37.119
+   ],
+   "vol_per_market_q": [
+    4.773,
+    12.799,
+    32.396,
+    65.624,
+    117.663
+   ],
+   "pct_both_sides": 0.364,
+   "paired_share_of_bought_qty": 0.289,
+   "pair_cost_q_paired_markets": [
+    0.806,
+    0.933,
+    1.041,
+    1.146,
+    1.234
+   ],
+   "pair_lock_usd": -8869.08,
+   "direction_and_rest_usd": 55316.52,
+   "sell_share_of_volume": 0.0,
+   "merge_usd": 0.0,
+   "split_usd": 0.0,
+   "buys_per_market_q": [
+    1.0,
+    1.0,
+    2.0,
+    4.0,
+    7.0
+   ],
+   "pnl_one_sided_markets": 40474.15,
+   "pnl_two_sided_markets": 5973.28,
+   "buy_usd_share_by_tenth_of_window": [
+    0.079,
+    0.061,
+    0.061,
+    0.057,
+    0.055,
+    0.055,
+    0.066,
+    0.073,
+    0.04,
+    0.453
+   ],
+   "buy_fill_before_open_share": 0.0,
+   "buy_shares_by_price_decile": [
+    0.103,
+    0.038,
+    0.057,
+    0.079,
+    0.133,
+    0.18,
+    0.088,
+    0.043,
+    0.015,
+    0.264
+   ],
+   "fill_size_shares_q": [
+    3.105,
+    7.222,
+    15.0,
+    45.0,
+    75.0
+   ],
+   "first_up_vs_first_down_gap_s_q": [
+    8.0,
+    22.0,
+    53.0,
+    96.0,
+    150.0
+   ]
+  },
+  "btc-15m": {
+   "markets": 2045,
+   "pnl": 3317.64,
+   "c_per_usd": 4.075,
+   "pct_markets_positive": 0.546,
+   "pnl_per_market_q": [
+    -35.168,
+    -10.558,
+    2.58,
+    12.8,
+    36.839
+   ],
+   "vol_per_market_q": [
+    3.92,
+    6.95,
+    14.72,
+    39.358,
+    76.608
+   ],
+   "pct_both_sides": 0.086,
+   "paired_share_of_bought_qty": 0.079,
+   "pair_cost_q_paired_markets": [
+    0.894,
+    0.98,
+    1.03,
+    1.08,
+    1.126
+   ],
+   "pair_lock_usd": -105.32,
+   "direction_and_rest_usd": 3422.96,
+   "sell_share_of_volume": 0.0,
+   "merge_usd": 0.0,
+   "split_usd": 0.0,
+   "buys_per_market_q": [
+    1.0,
+    1.0,
+    3.0,
+    4.0,
+    7.0
+   ],
+   "pnl_one_sided_markets": 2839.86,
+   "pnl_two_sided_markets": 477.78,
+   "buy_usd_share_by_tenth_of_window": [
+    0.284,
+    0.097,
+    0.058,
+    0.057,
+    0.038,
+    0.038,
+    0.059,
+    0.071,
+    0.054,
+    0.244
+   ],
+   "buy_fill_before_open_share": 0.0,
+   "buy_shares_by_price_decile": [
+    0.002,
+    0.008,
+    0.012,
+    0.022,
+    0.149,
+    0.583,
+    0.05,
+    0.014,
+    0.012,
+    0.15
+   ],
+   "fill_size_shares_q": [
+    2.128,
+    5.0,
+    8.0,
+    19.5,
+    41.002
+   ],
+   "first_up_vs_first_down_gap_s_q": [
+    29.5,
+    98.25,
+    275.5,
+    447.25,
+    580.0
+   ]
+  },
+  "eth-5m": {
+   "markets": 764,
+   "pnl": 431.45,
+   "c_per_usd": 0.767,
+   "pct_markets_positive": 0.596,
+   "pnl_per_market_q": [
+    -11.849,
+    -5.947,
+    1.768,
+    6.486,
+    10.426
+   ],
+   "vol_per_market_q": [
+    3.019,
+    5.522,
+    9.4,
+    15.585,
+    33.672
+   ],
+   "pct_both_sides": 0.046,
+   "paired_share_of_bought_qty": 0.026,
+   "pair_cost_q_paired_markets": [
+    0.949,
+    1.031,
+    1.095,
+    1.145,
+    1.176
+   ],
+   "pair_lock_usd": -59.4,
+   "direction_and_rest_usd": 490.85,
+   "sell_share_of_volume": 0.0,
+   "merge_usd": 0.0,
+   "split_usd": 0.0,
+   "buys_per_market_q": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    2.0
+   ],
+   "pnl_one_sided_markets": 453.83,
+   "pnl_two_sided_markets": -22.39,
+   "buy_usd_share_by_tenth_of_window": [
+    0.007,
+    0.007,
+    0.007,
+    0.009,
+    0.011,
+    0.013,
+    0.024,
+    0.033,
+    0.014,
+    0.875
+   ],
+   "buy_fill_before_open_share": 0.0,
+   "buy_shares_by_price_decile": [
+    0.0,
+    0.004,
+    0.014,
+    0.025,
+    0.045,
+    0.064,
+    0.048,
+    0.008,
+    0.007,
+    0.784
+   ],
+   "fill_size_shares_q": [
+    5.0,
+    7.84,
+    15.0,
+    24.552,
+    40.926
+   ],
+   "first_up_vs_first_down_gap_s_q": [
+    9.8,
+    26.5,
+    41.0,
+    93.0,
+    134.2
+   ]
+  },
+  "sol-5m": {
+   "markets": 162,
+   "pnl": 255.32,
+   "c_per_usd": 1.045,
+   "pct_markets_positive": 0.698,
+   "pnl_per_market_q": [
+    -12.164,
+    -3.556,
+    0.398,
+    5.902,
+    15.438
+   ],
+   "vol_per_market_q": [
+    4.848,
+    12.056,
+    14.934,
+    45.587,
+    353.219
+   ],
+   "pct_both_sides": 0.204,
+   "paired_share_of_bought_qty": 0.049,
+   "pair_cost_q_paired_markets": [
+    0.876,
+    0.941,
+    1.063,
+    1.154,
+    1.192
+   ],
+   "pair_lock_usd": -10.54,
+   "direction_and_rest_usd": 265.86,
+   "sell_share_of_volume": 0.0,
+   "merge_usd": 0.0,
+   "split_usd": 0.0,
+   "buys_per_market_q": [
+    1.0,
+    1.0,
+    1.0,
+    2.0,
+    3.0
+   ],
+   "pnl_one_sided_markets": 196.29,
+   "pnl_two_sided_markets": 59.03,
+   "buy_usd_share_by_tenth_of_window": [
+    0.008,
+    0.008,
+    0.009,
+    0.005,
+    0.009,
+    0.005,
+    0.008,
+    0.007,
+    0.001,
+    0.941
+   ],
+   "buy_fill_before_open_share": 0.0,
+   "buy_shares_by_price_decile": [
+    0.005,
+    0.002,
+    0.013,
+    0.031,
+    0.028,
+    0.032,
+    0.014,
+    0.0,
+    0.0,
+    0.874
+   ],
+   "fill_size_shares_q": [
+    4.181,
+    7.588,
+    21.135,
+    36.134,
+    146.4
+   ],
+   "first_up_vs_first_down_gap_s_q": [
+    9.0,
+    15.0,
+    38.0,
+    56.0,
+    101.2
+   ]
+  },
+  "xrp-5m": {
+   "markets": 77,
+   "pnl": 350.48,
+   "c_per_usd": 1.079,
+   "pct_markets_positive": 1.0,
+   "pnl_per_market_q": [
+    0.05,
+    0.116,
+    0.907,
+    2.24,
+    9.84
+   ],
+   "vol_per_market_q": [
+    4.95,
+    11.524,
+    89.823,
+    235.62,
+    915.736
+   ],
+   "pct_both_sides": 0.0,
+   "paired_share_of_bought_qty": 0.0,
+   "pair_cost_q_paired_markets": [],
+   "pair_lock_usd": 0.0,
+   "direction_and_rest_usd": 350.48,
+   "sell_share_of_volume": 0.0,
+   "merge_usd": 0.0,
+   "split_usd": 0.0,
+   "buys_per_market_q": [
+    1.0,
+    1.0,
+    1.0,
+    2.0,
+    4.4
+   ],
+   "pnl_one_sided_markets": 350.48,
+   "pnl_two_sided_markets": 0,
+   "buy_usd_share_by_tenth_of_window": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "buy_fill_before_open_share": 0.0,
+   "buy_shares_by_price_decile": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "fill_size_shares_q": [
+    4.8,
+    8.16,
+    100.0,
+    174.07,
+    469.0
+   ],
+   "first_up_vs_first_down_gap_s_q": []
+  },
+  "bnb-5m": {
+   "markets": 54,
+   "pnl": 116.33,
+   "c_per_usd": 1.02,
+   "pct_markets_positive": 1.0,
+   "pnl_per_market_q": [
+    0.061,
+    0.126,
+    1.025,
+    2.71,
+    5.088
+   ],
+   "vol_per_market_q": [
+    6.014,
+    12.504,
+    99.025,
+    268.29,
+    499.158
+   ],
+   "pct_both_sides": 0.0,
+   "paired_share_of_bought_qty": 0.0,
+   "pair_cost_q_paired_markets": [],
+   "pair_lock_usd": 0.0,
+   "direction_and_rest_usd": 116.33,
+   "sell_share_of_volume": 0.0,
+   "merge_usd": 0.0,
+   "split_usd": 0.0,
+   "buys_per_market_q": [
+    1.0,
+    1.0,
+    1.0,
+    2.0,
+    2.7
+   ],
+   "pnl_one_sided_markets": 116.33,
+   "pnl_two_sided_markets": 0,
+   "buy_usd_share_by_tenth_of_window": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "buy_fill_before_open_share": 0.0,
+   "buy_shares_by_price_decile": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "fill_size_shares_q": [
+    5.0,
+    6.265,
+    36.0,
+    150.0,
+    333.099
+   ],
+   "first_up_vs_first_down_gap_s_q": []
+  },
+  "doge-5m": {
+   "markets": 35,
+   "pnl": 1061.35,
+   "c_per_usd": 15.027,
+   "pct_markets_positive": 1.0,
+   "pnl_per_market_q": [
+    0.05,
+    0.066,
+    0.421,
+    2.395,
+    9.11
+   ],
+   "vol_per_market_q": [
+    4.95,
+    6.534,
+    41.709,
+    217.305,
+    776.952
+   ],
+   "pct_both_sides": 0.0,
+   "paired_share_of_bought_qty": 0.0,
+   "pair_cost_q_paired_markets": [],
+   "pair_lock_usd": 0.0,
+   "direction_and_rest_usd": 1061.35,
+   "sell_share_of_volume": 0.0,
+   "merge_usd": 0.0,
+   "split_usd": 0.0,
+   "buys_per_market_q": [
+    1.0,
+    1.0,
+    1.0,
+    2.0,
+    4.0
+   ],
+   "pnl_one_sided_markets": 1061.35,
+   "pnl_two_sided_markets": 0,
+   "buy_usd_share_by_tenth_of_window": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "buy_fill_before_open_share": 0.0,
+   "buy_shares_by_price_decile": [
+    0.123,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.877
+   ],
+   "fill_size_shares_q": [
+    2.268,
+    5.363,
+    45.565,
+    206.75,
+    299.5
+   ],
+   "first_up_vs_first_down_gap_s_q": []
+  },
+  "eth-15m": {
+   "markets": 21,
+   "pnl": 58.02,
+   "c_per_usd": 0.951,
+   "pct_markets_positive": 1.0,
+   "pnl_per_market_q": [
+    0.207,
+    0.395,
+    2.0,
+    5.0,
+    5.238
+   ],
+   "vol_per_market_q": [
+    20.523,
+    55.321,
+    293.664,
+    495.0,
+    518.592
+   ],
+   "pct_both_sides": 0.0,
+   "paired_share_of_bought_qty": 0.0,
+   "pair_cost_q_paired_markets": [],
+   "pair_lock_usd": 0.0,
+   "direction_and_rest_usd": 58.02,
+   "sell_share_of_volume": 0.0,
+   "merge_usd": 0.0,
+   "split_usd": 0.0,
+   "buys_per_market_q": [
+    1.0,
+    1.0,
+    1.0,
+    2.0,
+    3.0
+   ],
+   "pnl_one_sided_markets": 58.02,
+   "pnl_two_sided_markets": 0,
+   "buy_usd_share_by_tenth_of_window": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "buy_fill_before_open_share": 0.0,
+   "buy_shares_by_price_decile": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "fill_size_shares_q": [
+    3.286,
+    8.68,
+    36.0,
+    227.0,
+    499.4
+   ],
+   "first_up_vs_first_down_gap_s_q": []
+  }
+ },
+ "book_join_btc5m": {
+  "markets": 2484,
+  "fills": 11078,
+  "lag_s": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10
+  ],
+  "frac_at_bid": [
+   0.151,
+   0.199,
+   0.291,
+   0.457,
+   0.454,
+   0.27,
+   0.169,
+   0.121,
+   0.09,
+   0.075,
+   0.061
+  ],
+  "frac_at_ask": [
+   0.117,
+   0.135,
+   0.147,
+   0.131,
+   0.087,
+   0.072,
+   0.081,
+   0.075,
+   0.07,
+   0.069,
+   0.061
+  ],
+  "best_lag_s": 3,
+  "class_counts": {
+   "above_ask": 2436,
+   "at_ask": 1446,
+   "below_bid": 1867,
+   "at_bid": 5061,
+   "inside": 100
+  },
+  "markout_milli_per_share_size_weighted": {
+   "above_ask": {
+    "edge_vs_mid": -259.09,
+    "spread": 45.52,
+    "mid+5s": -259.98,
+    "mid+30s": -260.22,
+    "mid+60s": -260.78,
+    "settle": 3.31
+   },
+   "at_ask": {
+    "edge_vs_mid": -5.44,
+    "spread": 10.88,
+    "mid+5s": -12.91,
+    "mid+30s": -18.33,
+    "mid+60s": -26.78,
+    "settle": -13.08
+   },
+   "below_bid": {
+    "edge_vs_mid": 38.51,
+    "spread": 11.52,
+    "mid+5s": 30.16,
+    "mid+30s": 10.11,
+    "mid+60s": 7.75,
+    "settle": 9.4
+   },
+   "at_bid": {
+    "edge_vs_mid": 5.14,
+    "spread": 10.29,
+    "mid+5s": 1.25,
+    "mid+30s": -6.54,
+    "mid+60s": -12.43,
+    "settle": -31.83
+   },
+   "inside": {
+    "edge_vs_mid": 3.11,
+    "spread": 33.83,
+    "mid+5s": -4.23,
+    "mid+30s": -30.94,
+    "mid+60s": -45.33,
+    "settle": 27.0
+   }
+  }
+ },
+ "maker_taker": {
+  "taker_rows": 33315,
+  "trade_rows": 71736,
+  "taker_fill_share": 0.464,
+  "taker_usd_share": 0.387,
+  "unmatched_taker_rows": 2,
+  "taker_usd_share_by_month": {
+   "2026-04": 0.002,
+   "2026-05": 0.001,
+   "2026-06": 0.006,
+   "2026-07": 0.003,
+   "2026-08": 0.04,
+   "2026-09": 1.0,
+   "2026-10": 0.942,
+   "2026-11": 0.854
+  }
+ },
+ "fee_implied_buys": {
+  "buys": 71736,
+  "taker_share": 0.464,
+  "taker_usd_share": 0.387,
+  "fees_paid_usd": 20818.32,
+  "fee_over_expected_q": [
+   0.0,
+   0.0,
+   0.0,
+   1.0,
+   1.0
+  ],
+  "taker_usd_share_by_month": {
+   "2026-04": 0.002,
+   "2026-05": 0.001,
+   "2026-06": 0.006,
+   "2026-07": 0.003,
+   "2026-08": 0.04,
+   "2026-09": 1.0,
+   "2026-10": 0.942,
+   "2026-11": 0.854
+  }
+ },
+ "official_monthly": {
+  "2026-04": {
+   "realized_pnl": 2122.32,
+   "economic_pnl": 1440.88,
+   "volume_usdc": 211701.29,
+   "trade_count": 1468.0,
+   "fees": -198.48,
+   "maker_rebate": 59.01,
+   "taker_rebate": 0.0,
+   "reward_income": 0.0
+  },
+  "2026-05": {
+   "realized_pnl": 2733.08,
+   "economic_pnl": 2717.06,
+   "volume_usdc": 270802.35,
+   "trade_count": 1889.0,
+   "fees": -0.62,
+   "maker_rebate": 44.6,
+   "taker_rebate": 0.0,
+   "reward_income": 0.0
+  },
+  "2026-06": {
+   "realized_pnl": 3289.29,
+   "economic_pnl": 3335.81,
+   "volume_usdc": 341099.93,
+   "trade_count": 1460.0,
+   "fees": -3.68,
+   "maker_rebate": 46.52,
+   "taker_rebate": 0.0,
+   "reward_income": 0.0
+  },
+  "2026-07": {
+   "realized_pnl": -1945.08,
+   "economic_pnl": -1258.84,
+   "volume_usdc": 106096.51,
+   "trade_count": 13812.0,
+   "fees": -5.8,
+   "maker_rebate": 686.76,
+   "taker_rebate": 0.0,
+   "reward_income": 0.0
+  },
+  "2026-08": {
+   "realized_pnl": 812.59,
+   "economic_pnl": 1500.85,
+   "volume_usdc": 96957.16,
+   "trade_count": 12718.0,
+   "fees": -5.19,
+   "maker_rebate": 592.26,
+   "taker_rebate": 0.0,
+   "reward_income": 96.12
+  },
+  "2026-09": {
+   "realized_pnl": 11961.91,
+   "economic_pnl": 13607.69,
+   "volume_usdc": 190316.04,
+   "trade_count": 8295.0,
+   "fees": -6815.23,
+   "maker_rebate": 0.0,
+   "taker_rebate": 842.41,
+   "reward_income": 0.0
+  },
+  "2026-10": {
+   "realized_pnl": 23927.24,
+   "economic_pnl": 25682.49,
+   "volume_usdc": 327532.36,
+   "trade_count": 15961.0,
+   "fees": -9567.46,
+   "maker_rebate": 68.95,
+   "taker_rebate": 1677.97,
+   "reward_income": 0.0
+  },
+  "2026-11": {
+   "realized_pnl": 9105.61,
+   "economic_pnl": 10822.29,
+   "volume_usdc": 167790.78,
+   "trade_count": 15838.0,
+   "fees": -4402.36,
+   "maker_rebate": 109.48,
+   "taker_rebate": 1625.19,
+   "reward_income": 0.0
+  }
+ },
+ "official_cumulative_last": {
+  "timestamp": 1794603528,
+  "realized_market_pnl": 52006.963776,
+  "realized_lp_pnl": 0.0,
+  "realized_combo_pnl": 0.0,
+  "unrealized_pnl": -8.015694,
+  "fees_refunded": 198.119344,
+  "maker_rebate": 1607.5841,
+  "taker_rebate": 4145.5791,
+  "reward_income": 96.1165,
+  "yield_income": 0.0,
+  "referral_income": 0.0,
+  "deposits": null,
+  "withdrawals": null,
+  "realized_pnl": 52006.963776,
+  "wallet_income": 5849.2797,
+  "position_pnl": 51998.948082,
+  "settled_pnl": 57856.243476,
+  "economic_pnl": 57848.227782,
+  "trade_pnl": 72799.658674,
+  "sponsored_income": 96.1165,
+  "fees": -20998.829936,
+  "fees_paid": -20800.710592,
+  "cashflow_net": null,
+  "volume": 2878579.822029,
+  "volume_usdc": 1712296.42151,
+  "trade_count": 71441
+ }
+}
