@@ -1,0 +1,25 @@
+# NOT INSTALLED. Install: sudo cp deploy/hourly-rec.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#                         && sudo systemctl enable --now hourly-rec
+# BTC/ETH 1h + 4h up/down recorder (hourly_rec.py, branch research/hourly-rec). Read-only: no keys, no orders.
+[Unit]
+Description=Hourly/4h up/down recorder, Dublin (BTC/ETH 1h+4h books, prints, depth, resolutions; read-only, no keys)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/dublin-retest/hourly-rec
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/shadow-venv/bin/python /home/ubuntu/dublin-retest/hourly-rec/hourly_rec.py --out /home/ubuntu/hourly-rec --keep-days 60
+Restart=always
+RestartSec=5
+Nice=10
+MemoryMax=300M
+MemorySwapMax=0
+CPUQuota=20%
+# logs: journalctl -u hourly-rec (one stats line per minute)
+
+[Install]
+WantedBy=multi-user.target
