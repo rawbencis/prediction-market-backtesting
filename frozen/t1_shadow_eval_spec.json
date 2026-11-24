@@ -1,0 +1,27 @@
+{
+  "name": "t1_shadow_eval_spec",
+  "written_utc": "2026-11-24T22:00Z",
+  "purpose": "Measurement definitions for the 14-day paper shadow of frozen/t1_shadow_candidate.json. Written and committed before any shadow-day data (2026-11-25 onward) exists and before the per-trigger persistence measure below was computed on any data. Rule unchanged: frozen/t1_lighter_pm_arb.json.",
+  "count_start_utc": "2026-11-25T00:00:00Z",
+  "count_days": 14,
+  "count_unit": "a UTC day counts when the evaluator ran on it and both recorders covered >= 90% of its BTC 15m windows with a valid two-venue book on >= 50% of the grid; other days are reported, not counted, and the 14 counted days extend past 12-08 until 14 are counted",
+  "clock": "this box's (Tokyo) local receive time for both venues, exactly as in the holdout; the candidate file's 'Polymarket book from Dublin' is replaced by Tokyo's own Polymarket feed (operator brief 2026-11-24; Dublin's recorders are stopped)",
+  "code": "lp_arb/shadow_eval.py -> overnight/t1_arb.py ext() and lighter_eval.market_metrics (vendored copy lp_arb/frozen_code/lighter_eval.py, byte-identical to ~/lighter-shadow @1348b2e)",
+  "fee": "Polymarket taker rate per window: Dublin census (lp_arb/data/fees_by_window.csv) where it covers the window, else Gamma's feeSchedule rate for that market (lp_arb/fees.py). Lighter 0.01 p(1-p) as frozen.",
+  "decision_asset": "btc",
+  "descriptive_assets": ["eth"],
+  "definitions": {
+    "pessimistic_count": "500+500 hedged fills from ext() with pess == true (Lighter quote still >= 5 sh at our price or better 100 ms after the Lighter match) and pess_h == true (PM hedge price still showing >= 5 sh 100 ms after the hedge match); P&L at the frozen clip",
+    "c_per_share": "100 * sum(pnl * qty) / sum(qty) over the counted set",
+    "usd_per_day_ci": "90% interval of $/day from 4000 bootstrap resamples of per-window $ (all counted BTC windows, zero for windows without fills), divided by counted days; seed 0",
+    "persistence_300ms_primary": "share of 500+500 Lighter-leg fills whose trigger-time Lighter quote (>= 5 sh at the trigger price or better) is still displayed 300 ms after the trigger (ext() field disp300). This is the measure that gave 0.918 BTC on the holdout, and the 0.80 pass / 0.65 kill thresholds were set against it.",
+    "persistence_per_trigger_descriptive": "same check at +100/+300/+500 ms over ALL 500+500 triggers (filled or not). Reported, not a pass/kill input; its holdout value is computed after this file is committed, on 11-13..23, and reported next to the shadow value.",
+    "rolling_7day": "the last 7 counted days, recomputed after every counted day from day 7 on",
+    "max_day_share": "max over counted days of (that day's pessimistic-count $ / 14-day pessimistic-count $), only when the 14-day total is > 0",
+    "settlement_agreement": "Lighter outcome code vs Polymarket winner per BTC window, mapping code->side by the holdout's map (Lighter outcome 1 = Down won, 2 = Up won; 1,099 + 998 = 2,097/2,097 on 11-13..23 inforce run); any window with both known and disagreeing is a disagreement",
+    "fee_or_resolution_change": "Gamma feeType or feeSchedule.rate of any counted BTC 15m window differs from the first counted window's, or the market's resolutionSource/description text changes; Lighter fee changes are not detectable from the recorded data and are listed as an unchecked item"
+  },
+  "pass_all": "as frozen/t1_shadow_candidate.json pass_all, with the definitions above",
+  "kill_any": "as frozen/t1_shadow_candidate.json kill_any, with the definitions above; checked after every counted day (persistence and settlement from day 1, rolling 7-day from day 7)",
+  "recorder_health_reported_not_gating": ["Polymarket disconnect rows (bid=ask=0) in BTC 15m", "updown-rec journal minutes whose last_err is a 1013 close (lower bound)", "share of BTC 15m pm rows > 1 s late (local - exchange)", "gaps > 5 s between consecutive BTC 15m pm rows inside a window", "Lighter book-unknown rows"]
+}

@@ -9,7 +9,9 @@ adds descriptive rows computed by `ext()` (event-time delays that need not sit o
   day   --day D [--fee-mode M]  per-window rows -> OUT/<mode>/<day>.pkl
   agg   --since D [--until D]   aggregate per-day files
 fee modes: frozen07 = the evaluator's 0.07*p*(1-p) on Polymarket (used for the interim reproduction);
-           inforce = each window's Gamma feeSchedule rate.
+           inforce = each window's Gamma feeSchedule rate;
+           census  = the rate takers actually paid (Dublin census, lp_arb/fees.py; added 2026-11-24 as a
+                     correction of the fee input only, the rule is unchanged).
 """
 
 import argparse
@@ -27,6 +29,9 @@ import numpy as np
 
 sys.path.insert(0, "/home/ubuntu/lighter-shadow")
 import lighter_eval as le  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lp_arb import fees as lpfees  # noqa: E402
 
 LT_DIR, PM_DIR = Path("/home/ubuntu/lighter-data"), Path("/home/ubuntu/shadow-rec")
 OUT = Path(__file__).resolve().parent / "out" / "t1"
@@ -190,6 +195,7 @@ def cmd_day(a):
     out = OUT / a.fee_mode
     out.mkdir(parents=True, exist_ok=True)
     t0, t1 = utc(d), utc(d) + 86400
+    census = lpfees.load_census(a.fee_csv) if a.fee_mode == "census" else {}
     LB = load_hours(LT_DIR, "lb", le.LB_DT, d, lambda x: (x["tf"] == 15) & (x["a"] <= 1) & (x["e"] >= t0) & (x["e"] < t1))
     LT = load_hours(LT_DIR, "lt", le.LT_DT, d, lambda x: (x["tf"] == 15) & (x["a"] <= 1) & (x["e"] >= t0) & (x["e"] < t1))
     _, first = np.unique(LT["id"], return_index=True)
@@ -210,8 +216,11 @@ def cmd_day(a):
         T = np.sort(LT[(LT["a"] == ai) & (LT["e"] == e)], order="l")
         P = np.sort(PM[(PM["a"] == ai) & (PM["e"] == e)], order="l")
         W, rate, ftype = meta.get((nm, e), (np.nan, np.nan, ""))
+        fsrc = a.fee_mode
         if a.fee_mode == "frozen07":
             c = 0.07
+        elif a.fee_mode == "census":
+            c, fsrc = lpfees.rate_for(nm, e, census, rate)
         else:
             c = rate if rate == rate else (0.05 if (nm == "btc" and e >= 1795219140) else 0.01)
         le.fp = lambda p, c=c: c * p * (1 - p)  # noqa: E731  (market_metrics reads the module global)
@@ -221,7 +230,7 @@ def cmd_day(a):
         r = {k: v for k, v in r.items() if k.startswith(("seq", "both_valid", "grid", "l_valid", "arb_"))}
         fills, trig = ext(L, T, P, W, e, le.fp) if len(P) else ([], {})
         mshare = (sum(t["s"] for t in tr if t["maker"] == MAKER), sum(t["s"] for t in tr))
-        res.append(dict(asset=nm, e=e, W=W, lcode=lo.get((nm, e)), fee=c, ftype=ftype, r=r, fills=fills, trig=trig,
+        res.append(dict(asset=nm, e=e, W=W, lcode=lo.get((nm, e)), fee=c, fsrc=fsrc, ftype=ftype, r=r, fills=fills, trig=trig,
                         maker_sh=mshare, npm=len(P), nl=len(L)))
     with (out / f"{d}.pkl").open("wb") as f:
         pickle.dump(res, f)
@@ -284,12 +293,13 @@ def main():
     p.add_argument("--days", nargs=2, required=True)
     p = sp.add_parser("day")
     p.add_argument("--day", required=True)
-    p.add_argument("--fee-mode", default="inforce", choices=("frozen07", "inforce"))
+    p.add_argument("--fee-mode", default="inforce", choices=("frozen07", "inforce", "census"))
+    p.add_argument("--fee-csv", default=str(lpfees.DEFAULT_CSV))
     p.add_argument("--until-e", type=int, default=None)
     p = sp.add_parser("agg")
     p.add_argument("--since", required=True)
     p.add_argument("--until", default="9999")
-    p.add_argument("--fee-mode", default="inforce", choices=("frozen07", "inforce"))
+    p.add_argument("--fee-mode", default="inforce", choices=("frozen07", "inforce", "census"))
     p.add_argument("--until-e", type=int, default=None)
     a = ap.parse_args()
     {"meta": cmd_meta, "day": cmd_day, "agg": cmd_agg}[a.cmd](a)
