@@ -76,7 +76,7 @@ def main():
     for t in batch:
         by[(t["e"], t["side"])][1].append(t)
     matched, p_only, b_only = [], [], []
-    for key, (P, B) in by.items():
+    for P, B in by.values():
         P.sort(key=lambda z: z["t"])
         B.sort(key=lambda z: z["t"])
         used = set()

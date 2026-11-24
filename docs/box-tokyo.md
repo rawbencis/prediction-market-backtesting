@@ -190,8 +190,8 @@ recorders were stopped on 11-24 anyway.
 **A later live probe.** The order of events is fixed: the Polymarket hedge can only be sent after the Lighter
 fill is known, and the fill is known in Tokyo first (Lighter matches ~2 ms away). From there:
 - Tokyo → London directly: ≈ 120 ms + 150 ms Polymarket hold ≈ 270 ms.
-- Relay the fill to Dublin (≈ 101 ms measured) and send from Dublin (Dublin → London ≈ 10–15 ms) + 150 ms
-  hold ≈ 265 ms.
+- Relay the fill to Dublin (≈ 101 ms one way, measured) and send from Dublin (Dublin → London ≈ 10–15 ms;
+  typical figure, not measured here) + 150 ms hold ≈ 265 ms.
 
 The two are the same to within the noise, and the Tokyo-only path has one fewer process, socket and box to
 fail. Dublin only helps if Polymarket's data arrives there earlier *and* the decision is made there, which

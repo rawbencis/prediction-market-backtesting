@@ -26,7 +26,7 @@ owners, and deletions of anything not created tonight need the operator.
 | `~/lp-arb/{shadow,paper,onetouch}-test` | small | — | delete after 11-25 review | `rm -rf ~/lp-arb/shadow-test ~/lp-arb/paper-test ~/lp-arb/onetouch-test` |
 | `~/onetouch-mm/research/onetouch_mm/data` | 1.4 G (11-12/13) | ≈ 1.5–3 GB/day | `--keep-days 45` as asked, with a **30 GB free-space floor** that pauses recording (never deletes) | at 3 GB/day the floor is reached around day 18 unless ≈ 50 GB more is freed; options in §3 |
 | `~/onetouch-mm/.../data` old 11-12/13 files | 1.4 G | — | keep until the new recording has ≥ 3 weeks, then delete (1 day, 3 truncated hours, 1 settlement) | operator |
-| `~/poly-smart-flow/data/books.sqlite3` | 29 G | none (stopped 11-04) | compress to `.zst` (see the 11-25 report, T5), then the operator removes the original | |
+| `~/poly-smart-flow/data/books.sqlite3` | 29 G | none (stopped 11-04) | keep, or the owner deletes it; **do not compress** (zstd -19 --long measured 1.10–1.12×: ≈ 3 GB for ≈ 6.5 CPU-hours) | owner |
 | `~/stwf2-cache`, `~/binance_1s`, `~/btc1s` | 9.8 G | none | keep | |
 
 ## 3. One-touch disk arithmetic
@@ -37,9 +37,9 @@ Tonight's 20-minute test: see the 11-25 report (T4) for the measured MB/hour.
 - 21 days (the minimum before a read) ≈ 61 GB; 45 days ≈ 130 GB. Free now ≈ 84 GB.
 - With the 30 GB floor, recording pauses (and logs `disk low … PAUSED`) at ≈ 54 GB used, i.e. after
   ≈ 18 days at 3 GB/day — just short of the 3-week minimum.
-- Ways to make 45 days fit, any one is enough: (a) compress `books.sqlite3` and remove the original
-  (frees ≈ 20+ GB, measured ratio in the report); (b) recompress finished hours from gzip to zstd -19
-  (Dublin measured 1.5–1.7× on gzip'd JSON; ≈ 1 GB/day saved); (c) drop to `--keep-days 25`.
+- Ways to make 45 days fit: (a) the owner deletes `books.sqlite3` (frees 29 GB; compressing it frees only
+  ≈ 3 GB); (b) recompress finished hours from gzip to zstd -19
+  (Dublin measured 1.5–1.7× on gzip'd JSON; ≈ 1 GB/day saved); (c) drop to `--keep-days 25`. (b) alone is not enough at 3 GB/day.
 
 ## 4. Archive command for the T1 holdout days (operator; optional)
 

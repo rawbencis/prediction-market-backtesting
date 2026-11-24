@@ -1,6 +1,5 @@
 """T1 census-fee rerun: robustness rows (descriptive), fee-regime and fee-source splits. Reads out/t1/census/*.pkl."""
 import pickle
-import sys
 from pathlib import Path
 
 import numpy as np

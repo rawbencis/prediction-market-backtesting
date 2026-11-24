@@ -429,27 +429,30 @@ class Paper:
     async def settle(self, w):
         """Wait for both venues' outcomes, then log the paper P&L of the window's pairs."""
         pm_w = l_out = None
-        for _ in range(40):
+        for _ in range(60):  # up to 30 min; Lighter publishes outcomes 94-430 s after the window (11-24, median 336 s)
             await self.sleep(30)
-            try:
-                if pm_w is None and w.slug:
-                    m = (await asyncio.to_thread(http_json, GAMMA + f"slug={w.slug}"))[0]
-                    names = [n.upper() for n in json.loads(m["outcomes"])]
-                    pr = [float(v) for v in json.loads(m["outcomePrices"])]
-                    if max(pr) >= 0.99:
-                        pm_w = names[pr.index(max(pr))]
-                if l_out is None and w.mid in self.l_outcomes:
-                    l_out = self.l_outcomes[w.mid]
-            except Exception as ex:  # noqa: BLE001
-                self.err("settle", ex)
-            if pm_w is not None and (l_out is not None or not w.pairs):
+            if pm_w is None and w.slug:
+                try:  # closed markets are only returned with closed=true
+                    ms = await asyncio.to_thread(http_json, GAMMA + f"closed=true&slug={w.slug}")
+                    if ms:
+                        names = [n.upper() for n in json.loads(ms[0]["outcomes"])]
+                        pr = [float(v) for v in json.loads(ms[0]["outcomePrices"])]
+                        if max(pr) >= 0.99:
+                            pm_w = names[pr.index(max(pr))]
+                except Exception as ex:  # noqa: BLE001
+                    self.err("settle_pm", ex)
+            if l_out is None and w.mid in self.l_outcomes:
+                l_out = self.l_outcomes[w.mid]
+            if pm_w is not None and l_out is not None:
                 break
         # a hedged pair pays $1 whichever side wins when both venues settle the same way
         self.known_mids.discard(w.mid)
         self.l_outcomes.pop(w.mid, None)
         usd = sum(p["pnl"] * p["qty"] for p in w.pairs)
         sh = sum(p["qty"] for p in w.pairs)
-        self.log("settle", window=w.e, pm_winner=pm_w, lighter_outcome=l_out, triggers=w.n_trig, pairs=len(w.pairs), shares=sh,
+        lcode = l_out[0] if l_out else None
+        agree = None if pm_w is None or lcode not in ("1", "2") else ((lcode == "2") == (pm_w == "UP"))
+        self.log("settle", window=w.e, pm_winner=pm_w, lighter_outcome=l_out, venues_agree=agree, triggers=w.n_trig, pairs=len(w.pairs), shares=sh,
                  paper_pnl_usd=round(usd, 4), cents_per_share=round(100 * usd / sh, 3) if sh else None,
                  note="lighter outcome 2 = Up, 1 = Down (holdout map); P&L assumes both venues agree")
 

@@ -29,7 +29,7 @@ import subprocess
 import sys
 import time
 import urllib.request
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
