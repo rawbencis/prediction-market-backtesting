@@ -216,6 +216,8 @@ async def ws_loop(w, out, st):
                         on_msg(raw, lus, w, out, st)
         except Exception as e:  # noqa: BLE001
             st["err"] = f"ws {w.slug}: {e!r}"[:160]
+            if time.time() >= w.end and "resolved" in repr(e):  # server ends the feed ~2 min after close: done
+                drop_at = 0
         if w.up:
             st["conn"] -= 1
         w.up = False
@@ -264,6 +266,8 @@ async def rest_loop(w, out, st):
                     if (wb[:1], wa[:1]) != (bl[:1], al[:1]):
                         st["rest_mismatch"] += 1
             except Exception as e:  # noqa: BLE001
+                if time.time() >= w.end and "404" in repr(e):  # book removed after resolution: stop polling
+                    return
                 st["err"] = f"rest {w.slug}: {e!r}"[:160]
                 st["rest_err"] += 1
             await asyncio.sleep(0.5)
