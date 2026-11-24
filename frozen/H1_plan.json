@@ -1,0 +1,41 @@
+{
+  "name": "H1: favourite under-reaction / fair value on the BTC and ETH 1h and 4h up/down series",
+  "frozen_utc": "2026-11-24T17:02:27Z",
+  "frozen_before_any_data": "Written before hourly-rec has recorded a single production row. The 2026-11-24 smoke tests (4 min, 70-85 min) are recorder checks only and are NOT part of dev or holdout; no price/edge number was computed from them.",
+  "origin": "Tokyo T4 open question; spec overnight/T4_RECORDER_SPEC.md on research/overnight-1124-tokyo-code",
+  "markets": ["btc-updown-1h-<epoch>", "eth-updown-1h-<epoch>", "btc-updown-4h-<epoch>", "eth-updown-4h-<epoch>"],
+  "settlement_rule_observed": {
+    "statement": "Up iff TWAP60(end) >= TWAP60(start), where TWAP60(t) is the Chainlink BTC/USD (ETH/USD) 60 s TWAP stream value stamped at t. It is NOT the average over the whole window.",
+    "evidence": [
+      "Gamma eventMetadata.priceToBeat / finalPrice of btc-updown-1h-1795510800 and -1795507200 equal, to every digit, the feeds-rec twap60 row (legacy RTDS topic crypto_prices_twap_sixty) whose venue time x equals the window start / end; the hour's mean of that stream differs by 40-60 $.",
+      "btc-updown-1h-1795532400 finalPrice == btc-updown-5m-1795535700 finalPrice == btc-updown-5m-1795536000 priceToBeat (59677.906052991086).",
+      "Gamma cryptoMarketConfig: {duration 1h|4h|5m, twapEnabled true, twapLookbackSeconds 60}; resolutionSource https://data.chain.link/streams/<asset>-usd-twap-60s-streams."
+    ],
+    "deviation_from_spec": "The T4 spec and the market text say 'TWAP over the window'. The model below follows the observed rule. If 2 of the first 5 dev days show a window whose finalPrice is not the end-stamped TWAP60 row, stop and re-register before fitting."
+  },
+  "data": {
+    "books_prints": "~/hourly-rec/YYYY-MM-DD/{pm,tr,bk,rs}-HH.bin (hourly_rec.py, branch research/hourly-rec)",
+    "reference": "~/feeds-rec/YYYY-MM-DD/{twap60,chainlink}-HH.jsonl.gz (feeds-rec; must be running, it is disabled since 2026-11-24 10:59)",
+    "resolution": "~/hourly-rec/YYYY-MM-DD/resolutions.jsonl (priceToBeat, finalPrice, outcomePrices)",
+    "preferred_reference": "PolyBolt authenticated Chainlink TWAP feed (gap-free). Needs operator-supplied API-only credentials; until then the legacy RTDS topic is used and windows with a twap60 gap > 10 s in the last 120 s or around the start are excluded (counted and reported)."
+  },
+  "start_date": "First UTC day D on which hourly-rec AND feeds-rec (twap60) both have >= 23 h of rows. Recorded in the first dev report.",
+  "dev": "Windows whose start epoch is in [D, D + 21 days)",
+  "holdout": "Windows whose start epoch is in [D + 21 days, D + 35 days). Read once, after the last holdout window has resolved; no refit.",
+  "fair_value_model": {
+    "inputs_at_decision_time_t": "S0 = TWAP60(start) (known once the window has started); the Chainlink price path up to t; the TWAP60 path up to t; tau = end - t (s).",
+    "model": "Let A = TWAP60(end) = mean of Chainlink price over [end-60, end]. Under a driftless log-normal Chainlink price with per-second vol sigma: if tau >= 60, ln A - ln P_t ~ N(-v/2, v) with v = sigma^2 * (tau - 60 + 20) (the last 60 s average contributes 60/3 s of variance); if tau < 60, the elapsed part of the averaging window is known: A = ((60 - tau) * known_mean + tau * future_mean) / 60 with future_mean variance sigma^2 * tau / 3 (in log terms, scaled by tau/60). FV_up = P(A >= S0).",
+    "sigma": "EWMA of squared 1 s Chainlink log returns, half-life H minutes, floor at the dev 5th percentile.",
+    "parameters_fit_on_dev_only": ["H in {5, 15, 60} min", "a variance scale k in [0.5, 2] by minimum log-loss of FV_up against outcomes, sampled once per minute per window"],
+    "no_other_free_parameters": true
+  },
+  "trade_rule_to_select_on_dev": {
+    "form": "Taker: at most one entry per window per token, at the first 1 s sample where FV - ask >= theta (buy UP) or (1 - FV) - down_ask >= theta (buy DOWN), with tau in [tau_min, tau_max]. Size 5 shares, fill at the recorded ask with the visible size; fill delay = Dublin 'live' scenario (book seen + 190 ms).",
+    "grid": {"theta_cents": [2, 3, 5, 8], "tau_window_s": [[60, 600], [600, 1800], [1800, 3600], [3600, 14400]], "series": ["1h", "4h"], "asset": ["btc", "eth"]},
+    "selection": "On dev, the cell(s) with edge_net/SE >= 2 and edge_net >= +1c; at most 3 cells frozen into frozen/H1_cells.json before the holdout starts. If none, H1 closes on dev."
+  },
+  "edge_definition": "edge_net (c/share) = 100 * (1{token wins} - fill_price) - fee, fill_price = recorded ask at decision + 190 ms (i.e. mid + half-spread at fill), fee = 100 * 0.01 * p * (1 - p) (Gamma feeSchedule rate 0.01, takerOnly, exponent 1, on 2026-11-24). Maker rebate = 0.",
+  "bar": "Holdout edge_net >= +1.0 c/share AND 90% interval (bootstrap resampling windows, 2000 draws) lower bound > 0, for a frozen cell; >= 100 fills in the holdout for the cell.",
+  "counting": "One window = one market (asset x series x start epoch). Windows with a recorder drop (pm bid=ask=0 row) in the decision interval or a reference gap are excluded and counted.",
+  "not_allowed": ["refit after holdout start", "adding cells after dev", "reading holdout before D + 35 days and its resolutions"]
+}
