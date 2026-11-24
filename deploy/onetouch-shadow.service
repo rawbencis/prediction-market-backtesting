@@ -1,0 +1,24 @@
+[Unit]
+Description=Polymarket one-touch MM shadow + raw recorder (paper only, no keys)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/onetouch-mm/research/onetouch_mm
+Environment=DATA=/home/ubuntu/onetouch-mm/research/onetouch_mm/data
+Environment=PYTHONUNBUFFERED=1
+# Binance.com is reachable from ap-northeast-1 (checked 2026-11-24), so BN_WS keeps its default.
+# A US-region box would need: Environment=BN_WS=wss://data-stream.binance.vision/stream
+ExecStart=/home/ubuntu/onetouch-mm/research/onetouch_mm/.venv/bin/python shadow.py --keep-days 45 --min-free-gb 30
+# SIGTERM closes the current hourly .jsonl.gz cleanly (2026-11-25 fix); give discovery threads time to finish
+KillSignal=SIGTERM
+TimeoutStopSec=90
+Restart=always
+RestartSec=5
+Nice=15
+CPUQuota=30%
+MemoryMax=600M
+
+[Install]
+WantedBy=multi-user.target

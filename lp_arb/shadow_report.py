@@ -50,14 +50,18 @@ def fmt(x, s="{:+.2f}"):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--dir", type=Path, default=OUT)
+    ap.add_argument("--test-start", default=None, help="TEST ONLY: count days from this date and ignore the counted flag")
     a = ap.parse_args()
+    start = a.test_start or START
     p = a.dir / "days.csv"
     rows = list(csv.DictReader(p.open())) if p.exists() else []
     btc = [r for r in rows if r["asset"] == "btc"]
-    counted = [r for r in btc if r["day"] >= START and r["counted"] == "1"][:NDAYS]
+    counted = [r for r in btc if r["day"] >= start and (r["counted"] == "1" or a.test_start)][:NDAYS]
     docs = {r["day"]: json.loads((a.dir / f"{r['day']}.json").read_text())["assets"] for r in counted}
     L = []
     L.append(f"# T1 paper shadow (Lighter x Polymarket > 4c, BTC): report at {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC\n")
+    if a.test_start:
+        L.append(f"**TEST MODE: counting from {a.test_start} and ignoring the counted flag. Not the shadow of record.**\n")
     L.append(f"Rule: frozen/t1_lighter_pm_arb.json. Pass/kill: frozen/t1_shadow_candidate.json with frozen/t1_shadow_eval_spec.json. "
              f"Count starts {START} 00:00 UTC; {len(counted)} of {NDAYS} days counted.\n")
     L.append("## By day (all evaluated days; only `counted = 1` BTC days from 11-25 count)\n")

@@ -1,0 +1,33 @@
+lp_arb/shadow_eval.py run by hand on the T1 holdout days (2026-11-24 ~21:50-22:00 UTC, ~/lp-arb/shadow-test),
+compared with the census-fee holdout per-day files (overnight/out/t1/census/*.pkl, since deleted), BTC and ETH, 500+500 hedged fills.
+"excl 23:45" drops the shadow's last window of the day; the holdout driver kept that window only when a Lighter row
+after 00:00:00 had been loaded (4 of 11 days: 11-13, 11-14, 11-16, 11-17 have 192 windows; the other 7 days have 190).
+
+day asset | holdout fills $ | shadow fills $ (all 96) | shadow excl 23:45 | match
+2026-11-13 btc | 227 +657.13 | 227 +657.13 | 227 +657.13 | exact (holdout had 96 windows)
+2026-11-13 eth | 225 +447.66 | 225 +447.66 | 225 +447.66 | exact
+2026-11-14 btc | 65 -41.80 | 65 -41.80 | 65 -41.80 | exact (96)
+2026-11-14 eth | 27 -1.01 | 27 -1.01 | 27 -1.01 | exact
+2026-11-15 btc | 101 +148.90 | 103 +144.00 | 101 +148.90 | exact excl 23:45
+2026-11-15 eth | 23 +2.11 | 23 +2.11 | 23 +2.11 | exact
+2026-11-16 btc | 134 +282.31 | 134 +282.31 | 133 +281.66 | exact with all 96 (holdout had 96)
+2026-11-16 eth | 25 +5.86 | 25 +5.86 | 25 +5.86 | exact
+2026-11-17 btc | 102 +40.72 | 102 +40.72 | 100 +42.08 | exact with all 96 (holdout had 96)
+2026-11-17 eth | 40 -5.56 | 40 -5.56 | 40 -5.56 | exact
+2026-11-18 btc | 241 +513.65 | 241 +513.65 | 241 +513.65 | exact
+2026-11-18 eth | 33 +9.87 | 33 +9.87 | 33 +9.87 | exact
+2026-11-19 btc | 135 +192.43 | 135 +192.43 | 135 +192.43 | exact
+2026-11-19 eth | 23 -14.77 | 23 -14.77 | 23 -14.77 | exact
+2026-11-20 btc | 144 +368.34 | 144 +368.34 | 144 +368.34 | exact
+2026-11-20 eth | 86 +296.21 | 86 +296.21 | 86 +296.21 | exact
+2026-11-21 btc | 60 +56.20 | 62 +48.83 | 60 +56.20 | exact excl 23:45
+2026-11-21 eth | 18 +3.84 | 18 +3.84 | 18 +3.84 | exact
+2026-11-22 btc | 76 +156.43 | 77 +156.18 | 76 +156.43 | exact excl 23:45
+2026-11-22 eth | 39 +56.08 | 39 +56.08 | 39 +56.08 | exact
+2026-11-23 btc | 158 +281.35 | 159 +282.11 | 158 +281.35 | exact excl 23:45
+2026-11-23 eth | 39 -25.84 | 39 -25.84 | 39 -25.84 | exact
+
+Per-trigger Lighter-quote persistence on the holdout (descriptive; defined in frozen/t1_shadow_eval_spec.json before it was computed),
+holdout windows only (shadow's extra 23:45 windows excluded):
+btc holdout per-trigger persistence (n=2438): +100 0.784 +300 0.657 +500 0.598; fill-based +300 0.912 (n=1440)
+eth holdout per-trigger persistence (n=1099): +100 0.756 +300 0.610 +500 0.533; fill-based +300 0.907 (n=578)
