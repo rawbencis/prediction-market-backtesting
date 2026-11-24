@@ -97,6 +97,9 @@ def main():
     ap.add_argument("--days", nargs="+", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--final", action="store_true")
+    ap.add_argument("--basis", action="store_true", help="Dublin-only diagnostic (NOT the shared grid): on Chainlink-strike "
+                    "windows, S is divided by exp(basis), basis = median of ln(Binance spot / Chainlink) over the 600 s "
+                    "of Chainlink ticks ending 2 s before t (no look-ahead)")
     a = ap.parse_args()
     ai, W = ASSETS.index(a.asset), 60 * a.tf
     win = load_settle()
@@ -106,6 +109,9 @@ def main():
         twap.update({k: v for k, v in feed_series(str(np.datetime64(day) - np.timedelta64(1, "D")), "twap60", a.asset).items()
                      if k not in twap} if not twap else {})
         cl = feed_series(day, "chainlink", a.asset, by="r") if a.final else {}
+        clx = feed_series(day, "chainlink", a.asset, by="x") if a.basis else {}
+        clx_s = np.array(sorted(clx), dtype=np.int64)
+        clx_v = np.array([clx[k] for k in clx_s]) if len(clx_s) else np.zeros(0)
         bn_prev = read(*prev_hour(day, 0), "bn", BN_DT, lambda x: (x["src"] == 0) & (x["a"] == ai))
         for h in range(24):
             bn_cur = read(day, h, "bn", BN_DT, lambda x: (x["src"] == 0) & (x["a"] == ai))
@@ -115,6 +121,17 @@ def main():
             bn = np.concatenate([bn_prev, bn_cur])
             bn = bn[np.argsort(bn["l"], kind="stable")]
             bl, bp = bn["l"] // 1000, bn["p"]
+            if a.basis and len(clx_s):
+                oT = np.argsort(bn["T"], kind="stable")
+                bT, bpT = bn["T"][oT], bn["p"][oT]
+                hh0 = bn["l"][0] // 1_000_000
+                sel = (clx_s >= hh0) & (clx_s <= bn["l"][-1] // 1_000_000)
+                bx = clx_s[sel]
+                jj = np.searchsorted(bT, bx * 1000, "right") - 1
+                okb = jj >= 0
+                bx, bb = bx[okb], np.log(bpT[jj[okb]] / clx_v[sel][okb])
+            else:
+                bx, bb = np.zeros(0, np.int64), np.zeros(0)
             h0 = int((np.datetime64(f"{day}T{h:02d}:00") - np.datetime64("1970-01-01T00:00")) / np.timedelta64(1, "s"))
             eps = [e for e in range(h0, h0 + 3600, W)]
             pm = np.concatenate([read(day, h, "pm", PM_DT, lambda x: (x["a"] == ai) & (x["tf"] == a.tf)),
@@ -156,6 +173,13 @@ def main():
                     ib = int(np.searchsorted(bl, t, "right")) - 1
                     S = float(bp[ib])
                     S1 = float(bp[max(0, int(np.searchsorted(bl, t - 1000, "right")) - 1)])
+                    adj = 1.0
+                    if a.basis and ksrc == 1:
+                        lo_, hi_ = np.searchsorted(bx, t // 1000 - 602), np.searchsorted(bx, t // 1000 - 2, "right")
+                        if hi_ - lo_ < 60:
+                            continue  # no basis estimate: skip the sample
+                        adj = math.exp(-float(np.median(bb[lo_:hi_])))
+                    S *= adj
                     sl, ss = sd_ret(jt, 1800), sd_ret(jt, 60)
                     if not (sl > 0):
                         continue
@@ -163,7 +187,7 @@ def main():
                         Sx, sd = S, sl * math.sqrt(tau - 40)
                     else:
                         js = int(np.searchsorted(secs, end - 60_000))
-                        R = float(Ssec[js:jt + 1].mean()) if jt >= js else S
+                        R = float(Ssec[js:jt + 1].mean()) * adj if jt >= js else S
                         Sx, sd = ((60 - tau) * R + tau * S) / 60, sl * math.sqrt(tau ** 3 / 10800)
                     d_up = 1e4 * math.log(Sx / K)
                     z_up = d_up / 1e4 / sd

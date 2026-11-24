@@ -29,8 +29,10 @@ for n in range(0, len(todo), 50):
             continue
         if m.get("closed") and sorted(names) == ["DOWN", "UP"] and max(pr) >= 0.99 and min(pr) <= 0.01:
             have[m["slug"]] = names[pr.index(max(pr))]
-with OUT.open("w", newline="") as f:
+TMP = OUT.with_suffix(".tmp")
+with TMP.open("w", newline="") as f:
     w = csv.writer(f); w.writerow(["slug", "winner"]); w.writerows(sorted(have.items()))
+TMP.replace(OUT)
 print("have", sum(s in have for s in slugs), "of", len(slugs))
 for a in ("btc", "eth", "sol", "xrp", "doge"):
     for tf in (5, 15):
