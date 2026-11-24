@@ -430,3 +430,4 @@
 1336 ~/dublin-retest/fav-hedge/stage3.log
 477 ~/dublin-retest/fav-hedge/stage23.log
 44707 ~/dublin-retest/out/probe-hourly.log
+80052827 ~/overnight-wt/out/d1125/taker_rows.npz   (own intermediate of dublin1125/d1_fees.py --rows-out; regenerable)

@@ -186,7 +186,7 @@ One JSON object per line, gzip level 5. Common fields: `r` = local ns, `x` = ven
 | `resolutions.jsonl` | JSON | slug, asset, tf, epoch, priceToBeat, finalPrice, outcomePrices, umaResolutionStatus, closedTime, resolutionSource, description (resolution text), cryptoMarketConfig, feeSchedule, conditionId, tokens |
 | `../markets.csv` | text | tf, epoch, asset, slug, condition_id, up_token, down_token |
 
-- **Size:** measured in the 11-24 test; see the report §3.
+- **Size:** 7.05 MB/h ≈ 0.17 GB/day (11-24 test, 17:48–19:10 UTC; `pm` 72%, `bk` 27%), about 45 MB/day after zstd. 60 days raw ≈ 10 GB, so archive days ≥ 2 days old or lower `--keep-days`. Report 11-25 §3.
 
 ### Other directories
 
