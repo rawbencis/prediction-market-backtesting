@@ -1,0 +1,18 @@
+[Unit]
+Description=lp-arb T1 batch shadow: evaluate pending UTC days, paper-vs-shadow, report (read-only, no keys)
+Documentation=file:///home/ubuntu/lp-arb/code/docs/box-tokyo.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/lp-arb/code
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 lp_arb/shadow_eval.py --pending
+ExecStart=-/usr/bin/python3 lp_arb/paper_vs_shadow.py --yesterday
+ExecStart=/usr/bin/python3 lp_arb/shadow_report.py
+Nice=19
+MemoryMax=1500M
+CPUQuota=60%
+TimeoutStartSec=2h

@@ -1,0 +1,19 @@
+[Unit]
+Description=lp-arb T1 real-time PAPER trader, BTC 15m Lighter x Polymarket (paper only: no keys, no orders)
+Documentation=file:///home/ubuntu/lp-arb/code/docs/box-tokyo.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/lp-arb/code
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 lp_arb/paper.py --out /home/ubuntu/lp-arb/paper
+Restart=always
+RestartSec=10
+Nice=10
+MemoryMax=300M
+CPUQuota=25%
+
+[Install]
+WantedBy=multi-user.target

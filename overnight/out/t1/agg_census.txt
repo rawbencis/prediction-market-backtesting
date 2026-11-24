@@ -1,0 +1,16 @@
+mode census, 2026-11-13..2026-11-23: 2098 windows
+settlement: Lighter code vs PM winner {'1': [1099, 0], '2': [0, 998]}; agreement 1.0000 over 2097
+
+BTC 1049 windows (10.93 d). frozen 500+500: fills 1443 (132.1/d), +3.60c/share, $+243.0/day [90% +174.4,+322.4], last 2 min share of $ 0.23
+   grid 250+250: +5.40c/share $+429.5/day [+341.4,+530.4]
+   grid 500+1000: +2.08c/share $+143.4/day [+76.1,+217.6]
+   grid 1000+500: +2.48c/share $+150.2/day [+91.1,+213.4]
+   grid 1000+1000: +1.08c/share $+66.9/day [+5.3,+134.3]
+   grid 2000+2000: -1.61c/share $-107.0/day [-158.2,-53.8]
+
+ETH 1049 windows (10.93 d). frozen 500+500: fills 578 (52.9/d), +4.13c/share, $+70.9/day [90% +28.4,+126.5], last 2 min share of $ 0.08
+   grid 250+250: +6.09c/share $+123.7/day [+75.2,+185.9]
+   grid 500+1000: +3.04c/share $+51.1/day [+10.3,+106.4]
+   grid 1000+500: +3.17c/share $+42.6/day [+6.0,+91.0]
+   grid 1000+1000: +2.56c/share $+34.5/day [-0.4,+83.7]
+   grid 2000+2000: +0.13c/share $+1.8/day [-28.6,+38.3]

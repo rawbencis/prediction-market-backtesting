@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily 00:50 UTC run of lp-arb-shadow.service
+
+[Timer]
+OnCalendar=*-*-* 00:50:00 UTC
+Persistent=true
+Unit=lp-arb-shadow.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,32 @@
+
+BTC (1049 windows)
+  (500, 500): base 1443 fills, +3.60c, $+243/day [+174, +322]
+     Lighter quote >= 5 sh 100 ms after match: 0.874; PM hedge 100 ms after: 0.837
+     pessimistic: 1062 fills, +3.39c, $+180/day [+121, +249]
+     -1.4c haircut: 1443 fills, +2.20c, $+149/day [+89, +217]
+     5-share clips: 1443 fills, +2.90c, $+19/day [+13, +26]
+  (1000, 1000): base 1194 fills, +1.08c, $+67/day [+5, +134]
+     Lighter quote >= 5 sh 100 ms after match: 0.872; PM hedge 100 ms after: 0.856
+     pessimistic: 902 fills, +1.37c, $+67/day [+14, +125]
+     -1.4c haircut: 1194 fills, -0.32c, $-20/day [-75, +41]
+     5-share clips: 1194 fills, +1.44c, $+8/day [+3, +14]
+  pre-switch windows (fee 0.07): 764 windows, 1149 fills, +3.66c, $+272/day [+178, +378]
+  post-switch windows: 285 windows, 294 fills, +3.35c, $+166/day [+83, +258]
+  fee from census: 867 windows, 1154 fills, +3.47c, $+226/day [+150, +314]
+  fee 0.07 by extrapolation (no census, 11-13..14 21:40): 182 windows, 289 fills, +4.08c, $+326/day [+154, +523]
+
+ETH (1049 windows)
+  (500, 500): base 578 fills, +4.13c, $+71/day [+28, +127]
+     Lighter quote >= 5 sh 100 ms after match: 0.829; PM hedge 100 ms after: 0.832
+     pessimistic: 400 fills, +4.46c, $+54/day [+18, +103]
+     -1.4c haircut: 578 fills, +2.73c, $+47/day [+8, +98]
+     5-share clips: 578 fills, +3.87c, $+10/day [+4, +21]
+  (1000, 1000): base 460 fills, +2.56c, $+34/day [-0, +84]
+     Lighter quote >= 5 sh 100 ms after match: 0.857; PM hedge 100 ms after: 0.874
+     pessimistic: 347 fills, +2.73c, $+29/day [-3, +77]
+     -1.4c haircut: 460 fills, +1.16c, $+16/day [-17, +62]
+     5-share clips: 460 fills, +2.58c, $+5/day [-0, +15]
+  pre-switch windows (fee 0.07): 764 windows, 482 fills, +4.62c, $+93/day [+36, +173]
+  post-switch windows: 285 windows, 96 fills, +1.25c, $+11/day [-13, +46]
+  fee from census: 867 windows, 327 fills, +3.53c, $+36/day [-6, +106]
+  fee 0.07 by extrapolation (no census, 11-13..14 21:40): 182 windows, 251 fills, +4.72c, $+235/day [+136, +353]
