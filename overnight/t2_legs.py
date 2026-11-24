@@ -488,6 +488,9 @@ def cmd_agg(a):
             rows += pickle.load(p.open("rb"))
     rows = [w for w in rows if w["has_ptr"]]  # Polymarket prints are needed for maker fills; recorded from 11-13 21h
     keys = sorted({k for w in rows for k in w["cells"]})
+    if a.only:
+        cells = set(json.load(open(a.only))["cells"])
+        keys = [k for k in keys if k[0] in cells]
     rng = np.random.default_rng(7)
     out = []
     for asset in ("btc", "eth", "all"):
@@ -520,7 +523,7 @@ def cmd_agg(a):
                         s["L_fill140"] = float(np.mean([bool(x.get("fill140")) for x in tg]))
             out.append(s)
     OUT.mkdir(parents=True, exist_ok=True)
-    tag = f"{a.days[0]}_{a.days[1]}"
+    tag = f"{a.days[0]}_{a.days[1]}" + ("_frozen" if a.only else "")
     with (OUT / f"agg_{tag}.pkl").open("wb") as f:
         pickle.dump(out, f)
     print(f"{len(rows)} windows, {len(keys)} cell keys, {len(out)} rows -> agg_{tag}.pkl")
@@ -533,6 +536,7 @@ def main():
     p.add_argument("--day", required=True)
     p = sp.add_parser("agg")
     p.add_argument("--days", nargs=2, required=True)
+    p.add_argument("--only", default=None, help="frozen cells json: aggregate only these cells")
     p = sp.add_parser("grid")
     a = ap.parse_args()
     if a.cmd == "grid":

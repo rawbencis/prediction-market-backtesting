@@ -131,45 +131,61 @@ TB = ((50, 60), (30, 50), (10, 30), (2, 10))
 RB = ((0, 0.7), (0.7, 1.4), (1.4, np.inf))
 
 
+def load_1s():
+    sec, px = [], []
+    for f in sorted(Path("/home/ubuntu/binance_1s").glob("BTCUSDT-*.npy")):
+        x = np.load(f)
+        sec.append(x[:, 0].astype(np.int64))
+        px.append(x[:, 1])
+    sec, px = np.concatenate(sec), np.concatenate(px)
+    o = np.argsort(sec)
+    return sec[o], px[o]
+
+
 def cmd_calib(a):
+    """z at each prices-history point's own timestamp (no staleness): S = last completed Binance 1 s close before the
+    point, K = 1 s close at the open second; sigma from trailing 24 h of 1 m returns; r = trailing 60 min / 24 h."""
     kt, kc = load_klines()  # kt: open time (s) of each 1m bar, kc: its close
     lr = np.diff(np.log(kc))
-    lt = kt[1:]
+    lt = kt[1:] + 60  # time at which each return is known (close of the later bar)
+    s1, p1 = load_1s()
     with (OUT / "h1_markets.csv").open() as f:
         mk = [r for r in csv.reader(f) if r[2] != ""]
     samples = []  # (e, tau_min, z, r, p, win)
+    n_no1s = 0
     for e_, tok, w, fee in mk:
         e, W = int(e_), float(w)
+        if (a.regime == "legacy") != (e < NEW_FROM):
+            continue
         p_ = OUT / "hist" / f"{e}.json"
         if not p_.exists():
             continue
         h = json.loads(p_.read_text())
         if len(h) < 5:
             continue
-        ht = np.array([x["t"] for x in h])
-        hp = np.array([x["p"] for x in h])
-        i0 = np.searchsorted(kt, e) - 1  # bar ending at e: close at e (bar open e-60)
-        if i0 < 1440 or kt[i0] != e - 60:
+        i0 = np.searchsorted(s1, e - 1)
+        if i0 >= len(s1) or s1[i0] != e - 1:
+            n_no1s += 1
             continue
-        K = kc[i0]
-        for m in range(1, 59):
-            t = e + 60 * m
-            i = np.searchsorted(kt, t - 60)  # bar [t-60, t) has close at t
-            if i >= len(kt) or kt[i] != t - 60:
+        K = p1[i0]
+        for x in h:
+            t, pr = int(x["t"]), float(x["p"])
+            tau = (e + 3600 - t) / 60
+            if not (2 <= tau < 60):
                 continue
-            S = kc[i]
-            j = np.searchsorted(lt, t - 60, "right")
+            i = np.searchsorted(s1, t - 1)
+            if i >= len(s1) or s1[i] != t - 1:
+                continue
+            S = p1[i]
+            j = np.searchsorted(lt, t, "right")
             r24 = lr[max(0, j - 1440):j]
             r60 = lr[max(0, j - 60):j]
             if len(r24) < 1000:
                 continue
             sl, ss = r24.std(), r60.std()
-            tau = 60 - m
             z = np.log(S / K) / (sl * np.sqrt(tau))
-            k = np.searchsorted(ht, t, "right") - 1
-            if k < 0 or t - ht[k] > 180:
-                continue
-            samples.append((e, tau, z, ss / sl, hp[k], W))
+            samples.append((e, tau, z, ss / sl, pr, W))
+    print(f"markets without 1 s Binance coverage (dropped): {n_no1s}")
     S_ = np.array(samples)
     print(f"markets with data: {len(np.unique(S_[:, 0]))}, samples {len(S_)}; days {(S_[:, 0].max() - S_[:, 0].min()) / 86400:.1f}")
     print("\nminutes left | z | r | markets | mean price | win | edge_mid ± SE | t")
@@ -208,7 +224,7 @@ def cmd_calib(a):
                 continue
             ed = X[:, 5] - X[:, 4]
             print(f"[{tl},{th}) | {ZL[zi]} | {len(X)} | {X[:, 4].mean():.3f} | {X[:, 5].mean():.3f} | {100 * ed.mean():+.2f} ± {100 * ed.std(ddof=1) / np.sqrt(len(X)):.2f}c")
-    np.save(OUT / "calib_samples.npy", S_)
+    np.save(OUT / f"calib_samples_{a.regime}.npy", S_)
 
 
 def main():
@@ -220,7 +236,8 @@ def main():
     p = sp.add_parser("klines")
     p.add_argument("--months", nargs="*", default=[])
     p.add_argument("--days", nargs=2, required=True)
-    sp.add_parser("calib")
+    p = sp.add_parser("calib")
+    p.add_argument("--regime", choices=("legacy", "new"), default="legacy")
     a = ap.parse_args()
     {"fetch": cmd_fetch, "klines": cmd_klines, "calib": cmd_calib}[a.cmd](a)
 
