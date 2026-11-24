@@ -1,0 +1,14 @@
+{
+  "name": "t2_cells",
+  "frozen_utc": "2026-11-24T10:20:00Z",
+  "dev": "2026-11-13..17 windows with Polymarket prints (774 windows; 11-11..12 have no PM prints and are excluded)",
+  "holdout": "2026-11-18..2026-11-23, BTC + ETH pooled, Q = 5 shares",
+  "selection": "the three highest dev c/share cells at Q=5 (all assets). None was positive in dev (best -0.21c [-3.90,+3.54]); frozen only to give a holdout read, expected result FAIL.",
+  "cells": [
+    "B:x=0.02,w=5,mode=Pfollow_Lfade,entry=taker",
+    "B:x=0.04,w=5,mode=Pfollow_Lfade,entry=taker",
+    "B:x=0.04,w=1,mode=Pfollow_Lfade,entry=taker"
+  ],
+  "pass_all": ["holdout c/share 90% interval lower bound > 0", "holdout point estimate >= +1.0 c/share", "paired result better than placebo (window P&L sd lower AND both-filled count above placebo)"],
+  "code": "overnight/t2_legs.py (grid frozen/t2_grid.json, commit 8b4ac18)"
+}

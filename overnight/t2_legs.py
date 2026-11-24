@@ -486,6 +486,7 @@ def cmd_agg(a):
     for p in sorted(OUT.glob("*.pkl")):
         if a.days[0] <= p.stem <= a.days[1]:
             rows += pickle.load(p.open("rb"))
+    rows = [w for w in rows if w["has_ptr"]]  # Polymarket prints are needed for maker fills; recorded from 11-13 21h
     keys = sorted({k for w in rows for k in w["cells"]})
     rng = np.random.default_rng(7)
     out = []
