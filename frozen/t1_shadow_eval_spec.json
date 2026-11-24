@@ -7,7 +7,7 @@
   "count_unit": "a UTC day counts when the evaluator ran on it and both recorders covered >= 90% of its BTC 15m windows with a valid two-venue book on >= 50% of the grid; other days are reported, not counted, and the 14 counted days extend past 12-08 until 14 are counted",
   "clock": "this box's (Tokyo) local receive time for both venues, exactly as in the holdout; the candidate file's 'Polymarket book from Dublin' is replaced by Tokyo's own Polymarket feed (operator brief 2026-11-24; Dublin's recorders are stopped)",
   "code": "lp_arb/shadow_eval.py -> overnight/t1_arb.py ext() and lighter_eval.market_metrics (vendored copy lp_arb/frozen_code/lighter_eval.py, byte-identical to ~/lighter-shadow @1348b2e)",
-  "fee": "Polymarket taker rate per window: Dublin census (lp_arb/data/fees_by_window.csv) where it covers the window, else Gamma's feeSchedule rate for that market (lp_arb/fees.py). Lighter 0.01 p(1-p) as frozen.",
+  "fee": "Polymarket taker rate per window: Dublin census (lp_arb/census/fees_by_window.csv) where it covers the window, else Gamma's feeSchedule rate for that market (lp_arb/fees.py). Lighter 0.01 p(1-p) as frozen.",
   "decision_asset": "btc",
   "descriptive_assets": ["eth"],
   "definitions": {

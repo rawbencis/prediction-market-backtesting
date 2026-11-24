@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-DEFAULT_CSV = REPO / "lp_arb" / "data" / "fees_by_window.csv"
+DEFAULT_CSV = REPO / "lp_arb" / "census" / "fees_by_window.csv"
 SWITCH_E = int(datetime(2026, 11, 21, 0, 3, tzinfo=timezone.utc).timestamp())  # clock time of the 0.07 -> new-rate switch
 PRE_SWITCH_RATE = 0.07
 
