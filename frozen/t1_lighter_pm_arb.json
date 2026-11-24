@@ -1,0 +1,22 @@
+{
+  "name": "t1_lighter_pm_arb",
+  "frozen_utc": "2026-11-12T18:50:00Z",
+  "recorded_in_repo_utc": "2026-11-24T09:35:00Z (copy of the 11-12 rule; unchanged)",
+  "code": "~/lighter-shadow/lighter_eval.py @1348b2e, S4 sequential, SEQ_TH=0.04, base delay (2,2) grid steps; driver overnight/t1_arb.py",
+  "rule": {
+    "trigger": "pair (Up on one venue + Down on the other) costs more than 4c under $1 after both taker fees, on the 250 ms grid, min(Lighter size, PM hedge size) >= 5",
+    "lighter_leg": "matches 500 ms after the trigger at the trigger price or better, >= 5 shown",
+    "pm_hedge": "500 ms after the Lighter match at the prevailing PM price",
+    "cooldown_s": 5,
+    "clip": "min(Lighter displayed, PM displayed), capped at 200 shares",
+    "fees": "Lighter 0.01 p(1-p); Polymarket per window as in force (Gamma feeSchedule rate of that market)"
+  },
+  "holdout": "BTC and ETH 15m windows starting on or after 2026-11-13 00:00 UTC, through the last complete day (2026-11-23)",
+  "pass_all": [
+    "90% range of $/day (resampling windows) above 0 on both BTC and ETH at 500+500 ms",
+    "point estimate positive on both at 1 s + 1 s",
+    "not mostly from the last 2 minutes (late share of $ < 0.5)",
+    "Lighter vs Polymarket settlement agreement >= 99.5%"
+  ],
+  "interim_reproduced": "11-11..12 windows ending before the freeze: BTC +4.02c/share +$353.5/day; ETH +4.03c/share +$228.6/day (fee mode frozen07)"
+}
