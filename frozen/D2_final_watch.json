@@ -1,0 +1,7 @@
+{
+  "name": "D2 final-minute grid: pre-specified by the brief (ask 0.90-0.95 / 0.95-0.97 / 0.97-0.99 x seconds left 60-40 / 40-20 / 20-5; BTC and ETH, 5m and 15m = 36 cells). Registered 2026-11-24 ~00:10 UTC before any 11-19..23 final-minute sample was generated.",
+  "holdout": "all 36 cells are read once on 2026-11-19..23; no selection",
+  "watch": ["eth 5m ask 0.90-0.95 x 40-20 s (dev +5.34 +- 2.50 c)", "eth 5m ask 0.95-0.97 x 40-20 s (dev +4.01 +- 1.89 c)"],
+  "pass": "holdout edge_net >= +1 c/share with t >= 2 under the binomial-floor SE, pessimistic fill also > 0",
+  "note": "d2_cells.py now floors every SE at sqrt(p(1-p)/n_filled) at the paid price (the SE under zero edge). Under that SE the frozen D2-A/B/C cells no longer meet t >= 2.5 on dev; they stay frozen as committed in 09a4001 and are tested once with both SEs."
+}

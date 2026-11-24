@@ -62,9 +62,15 @@ def stats(D, idx, fee):
     paid = D["paid"][idx]
     net = win - paid - fee * paid * (1 - paid)
     mid_ok = np.isfinite(D["mid"][idx])
-    em = cl_mean_se((win - D["mid"][idx])[mid_ok], w[mid_ok]) if mid_ok.any() else (np.nan, np.nan)
-    en = cl_mean_se(net[f], w[f]) if f.sum() else (np.nan, np.nan)
-    ep = cl_mean_se(net[pf], w[pf]) if pf.sum() else (np.nan, np.nan)
+    def floor(m_se, price, n):  # binomial floor at the paid price: a sample with no losses has no SE otherwise
+        m, se = m_se
+        if n == 0 or m != m:
+            return m_se
+        q = float(np.mean(price))
+        return m, max(se, math.sqrt(max(q * (1 - q), 1e-6) / n)) if se == se else math.sqrt(max(q * (1 - q), 1e-6) / n)
+    em = floor(cl_mean_se((win - D["mid"][idx])[mid_ok], w[mid_ok]), D["mid"][idx][mid_ok], int(mid_ok.sum())) if mid_ok.any() else (np.nan, np.nan)
+    en = floor(cl_mean_se(net[f], w[f]), paid[f], int(f.sum())) if f.sum() else (np.nan, np.nan)
+    ep = floor(cl_mean_se(net[pf], w[pf]), paid[pf], int(pf.sum())) if pf.sum() else (np.nan, np.nan)
     return dict(n=len(idx), nw=len(np.unique(w)), ask=D["ask"][idx].mean(), mid=np.nanmean(D["mid"][idx]),
                 phi=D["phi"][idx].mean(), win=win.mean(), em=em, en=en, ep=ep, fill=f.mean(), pfill=pf.mean(),
                 fee=float(np.mean(fee * paid[f] * (1 - paid[f]))) if f.sum() else np.nan)
