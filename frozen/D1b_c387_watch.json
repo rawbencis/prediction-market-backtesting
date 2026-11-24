@@ -1,0 +1,9 @@
+{
+  "name": "D1b_c387_watch",
+  "frozen_utc": "2026-11-24T11:40Z",
+  "what": "Forward check of wallet 0xc387c2a40d389f17b723b6bba9b18b7dbd2de4f4 (@flippingsharks), BTC 15m maker BUY fills only (census act rows, fee <= 0, sd BUY), measured exactly as dublin1124/d1b_report.py: settled P&L, maker rebate 0, cents per $ of notional, 90% CI resampling markets (2000 draws, seed 0).",
+  "selected_on": "2026-11-14..2026-11-23: BTC 15m +5.03 c/$ [+0.36, +9.34], 2,727 fills, 580 markets; selected as the only one of 3 sets (BTC 5m, BTC 15m, ETH 5m) whose interval excluded 0.",
+  "holdout": "markets opening 2026-11-24 00:00 UTC .. 2026-12-07 23:59 UTC, read once after 2026-12-08",
+  "pass": "holdout c/$ 90% CI lower bound > 0 AND point estimate >= +1.0 c/share (P&L / shares)",
+  "not_a_trading_rule": "a watch on a third party's results; no order logic is implied or tested"
+}
