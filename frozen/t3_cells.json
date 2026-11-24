@@ -1,0 +1,10 @@
+{
+  "name": "t3_cells",
+  "grid": "shared T3 level-map grid (overnight/t3_level.py docstring; identical definitions to the Dublin brief)",
+  "dev": "2026-06-04..2026-07-18 BTC 5m (12,926 windows; 06-01..03 excluded)",
+  "holdout": "2026-07-19..2026-07-31 (NB: already used by earlier studies)",
+  "freeze_rule": "dev edge_net > 0 at |t| >= 3 with a same-sign neighbour; at most 3",
+  "cells": [{"ti": 3, "zi": 6, "ri": 0, "label": "tau [180,290] | z > 2 | r < 0.7", "dev_edge_net_c": 6.04, "dev_t": 4.2, "dev_n": 109}],
+  "only_qualifier": true,
+  "pass": "holdout edge_net > 0 with t >= 2 (one-sided), same sign as dev"
+}
