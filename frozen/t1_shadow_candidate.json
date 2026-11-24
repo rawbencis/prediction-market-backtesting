@@ -1,0 +1,33 @@
+{
+  "name": "t1_shadow_candidate",
+  "written_utc": "2026-11-24T12:00Z",
+  "rule": "frozen/t1_lighter_pm_arb.json, unchanged (trigger > 4c after both fees; Lighter leg at trigger price or better, matched 500 ms after; PM hedge 500 ms after that at the prevailing price; 5 s cooldown; clip min(displayed) <= 200)",
+  "assets": ["btc"],
+  "assets_note": "ETH passed the holdout, but 2 of 11 days carry it (median day +$8); shadow BTC as the decision asset and ETH as descriptive only",
+  "shadow": {
+    "days": 14,
+    "mode": "paper on live feeds: Lighter from Tokyo (book + trades), Polymarket book from Dublin (exchange time), no orders",
+    "log": "per trigger: trigger time, both books at trigger, +100/+300/+500 ms, PM book at hedge time and +100 ms, real Lighter taker prints within 1 s, settlement on both venues"
+  },
+  "pass_all": [
+    "BTC $/day 90% interval (resampling windows) above 0 with pessimistic fills (Lighter quote and PM hedge each still showing >= 5 shares at the price 100 ms after their match)",
+    "BTC c/share >= +2.0 at 500+500 in that pessimistic count (leaves room for the 1.4c live-taker slippage seen on Polymarket)",
+    "share of triggers whose Lighter quote is still displayed 300 ms later >= 0.80",
+    "settlement agreement 100%",
+    "no single day > 40% of the 14-day $"
+  ],
+  "kill_any": [
+    "rolling 7-day BTC c/share < 0 in the pessimistic count",
+    "Lighter quote still displayed +300 ms < 0.65 of triggers (someone faster is taking it)",
+    "any Lighter vs Polymarket settlement disagreement",
+    "fee or resolution-source change on either venue (re-freeze needed)"
+  ],
+  "min_size_probe_after_shadow_pass": {
+    "size": "5 shares per leg (min order), BTC only",
+    "limits": "max 20 pairs/day, max $25 open cost, Lighter IOC at the trigger price, PM FAK hedge with limit = prevailing ask + 1c, no hedge chase beyond that (log unhedged)",
+    "duration": "7 days or 100 pairs",
+    "measure": "real Lighter fill rate vs model, real hedge slippage vs model, unhedged share, c/share net",
+    "stop": "unhedged legs > 10% of pairs, or c/share < 0 after 50 pairs",
+    "note": "needs operator approval and a separate deploy; nothing was sent tonight"
+  }
+}

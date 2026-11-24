@@ -160,6 +160,12 @@ def ext(L, T, P, W, e, fpm, tf=15):
                 hp = (1 - hb) if d == "a" else ha
                 pnl = (1 - px_j - hp if d == "a" else px_j - hp) - fl(px_j) - fpm(hp)
                 row.update(hedged=True, qty=qty, pnl=float(pnl), lpx=float(px_j), hp=float(hp), small=float(sz_j) <= 30)
+                if (d1, d2) == (500, 500) or (d1, d2) == (1000, 1000):
+                    zb, za, zbs, zas, zv = (z[0] for z in lbook(np.array([tj + 100_000])))
+                    p3, s3 = (za, zas) if d == "a" else (zb, zbs)
+                    row["pess"] = bool(zv and s3 >= le.SIZE and (p3 <= px_j if d == "a" else p3 >= px_j))
+                    gb, ga, gbs, gas, gv = (z[0] for z in pbook(np.array([tk + 100_000])))
+                    row["pess_h"] = bool(gv and ((gbs if d == "a" else gas) >= le.SIZE) and (((1 - gb) <= hp) if d == "a" else (ga <= hp)))
                 if (d1, d2) == (500, 500):
                     row["raced"] = bool(np.any((tt_ >= ti) & (tt_ <= tj + 1_000_000) & (tb_ == (d == "a"))))
                     for chk in (300, 500):
