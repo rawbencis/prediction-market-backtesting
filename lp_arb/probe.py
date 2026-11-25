@@ -66,6 +66,7 @@ HEDGE_RETRIES = 3  # after the first attempt
 HEDGE_RETRY_WINDOW_S = 2.0
 UNWIND_SLIP = 0.05  # unwind IOC worst price = best price -/+ this (fills at book prices, never worse than this)
 L_FILL_TIMEOUT_S = 3.0  # Lighter IOC: wait this long for a terminal status, else the leg is ambiguous -> halt
+L_POLL_S = 0.25  # status poll interval: <= 12 polls + 1 sendTx per order; standard tier = 60 requests / rolling minute
 BALANCE_EVERY_S = 60
 STOP_FILE = Path.home() / "lp-arb" / "probe" / "STOP"  # kill switch: open nothing new, finish a hedge in progress
 
@@ -243,7 +244,7 @@ class Ledger:
         self.mode = mode
         self.win = {}  # window -> {"l": {side: [qty, cost]}, "pm": {token: [shares, cost, side]}, "locked": usd}
         self.realised = collections.defaultdict(float)  # UTC day -> usd
-        self.symbols, self.tokens = set(), set()  # everything this probe ever traded (reconcile)
+        self.mids, self.tokens = set(), set()  # Lighter market ids / PM tokens this probe ever traded (reconcile)
 
     def _w(self, e):
         return self.win.setdefault(int(e), {"l": {}, "pm": {}, "locked": 0.0})
@@ -257,9 +258,9 @@ class Ledger:
             leg = w["l"].setdefault(r["side"], [0.0, 0.0])
             leg[0] += r["qty"]
             leg[1] += r["qty"] * lighter_unit_cost(r["side"], r["px"])
-            self.symbols.add(r["symbol"])
             if r.get("market_id"):
-                w["mid"] = r["market_id"]
+                w["mid"] = int(r["market_id"])
+                self.mids.add(int(r["market_id"]))
         elif kind == "pm_fill" and r.get("shares", 0) > 0:
             w = self._w(r["window"])
             leg = w["pm"].setdefault(r["token"], [0.0, 0.0, r["side"]])
@@ -299,24 +300,25 @@ class Ledger:
         return self.realised[today()]
 
     def expected(self):
-        """-> ({lighter symbol: signed Up qty}, {pm token: shares}) for unsettled windows."""
+        """-> ({lighter market id: signed Up qty (+ Up, - Down)}, {pm token: shares}) for unsettled windows."""
         lpos, ppos = collections.defaultdict(float), collections.defaultdict(float)
         for e, w in self.win.items():
             for side, (q, _) in w["l"].items():
-                lpos[l_symbol(e)] += q if side == "a" else -q
+                lpos[w.get("mid", l_symbol(e))] += q if side == "a" else -q
             for tok, (s, _, _) in w["pm"].items():
                 ppos[tok] += s
         return dict(lpos), dict(ppos)
 
 
 def reconcile(ledger, l_positions, l_orders, pm_positions, pm_orders, tol=1e-3):
-    """Pure. l_positions {symbol: signed qty}; pm_positions [{asset, size, redeemable}]. -> (problems, warnings)."""
+    """Pure. l_positions {market id: signed qty} (binary `bo_positions`; perps as "perp:SYMBOL", always foreign);
+    pm_positions [{asset, size, redeemable}]. -> (problems, warnings)."""
     exp_l, exp_pm = ledger.expected()
     problems, warns = [], []
     for sym, q in l_positions.items():
         if abs(q) <= tol:
             continue
-        if sym not in ledger.symbols:
+        if sym not in ledger.mids:
             problems.append(f"lighter position {sym} {q:+} not created by the probe")
         elif abs(q - exp_l.get(sym, 0.0)) > tol:
             problems.append(f"lighter position {sym} {q:+} != probe ledger {exp_l.get(sym, 0.0):+}")
@@ -406,12 +408,19 @@ class LighterLive:
                 return self._signer.create_auth_token_with_expiry(api_key_index=self._config.api_key_index)[0]
 
             def snapshot(self):
+                """Binary positions are NOT in `positions`: /account returns them as `bo_positions`
+                [{market_id, sign (1 Up, -1 Down), size, avg_entry_price, entry_quote}], which SDK 1.1.2 does not model
+                (kept in additional_properties). -> positions {market_id: signed Up qty, "perp:SYM": signed qty}."""
                 a = self._with_retries("account", lambda: self._account_api.account(by="index", value=str(self._config.account_index))).accounts[0]
                 pos = {}
+                for p in (a.additional_properties or {}).get("bo_positions") or ():
+                    q = float(p.get("size") or 0)
+                    if q:
+                        pos[int(p["market_id"])] = q if int(p.get("sign") or 1) == 1 else -q
                 for p in a.positions or ():
                     q = float(p.position)
                     if q:
-                        pos[p.symbol] = q if int(p.sign) == 1 else -q
+                        pos[f"perp:{p.symbol}"] = q if int(p.sign) == 1 else -q
                 return dict(available=float(a.available_balance), collateral=float(a.collateral), positions=pos)
 
             def active_orders(self):
@@ -465,8 +474,15 @@ class LighterLive:
                             avg_px=st.avg_fill_price or None, order_index=st.exchange_order_id, t_fill=time.time(),
                             exch={k: (raw or {}).get(k) for k in ("timestamp", "transaction_time", "updated_at", "created_at", "status",
                                                                      "filled_base_amount", "filled_quote_amount")})
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(L_POLL_S)
         return dict(out, status="ambiguous", filled=0.0, reason=f"no terminal status within {L_FILL_TIMEOUT_S}s")
+
+    async def fee_charged(self, market_id, coid):
+        """Off the hot path: the order's trades from the public recentTrades (taker_fee, price, size, exchange time)."""
+        d = await asyncio.to_thread(P.http_json, P.L_REST + f"recentTrades?market_id={market_id}&limit=100")
+        return [dict(price=float(t["price"]), size=float(t["size"]), taker_fee=t.get("taker_fee"), usd=t.get("usd_amount"),
+                     timestamp=t.get("timestamp"), tx_hash=t.get("tx_hash"), trade_id=t.get("trade_id"))
+                for t in d.get("trades") or () if str(coid) in (str(t.get("ask_client_id")), str(t.get("bid_client_id")))]
 
     async def balance(self):
         s = await asyncio.to_thread(self.c.snapshot)
@@ -794,6 +810,8 @@ class Probe(Paper):
         self.spend("lighter", f * lighter_unit_cost(side, lfill))
         self.log("l_fill", **base, symbol=l_symbol(w.e), market_id=w.mid, qty=f, px=lfill, fee_usd_model=round(lfee, 6), coid=r.get("coid"),
                  t_send=r.get("t_send"), t_ack=r.get("t_ack"), t_fill=r.get("t_fill"), exch=r.get("exch"))
+        if self.mode == "live" and r.get("coid"):
+            self.spawn(self.log_lighter_fees(base, w.mid, r["coid"]))
         hedged, pm_cost, pm_fee, attempts, ambiguous = await self.hedge_pm(w, tid, side, tok, f, base)
         if ambiguous:
             return self.halt("pm_ambiguous", **base, hedged=hedged)
@@ -849,6 +867,13 @@ class Probe(Paper):
             if hedged >= f - 1e-6 or math.floor(f - hedged + 1e-9) < 1:
                 return hedged, cost, fee, attempt + 1, False
         return hedged, cost, fee, attempt + 1, False
+
+    async def log_lighter_fees(self, base, mid, coid):
+        await asyncio.sleep(5)
+        try:
+            self.log("fees", **base, venue="lighter", coid=coid, trades=await self.lv.fee_charged(mid, coid))
+        except Exception as ex:  # noqa: BLE001
+            self.err("fees", ex)
 
     async def log_fees(self, base, oid):
         await asyncio.sleep(5)
@@ -934,7 +959,7 @@ class Probe(Paper):
         for _ in range(20):
             try:
                 b = await self.lv.balance()
-                if abs(b["positions"].get(sym, 0.0)) < 1e-9:
+                if abs(b["positions"].get(w.mid, 0.0)) < 1e-9:
                     return self.log("lighter_settled", window=w.e, symbol=sym, position_gone=True, expected_payout=round(lpay, 6),
                                     free=b["free"], collateral=b["collateral"])
             except Exception as ex:  # noqa: BLE001

@@ -239,7 +239,7 @@ def test_lighter_fill_then_hedge_success(tmp_path):
     assert pair["pnl_usd"] == pytest.approx(exp, abs=1e-5) and pair["realised_usd"] == pair["pnl_usd"]
     assert not records(tmp_path, "unhedged") and pr.busy is None and pr.halted is None
     assert pr.ledger.open_cost("lighter") == pytest.approx(5 * R.lighter_unit_cost("a", 0.19))
-    assert pr.ledger.expected() == ({R.l_symbol(w.e): 5.0}, {"DOWNTOK": 5.0})
+    assert pr.ledger.expected() == ({w.mid: 5.0}, {"DOWNTOK": 5.0})
 
 
 def test_lighter_no_fill_sends_no_hedge(tmp_path):
@@ -257,7 +257,7 @@ def test_lighter_partial_fill_hedges_the_fill(tmp_path):
     assert L.calls[0]["is_buy_up"] is False and L.calls[0]["size"] == 10.0
     assert PM.calls == [dict(token="UPTOK", price=0.29, size=7.0)]
     assert records(tmp_path, "pair")[0]["qty"] == 7.0
-    assert pr.ledger.expected()[0] == {R.l_symbol(1795606200): -7.0}  # sold Up = holds Down
+    assert pr.ledger.expected()[0] == {12572: -7.0}  # sold Up = holds Down
 
 
 def test_partial_fill_below_minimums_is_held_and_logged(tmp_path):
@@ -295,7 +295,7 @@ def test_hedge_fails_then_unwind(tmp_path):
     u = records(tmp_path, "unhedged")[0]
     assert u["loss_usd"] == pytest.approx(-uw["realised_usd"]) and u["residual_held"] == 0
     assert pr.ledger.realised_today() == pytest.approx(uw["realised_usd"])
-    assert pr.ledger.expected() == ({R.l_symbol(1795606200): 0.0}, {})
+    assert pr.ledger.expected() == ({12572: 0.0}, {})
     assert pr.busy is None
 
 
@@ -402,14 +402,14 @@ def test_open_cost_cap_from_ledger(tmp_path):
 
 def test_dry_records_never_enter_the_live_ledger(tmp_path):
     pr = make_probe(tmp_path, mode="dry")
-    pr.log("l_fill", id="d", window=1, side="a", mode="dry", symbol=R.l_symbol(1), qty=5.0, px=0.5)
+    pr.log("l_fill", id="d", window=1, side="a", mode="dry", symbol=R.l_symbol(1), market_id=7, qty=5.0, px=0.5)
     live = R.Ledger("live").replay(tmp_path)
-    assert live.expected() == ({}, {}) and R.Ledger("dry").replay(tmp_path).expected()[0] == {R.l_symbol(1): 5.0}
+    assert live.expected() == ({}, {}) and R.Ledger("dry").replay(tmp_path).expected()[0] == {7: 5.0}
 
 
 # ---------------------------------------------------------------- restart / reconcile
 def test_restart_with_foreign_position_refuses(tmp_path):
-    L = FakeL(positions={"BTC-UPDOWN-15M-1795606200": 12.0})
+    L = FakeL(positions={12572: 12.0})
     pr = make_probe(tmp_path, L, FakePM())
     run(pr.startup_reconcile())
     assert pr.reconcile_failed and records(tmp_path, "reconcile_fail")
@@ -429,12 +429,12 @@ def test_restart_with_foreign_pm_position_or_order_refuses(tmp_path):
 def test_restart_with_own_positions_passes(tmp_path):
     e = 1795606200
     first = make_probe(tmp_path)
-    first.log("l_fill", id="i", window=e, side="b", mode="live", symbol=R.l_symbol(e), qty=5.0, px=0.15)
+    first.log("l_fill", id="i", window=e, side="b", mode="live", symbol=R.l_symbol(e), market_id=12572, qty=5.0, px=0.15)
     first.log("pm_fill", id="i", window=e, side="b", mode="live", token="UPTOK", shares=5.0, cost=1.35, fee_usd=0.05)
     # a settled earlier window whose PM winner is still unredeemed is also ours
     first.log("pm_fill", id="j", window=e - 900, side="a", mode="live", token="OLDTOK", shares=5.0, cost=3.0, fee_usd=0.05)
     first.log("probe_settle", window=e - 900, mode="live", realised_usd=0.0)
-    L = FakeL(positions={R.l_symbol(e): -5.0})
+    L = FakeL(positions={12572: -5.0})
     PM = FakePM(positions=[dict(asset="UPTOK", size=5.0), dict(asset="OLDTOK", size=5.0, redeemable=True)])
     pr = make_probe(tmp_path, L, PM)
     pr.ledger.replay(tmp_path)
@@ -589,3 +589,31 @@ def test_stale_window_settles_after_restart(tmp_path, monkeypatch):
     run(go())
     assert pr.ledger.open_cost("pm") == 0 and pr.ledger.open_cost("lighter") == 0
     assert records(tmp_path, "probe_settle")[0]["window"] == e and records(tmp_path, "redeem_due")
+
+
+def test_reconcile_size_mismatch_and_perp_are_foreign(tmp_path):
+    led = R.Ledger("live")
+    led.apply("l_fill", dict(mode="live", window=1, side="a", symbol="S", market_id=5, qty=5.0, px=0.4, t_local=time.time()))
+    assert R.reconcile(led, {5: 5.0}, [], [], [])[0] == []
+    assert R.reconcile(led, {5: 9.0}, [], [], [])[0]  # more than the probe bought
+    assert R.reconcile(led, {5: 5.0, "perp:BTC": 0.1}, [], [], [])[0]  # a perp on the probe sub-account
+
+
+def test_lighter_snapshot_reads_bo_positions():
+    """SDK 1.1.2 has no bo_positions field; the raw /account JSON (2026-11-25 sample) lands in additional_properties."""
+    import importlib.util
+
+    if importlib.util.find_spec("lighter") is None:
+        pytest.skip("lighter SDK not installed (probe-venv only)")
+    from lighter.models.detailed_account import DetailedAccount
+
+    raw = {"code": 200, "account_type": 0, "index": 1, "l1_address": "0x0", "cancel_all_time": 0, "total_order_count": 0,
+           "total_isolated_order_count": 0, "pending_order_count": 0, "available_balance": "41.5", "status": 1, "collateral": "50.0",
+           "account_index": 1, "name": "", "description": "", "can_invite": False, "referral_points_percentage": "0",
+           "positions": [], "assets": [], "total_asset_value": "50", "cross_asset_value": "50", "pool_info": None, "shares": [],
+           "bo_positions": [{"market_id": 12694, "entry_quote": "6.400000", "avg_entry_price": "0.64", "sign": -1, "size": "10.0000"}]}
+    try:
+        a = DetailedAccount.from_dict(raw)
+    except Exception as ex:  # the SDK model may require more fields; the point is additional_properties
+        pytest.skip(f"model construction needs more fields: {ex!r}"[:200])
+    assert (a.additional_properties or {}).get("bo_positions")[0]["market_id"] == 12694

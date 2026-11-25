@@ -76,6 +76,19 @@ Other Lighter facts the code depends on:
   outcome can be determined, both sides settle at 0.50.
 - **Market config:** comes from `orderBooks?market_id=…` (`min_base_amount` 5, size decimals 4, price decimals 2).
   The default `orderBooks` listing has **no** binary markets, so the probe adds each window's market by id.
+- **Positions:** binary positions are **not** in `/account` `positions`. They come back as `bo_positions`
+  `[{market_id, sign (1 Up / −1 Down), size, avg_entry_price, entry_quote}]` (checked on a public account,
+  2026-11-25). lighter-sdk 1.1.2 does not model that field, so the probe reads it from `additional_properties`.
+  Reconcile and `lighter_settled` key Lighter positions by market id; any perp position on the sub-account counts as
+  foreign.
+- **Rate limits:** a standard account gets 60 REST requests per rolling minute, `sendTx` included, limited per IP and
+  per L1 address. Going over returns 429 with a 60 s firewall cooldown. One probe order costs 1 `sendTx` plus at most
+  12 status polls (every 250 ms for ≤ 3 s). Public reads (`orderBooks`, `account`, `recentTrades`) count against the
+  box's **IP** limit, which is shared with lp-arb-paper, xsmom, ladder and the recorders. A 429 during the fill poll
+  ends as an ambiguous leg → `halt`, which is safe but stops the probe.
+- **Fees as charged:** about 5 s after a Lighter fill, the probe logs a `fees` record with `taker_fee`, price, size and
+  exchange timestamp. They come from the public `recentTrades`, matched on the probe's client order id
+  (`ask_client_id`/`bid_client_id`).
 
 ## Polymarket: redemption (answer)
 
