@@ -1,0 +1,78 @@
+{
+  "id": "LT1",
+  "title": "Favourite ladder with take-profit (paper research, Dublin box)",
+  "brief": "Dublin brief 2026-11-26 (operator's idea: side model -> maker buy ladder -> per-rung maker take-profit)",
+  "frozen_utc": "2026-11-25 (before any dev run)",
+  "data": {
+    "markets": ["btc 5m", "btc 15m"],
+    "source": "~/shadow-rec pm (UP top of book), tr (prints), bn (Binance aggTrade); winners from Gamma via pmlat.winners",
+    "dev_days": ["2026-11-14", "2026-11-15", "2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-21", "2026-11-22", "2026-11-23"],
+    "holdout_days": ["2026-11-25", "2026-11-26", "2026-11-27", "2026-11-28", "2026-11-29", "2026-11-30", "2026-12-01"],
+    "excluded": ["2026-11-24 (recorder gap)"],
+    "day_of_window": "UTC date of the window start"
+  },
+  "sim": {
+    "engine": "lt1_sim.py: C port of dsim_strict.maker_strict (lt1_maker.c), checked for exact equality with the Python function on real orders before use",
+    "scenario": "live (f9_live): book seen +9 ms; post on book +55 ms if BTC best bid/ask unchanged over the prior 1 s else +190 ms; cancel lands signal +90 ms and never before on-book +90 ms (ackc); taker hold 150 ms",
+    "fills": "strict (through-prints fill at most print size minus queue ahead)",
+    "queue": {"primary": "pess", "beside": "prop", "never_reported": "front"},
+    "own_order_print_sharing": "within one ladder world (market, window, token, step, offset, pull) rungs are simulated shallow-first and a print's size consumed by an earlier rung is not available to later rungs; the TPs of one world and one x share prints the same way, processed in rung order then fill time",
+    "size_per_rung": 5
+  },
+  "side_models": {
+    "note": "all inputs strictly before window open (Binance spot local receive time < window start; winners of windows that closed at or before window start)",
+    "R": "seeded random side: numpy default_rng(hash of (20261126, tf, epoch)) -> UP/DOWN",
+    "S1": "previous window's winner",
+    "S2": "previous two windows same winner -> that side, else skip",
+    "M15": "sign of Binance spot BTC last trade price before open minus last trade price before open-15 min (0 -> skip)",
+    "M60": "same over 60 min",
+    "EMA": "sign of (last completed 1m close before open - EMA20 of 1m closes), 1m closes = last spot trade in each minute; needs >= 40 minutes of history (else skip)",
+    "BOTH": "ladder on both tokens (pair control; no mirror)",
+    "mirror": "every model except BOTH also evaluated on the opposite side (suffix _mir)"
+  },
+  "ladder": {
+    "post": "once at window open: decision at window start + 1000 ms, anchor = chosen token's best bid in the book seen at that time (rows up to t - 9 ms); all rungs sent at the decision; never re-posted",
+    "step_c": [1, 2, 3],
+    "K": [1, 3, 5],
+    "first_rung": ["anchor (offset 0)", "anchor - 1c (offset 1)"],
+    "rung_price": "anchor - offset - r*step, r = 0..K-1",
+    "skip_below_c": 20,
+    "pull": {
+      "none": "no pull",
+      "b2_250": "Binance USD-M BTC trade with price >= 2 bp against the side vs the last USD-M trade at or before (trade time - 250 ms)",
+      "b4_500": ">= 4 bp vs 500 ms earlier",
+      "against": "UP ladder: BTC falls; DOWN ladder: BTC rises",
+      "timing": "first such event received (box local receive ms) after the decision; all unfilled rungs cancelled, cancel lands receive + 90 ms (and >= on-book + 90); fills before it lands count; no re-post"
+    },
+    "end": "all unfilled rungs cancelled at 60 s left (lands +90 ms)"
+  },
+  "take_profit": {
+    "x_c": [1, 2, 3, 5],
+    "trigger": "each fill event of a rung gets its own maker sell of that fill's size",
+    "decision": "fill time + 9 ms; arrival by live post latency",
+    "price": "min(fill + x, 99c); if the seen book's best bid of the token is already >= that price, the sell is placed at the seen best ask instead (post-only cannot cross); if still rejected on arrival, retried at arrival + 9 ms, at most 3 tries, else no TP",
+    "queue": "same fill model (a sell of token T at p is simulated as a buy of the other token at 1-p in UP terms)",
+    "min_size": "Polymarket's 5-share minimum is not enforced for TPs of partial fills (deviation, optimistic)"
+  },
+  "exits": {
+    "E1": "TP rests until the window close; shares not sold settle at 1/0 (Gamma winner)",
+    "E2": "TP cancelled at 30 s left (lands +90 ms); remaining shares sold by taker FAK at 30 s left (match = t + post latency + 150 ms hold) into the token's best bid, size capped at the shown size; census fee for that window (fees_by_window.csv fee_rate; fallback 0.07 before 2026-11-21 00:03 UTC, 0.05 after) x p(1-p) per share; any unsold remainder settles"
+  },
+  "fees": "makers 0; no rebates",
+  "grid": "2 markets x 3 steps x 3 K x 2 offsets x 4 TP x 3 pulls x 2 exits = 864 configs",
+  "metrics": {
+    "unit": "filled rung = a rung with >= 1 fill; c/share = sum P&L / sum filled shares; $/day at 5 shares/rung",
+    "per_cell": ["filled rungs/day", "c/share net", "$/day", "TP hit rate (share-weighted)", "mean c/share of non-TP shares", "markouts 1/5/30 s (mid of token at fill + h minus fill)", "worst window $", "worst day $", "90% CI by window bootstrap (2000 resamples, seed 0)"],
+    "model_value": "per config and market: model minus mirror c/share with a 90% window-bootstrap CI (paired by window)",
+    "mechanism": "markout 1/5/30 s by pull and rung depth (pess)"
+  },
+  "validation": {
+    "V0": "C maker equals dsim_strict.maker_strict (pess and prop) on >= 2000 real orders of one dev day: identical fill times and sizes",
+    "V1": "synthetic martingale book: for every x, |EV - (fill markout to settlement-consistent mid + measured exit spread capture)| <= 0.1c, and x=1 TP hit rate >= 70%; i.e. the TP adds no EV beyond spread capture",
+    "V2": "synthetic book with planted mean reversion after drops: ladder EV > 0 with 90% CI low > 0",
+    "V3": "dev, pull none, K=1, offset 0, pess: rung 1 s markout within noise of -1.1..-1.4c (prior join-maker, D5); if not, explain before going on"
+  },
+  "stop_rule": "if no dev cell (pess) has 30 s markout + 0.5c > 0, write LT1 closed and skip the holdout",
+  "dev_pick": "highest dev 90% CI lower bound of c/share among (model incl. mirrors and BOTH, config, market) cells with >= 30 filled rungs/day under pess; written to frozen/LT1_pick.json with code commit and pushed before any holdout day is opened",
+  "holdout_pass": "frozen pick on 2026-11-25..12-01 under pess: net >= +1.0c/share per filled rung, 90% CI low > 0, >= 200 filled rungs, positive on >= 5 of 7 days; prop reported beside; whole-grid holdout distribution reported as context only"
+}
