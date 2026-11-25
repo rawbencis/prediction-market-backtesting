@@ -133,7 +133,11 @@ class Redactor:
         if re.fullmatch(r"[0-9a-fA-F]{16,}", h):
             vs |= {h, "0x" + h}
         for v in vs:
-            self.pats.append(re.compile(r"(?<![0-9A-Za-z])" + re.escape(v) + r"(?![0-9A-Za-z])", re.I))
+            if len(v) >= 16:  # keys, addresses, API creds: anywhere, even glued to other text
+                self.pats.append(re.compile(re.escape(v), re.I))
+            else:  # short ids (account index): whole tokens only, so timestamps/ids that contain the digits survive
+                self.pats.append(re.compile(r"(?<![0-9A-Za-z])" + re.escape(v) + r"(?![0-9A-Za-z])", re.I))
+        self.pats.sort(key=lambda p: -len(p.pattern))  # 0x-variant before the bare hex
 
     def scrub(self, text):
         text = SIG_RE.sub("[SIG]", str(text))
@@ -146,8 +150,11 @@ class Redactor:
             return {k: self.obj(v) for k, v in o.items() if str(k).lower() not in DROP_KEYS}
         if isinstance(o, (list, tuple)):
             return [self.obj(v) for v in o]
-        if o is None or isinstance(o, (bool, int, float)):
+        if o is None or isinstance(o, bool):
             return o
+        if isinstance(o, (int, float)):  # an account index logged as a number is still redacted
+            t = str(o)
+            return o if self.scrub(t) == t else "[REDACTED]"
         return self.scrub(o)
 
 
@@ -758,7 +765,8 @@ class Probe(Paper):
     # ---------- execution ----------
     def halt(self, reason, **kw):
         self.halted = reason
-        self.log("halt", reason=reason, mode=self.mode, **kw)
+        kw.setdefault("mode", self.mode)
+        self.log("halt", reason=reason, **kw)
 
     async def execute(self, w, tid, side, lpx, q, tok, info):
         try:
