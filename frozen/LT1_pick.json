@@ -1,0 +1,15 @@
+{
+  "id": "LT1",
+  "status": "CLOSED at dev by the frozen stop rule. No holdout is registered and no holdout day was opened.",
+  "stop_rule": "no dev cell (pess) has 30 s markout + 0.5c > 0: best 30 s markout over all 11,232 pess cells is -0.97c (5m, S2_mir, step 3, offset 1, pull b2_250, K 5)",
+  "would_have_been_pick": {
+    "note": "highest dev 90% CI low among pess cells with >= 30 filled rungs/day; recorded for transparency only, NOT a registered test",
+    "market": "btc 15m",
+    "model": "R (seeded random side)",
+    "config": {"step_c": 3, "offset_c": 1, "K": 5, "pull": "b4_500", "tp_x_c": 2, "exit": "E2"},
+    "dev_pess": {"filled_rungs_per_day": 285.5, "c_per_share": -2.51, "ci90": [-3.21, -1.82], "usd_per_day": -35.79, "tp_hit": 0.90, "non_tp_c_per_share": -42.6, "mo1_5_30_c": [-1.21, -1.51, -1.95], "days_positive": "0/10"},
+    "dev_prop": {"c_per_share": -2.38, "ci90_low": -3.08}
+  },
+  "code_commit": "e414546 (sim e4d3cc4 logic; lt1_sim.py, lt1_maker.c, lt1_sides.py, lt1_report.py)",
+  "frozen_utc": "2026-11-25"
+}
