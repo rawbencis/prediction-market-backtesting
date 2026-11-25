@@ -540,3 +540,52 @@ def test_live_refuses_when_reused_code_changed(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "load_secrets", lambda: pytest.fail("secrets loaded before the pin check"))
     with pytest.raises(SystemExit, match="reused code changed"):
         R.build_live(R.Redactor())
+
+
+def test_hedge_with_unknown_pm_book_first_then_retry(tmp_path):
+    L, PM = FakeL([("filled", 5.0, 0.19)]), FakePM([("filled", 5.0, 0.76)])
+    pr = make_probe(tmp_path, L, PM)
+    w = make_window(pr)
+    w.pbook.clear()
+    orig = asyncio.sleep
+
+    async def refill(d):  # the book comes back while the probe waits
+        set_book(w.pbook, 0.25, 0.26)
+        await orig(0)
+
+    R.asyncio.sleep, saved = refill, R.asyncio.sleep
+    try:
+        run(pr.execute(w, "t1", "a", 0.19, 5.0, "DOWNTOK", {}))
+    finally:
+        R.asyncio.sleep = saved
+    assert pr.halted is None and len(PM.calls) == 1 and records(tmp_path, "pair")
+    assert records(tmp_path, "pm_order")[0]["status"] == "skipped"
+
+
+def test_stale_window_settles_after_restart(tmp_path, monkeypatch):
+    e = 1795606200
+    first = make_probe(tmp_path)
+    first.log("l_fill", id="i", window=e, side="a", mode="live", symbol=R.l_symbol(e), market_id=12572, qty=5.0, px=0.19)
+    first.log("pm_fill", id="i", window=e, side="a", mode="live", token="DOWNTOK", shares=5.0, cost=3.8, fee_usd=0.05)
+    first.log("pair", id="i", window=e, side="a", mode="live", realised_usd=0.1)
+    pr = make_probe(tmp_path)
+    pr.ledger.replay(tmp_path)
+    assert pr.ledger.open_cost("pm") > 0
+
+    def fake_outcome(ee, mid):
+        assert (ee, mid) == (e, 12572)
+        w = P.Window(ee, mid)
+        w.up_token, w.down_token, w.slug = "UPTOK", "DOWNTOK", "s"
+        return dict(pm_winner="DOWN", lighter_outcome=["1", "settled"]), w
+
+    monkeypatch.setattr(R, "stale_outcome", fake_outcome)
+
+    async def go():
+        t = asyncio.get_running_loop().create_task(pr.settle_stale())
+        await asyncio.sleep(0.05)
+        pr.stop.set()
+        await t
+
+    run(go())
+    assert pr.ledger.open_cost("pm") == 0 and pr.ledger.open_cost("lighter") == 0
+    assert records(tmp_path, "probe_settle")[0]["window"] == e and records(tmp_path, "redeem_due")

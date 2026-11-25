@@ -258,6 +258,8 @@ class Ledger:
             leg[0] += r["qty"]
             leg[1] += r["qty"] * lighter_unit_cost(r["side"], r["px"])
             self.symbols.add(r["symbol"])
+            if r.get("market_id"):
+                w["mid"] = r["market_id"]
         elif kind == "pm_fill" and r.get("shares", 0) > 0:
             w = self._w(r["window"])
             leg = w["pm"].setdefault(r["token"], [0.0, 0.0, r["side"]])
@@ -790,7 +792,7 @@ class Probe(Paper):
         lfill = float(r.get("avg_px") or lpx)
         lfee = fl(lfill) * f
         self.spend("lighter", f * lighter_unit_cost(side, lfill))
-        self.log("l_fill", **base, symbol=l_symbol(w.e), qty=f, px=lfill, fee_usd_model=round(lfee, 6), coid=r.get("coid"),
+        self.log("l_fill", **base, symbol=l_symbol(w.e), market_id=w.mid, qty=f, px=lfill, fee_usd_model=round(lfee, 6), coid=r.get("coid"),
                  t_send=r.get("t_send"), t_ack=r.get("t_ack"), t_fill=r.get("t_fill"), exch=r.get("exch"))
         hedged, pm_cost, pm_fee, attempts, ambiguous = await self.hedge_pm(w, tid, side, tok, f, base)
         if ambiguous:
@@ -817,7 +819,7 @@ class Probe(Paper):
         m = self.meta[w.e]
         pm_min = m["pm_min_down" if side == "a" else "pm_min_up"]
         rate = self.fpm_rate(w)
-        t_first = None
+        t_first = time.time()
         for attempt in range(1 + HEDGE_RETRIES):
             if attempt and time.time() - t_first > HEDGE_RETRY_WINDOW_S:
                 break
@@ -831,7 +833,6 @@ class Probe(Paper):
             if need < pm_min or need * px < PM_MIN_MARKETABLE_USD:
                 self.log("pm_order", **base, attempt=attempt, status="skipped", reason="remainder below PM minimum", need=need, limit=px)
                 break
-            t_first = t_first or time.time()
             r = await self.pv.fak_buy(tok, px, float(need))
             self.log("pm_order", **base, attempt=attempt, ask=ask, **{k: v for k, v in r.items() if k != "venue"})
             if r["status"] == "ambiguous":
@@ -954,6 +955,20 @@ class Probe(Paper):
         except Exception as ex:  # noqa: BLE001
             self.err("redeem_sweep", ex)
 
+    async def settle_stale(self):
+        """Ledger windows that ended while the probe was down (or whose paper settle gave up): settle from Gamma and
+        Lighter's REST outcome, every 5 min, so their open cost does not stay reserved forever."""
+        while not self.stop.is_set():
+            for e in [e for e in list(self.ledger.win) if e + 900 + 600 < time.time() and e not in self.win]:
+                try:
+                    rec, w = await asyncio.to_thread(stale_outcome, e, self.ledger.win[e].get("mid"))
+                    if rec:
+                        self.log("stale_settle", window=e, mode=self.mode, **rec)
+                        await self.probe_settle(w, rec)
+                except Exception as ex:  # noqa: BLE001
+                    self.err("settle_stale", ex)
+            await self.sleep(300)
+
     # ---------- balances ----------
     async def balances(self):
         while not self.stop.is_set():
@@ -1000,13 +1015,35 @@ class Probe(Paper):
         else:
             self.free = dict(self.sim_bal)
         bt = asyncio.get_running_loop().create_task(self.balances())
+        st = asyncio.get_running_loop().create_task(self.settle_stale())
         await super().run()
         for _ in range(150):  # finish a hedge in progress (<= 15 s)
             if not self.busy or self.halted:
                 break
             await asyncio.sleep(0.1)
         bt.cancel()
+        st.cancel()
         self.log("probe_stop", busy=self.busy, halted=self.halted, counts=dict(self.counts))
+
+
+def stale_outcome(e, mid):
+    """-> (paper-style settle record, minimal window) once both venues have an outcome, else (None, None)."""
+    slug = f"btc-updown-15m-{e}"
+    ms = P.http_json(P.GAMMA + f"closed=true&slug={slug}")
+    if not ms or mid is None:
+        return None, None
+    m = ms[0]
+    names = [n.upper() for n in json.loads(m["outcomes"])]
+    pr = [float(v) for v in json.loads(m["outcomePrices"])]
+    if max(pr) < 0.99:
+        return None, None
+    ob = P.http_json(P.L_REST + f"orderBooks?market_id={mid}")["order_books"][0]
+    if str(ob.get("outcome")) not in ("1", "2"):
+        return None, None
+    w = P.Window(e, mid)
+    toks = json.loads(m["clobTokenIds"])
+    w.up_token, w.down_token, w.slug = toks[names.index("UP")], toks[names.index("DOWN")], slug
+    return dict(pm_winner=names[pr.index(max(pr))], lighter_outcome=[str(ob["outcome"]), str(ob.get("status"))]), w
 
 
 def build_live(red):
