@@ -1,0 +1,10 @@
+# lp_arb/probe.py venv: python3 -m venv /home/ubuntu/lp-arb/probe-venv && /home/ubuntu/lp-arb/probe-venv/bin/pip install -r deploy/probe-requirements.txt
+# lighter-sdk: same commit as Stat_Arb (requirements.txt), xsmom and ladder venvs on this box
+lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@fd4ee2530f78940cbed3dd80131d0fa66f74ad2a
+# py_clob_client_v2: newest (2026-11-12). Only change vs 1.2.0 (rd3) is the exchange_v3 address; CLOB /version is 2 today.
+# lp_arb/probe.py refuses live mode on any other version.
+py_clob_client_v2==1.2.2
+coincurve==21.0.0
+boto3==1.44.12
+websockets==17.4
+pytest==9.2.0

@@ -1,0 +1,26 @@
+[Unit]
+Description=lp-arb T1 LIVE probe executor, BTC 15m Lighter x Polymarket (tiny clips; hard limits in lp_arb/probe.py)
+Documentation=file:///home/ubuntu/lp-arb/code/docs/probe.md
+After=network-online.target
+Wants=network-online.target
+# give up after 3 failed starts in 10 min (e.g. pinned reused code changed, SSM unreachable)
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/lp-arb/code
+Environment=PYTHONUNBUFFERED=1
+# Deviation from the brief (/usr/bin/python3): the system Python has neither lighter-sdk nor py_clob_client_v2 and
+# installing into it needs sudo. The venv is built from deploy/probe-requirements.txt (see docs/probe.md).
+ExecStart=/home/ubuntu/lp-arb/probe-venv/bin/python lp_arb/probe.py --mode live --out /home/ubuntu/lp-arb/probe
+Restart=on-failure
+RestartSec=30
+# SIGTERM: stop opening, let a hedge in progress finish (<= 15 s), then exit
+TimeoutStopSec=30
+MemoryMax=400M
+CPUQuota=25%
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

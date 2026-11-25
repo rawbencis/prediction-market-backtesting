@@ -484,7 +484,7 @@ class PMLive:
         cr = self.c.creds
         for v in (cr.api_key, cr.api_secret, cr.api_passphrase):
             red.add(v)
-        self.funder = sec["PM_FUNDER"]
+        self.funder = (sec["PM_FUNDER"] or "").strip() or self.c.get_address()  # positions live at the funder (proxy) or the EOA
         self.server_version = self.c.get_version()
 
     async def prepare(self, w, cond, toks):
@@ -962,6 +962,7 @@ class Probe(Paper):
                 if not self.busy:  # a snapshot mid-pair would double-count the pair's spend
                     self.free = {"lighter": lb["free"], "pm": pb["free"]}
                 self.log("balance", mode=self.mode, lighter=lb.get("free"), lighter_collateral=lb.get("collateral"), pm=pb.get("free"),
+                         lighter_positions=lb.get("positions"),
                          open_cost_lighter=round(self.ledger.open_cost("lighter"), 4), open_cost_pm=round(self.ledger.open_cost("pm"), 4),
                          realised_today=round(self.ledger.realised_today(), 4), busy=self.busy, halted=self.halted,
                          reconcile_failed=bool(self.reconcile_failed), kill_switch=self.stop_file.exists(), skips=dict(self.counts))
