@@ -1,6 +1,6 @@
 """T1 live PROBE executor: Lighter x Polymarket BTC 15m arb, smallest clips, hard loss limits.
 
-    python3 lp_arb/probe.py [--mode dry|live] [--out DIR] [--minutes N]
+    python3 lp_arb/probe.py [--mode dry|live|check] [--out DIR] [--minutes N]
 
 Triggers are the paper trader's (lp_arb/paper.py), not a copy: `Probe` subclasses `paper.Paper` and inherits
 discovery, both sockets, `evaluate` (the frozen trigger), `lquote_there` and `check` (the +100/+300/+500 ms quote
@@ -17,11 +17,17 @@ is still displayed (the paper's own "Lighter fill"); from there it sizes a clip 
 Persistence (before 1): +250 ms after each trigger the pair is re-priced from the current books with the trigger's own
 after-fee formula; edge < 4c -> `skip` reason `not_persistent` (and a `persist` record for every trigger). A trigger
 with no +250 ms verdict is skipped `persist_unchecked` (fail closed).
+Staleness (same moments, checked first): at the trigger or at +250 ms, a PM book older than 300 ms by exchange timestamp
+or arriving with > 300 ms lag -> `stale_pm`; Lighter, 100 ms -> `stale_lighter`. The ages are in every `persist` record.
 
 Modes:
   dry  (default) real market data, simulated fills against the live books, NO credentials loaded, never calls SSM
   live loads 6 parameters from SSM (ap-northeast-1, instance role) at start, keeps them in memory only, redacts them
        from every log line, exception and stderr write; reconciles both accounts before trading
+  check loads SSM and builds both clients exactly as live (pins, redaction, authentication), then prints balances,
+       positions, open orders, Lighter account type/tier, whether the BTC 15m market is tradable, the Polymarket client
+       version and USDC allowance, and what the live start-up reconcile would say. Places and cancels nothing; writes
+       no log; exit 0 = ok, 1 = problems listed.
 
 Records (OUT/YYYY-MM-DD.jsonl, UTC): the paper trader's kinds and ids unchanged (start, window, trigger, check,
 hedge = the paper model's hedge, settle = the paper settle, health, error), plus: meta, skip, l_order, l_fill,
@@ -70,6 +76,8 @@ HEDGE_RETRIES = 3  # after the first attempt
 HEDGE_RETRY_WINDOW_S = 2.0
 PERSIST_MS = 250  # persistence check: +250 ms after the trigger, re-price the pair from the current books
 PERSIST_MIN_EDGE = 0.04  # edge after fees still < this at +250 ms -> skip `not_persistent` (brief 2026-11-26)
+STALE_PM_MS = 300  # at the trigger or at +250 ms: PM book age (local now - exchange ts of its last update) or lag > this -> stale_pm
+STALE_L_MS = 100  # same for the Lighter book -> stale_lighter
 UNWIND_SLIP = 0.05  # unwind IOC worst price = best price -/+ this (fills at book prices, never worse than this)
 L_FILL_TIMEOUT_S = 3.0  # Lighter IOC: wait this long for a terminal status, else the leg is ambiguous -> halt
 L_POLL_S = 0.25  # status poll interval: <= 12 polls + 1 sendTx per order; standard tier = 60 requests / rolling minute
@@ -429,6 +437,21 @@ class LighterLive:
                         pos[f"perp:{p.symbol}"] = q if int(p.sign) == 1 else -q
                 return dict(available=float(a.available_balance), collateral=float(a.collateral), positions=pos)
 
+            def account_detail(self):
+                """--mode check: account type/tier/status as the API reports them (raw codes; nothing interpreted)."""
+                a = self._with_retries("account", lambda: self._account_api.account(by="index", value=str(self._config.account_index))).accounts[0]
+                out = dict(account_type=a.account_type, account_trading_mode=a.account_trading_mode, status=a.status,
+                           available=float(a.available_balance), collateral=float(a.collateral),
+                           pending_order_count=a.pending_order_count, total_order_count=a.total_order_count)
+                try:
+                    lim = self._with_retries("account_limits", lambda: self._account_api.account_limits(
+                        account_index=self._config.account_index, authorization=self._auth()))
+                    out.update(user_tier=lim.user_tier, user_tier_name=lim.user_tier_name, taker_fee_tick=lim.current_taker_fee_tick,
+                               maker_fee_tick=lim.current_maker_fee_tick)
+                except Exception as ex:  # noqa: BLE001
+                    out["limits_error"] = repr(ex)[:200]
+                return out
+
             def active_orders(self):
                 r = self._with_retries("account_active_orders(all)", lambda: self._order_api.account_active_orders(
                     account_index=self._config.account_index, authorization=self._auth()))
@@ -496,6 +519,14 @@ class LighterLive:
 
     async def open_orders(self):
         return await asyncio.to_thread(self.c.active_orders)
+
+    async def account_info(self):
+        return await asyncio.to_thread(self.c.account_detail)
+
+    async def market_info(self, mid):
+        """The signer client registers the market exactly as live `prepare` does (Stat_Arb's market cache)."""
+        m = await asyncio.to_thread(self.c.add_market, mid)
+        return dict(symbol=m.symbol, l_min=m.min_base_amount, l_size_dec=m.size_decimals, l_px_dec=m.price_decimals) if m else None
 
 
 class PMLive:
@@ -576,6 +607,24 @@ class PMLive:
 
     async def balance(self):
         return dict(free=await asyncio.to_thread(self.rd3.cash, self.c))
+
+    async def allowance(self):
+        """Raw COLLATERAL balance/allowances (L2-authenticated). The probe only BUYs, so only collateral is spent."""
+        from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
+
+        return await asyncio.to_thread(self.c.get_balance_allowance, BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+
+    async def closed_only(self):
+        return await asyncio.to_thread(self.c.get_closed_only_mode)
+
+    def spender(self, version, neg_risk=False):
+        """The exchange contract a BUY is signed for (py_clob_client_v2 order_builder: v3 -> exchange_v3, v2 -> exchange_v2)."""
+        from py_clob_client_v2.config import get_contract_config
+
+        cc = get_contract_config(self.c.chain_id if hasattr(self.c, "chain_id") else 137)
+        if int(version) == 3:
+            return "exchange_v3", cc.exchange_v3
+        return ("neg_risk_exchange_v2", cc.neg_risk_exchange_v2) if neg_risk else ("exchange_v2", cc.exchange_v2)
 
     async def open_orders(self):
         return await asyncio.to_thread(self.c.get_open_orders)
@@ -677,6 +726,8 @@ class Probe(Paper):
         self.tasks = set()
         self.counts = collections.Counter()
         self.persist = {}  # trigger id -> True / False from the +250 ms check (popped at +500 ms)
+        self.ages = {}  # trigger id -> book ages at the trigger (consumed at +250 ms)
+        self.clock = time.time  # tests replace it with the fake loop's clock
         if isinstance(log, ProbeLog):
             log.hooks.append(self.ledger.apply)
             log.hooks.append(self._capture)
@@ -693,6 +744,9 @@ class Probe(Paper):
         if kind == "trigger":
             w = self.win.get(kw["window"])
             if w is not None:
+                self.ages[kw["id"]] = self.book_ages(w)
+                while len(self.ages) > 2000:
+                    self.ages.pop(next(iter(self.ages)))
                 asyncio.get_running_loop().call_later(PERSIST_MS / 1000, self.persist_check, w, kw["id"], kw["side"])
 
     def window_of_token(self, tok):
@@ -760,16 +814,44 @@ class Probe(Paper):
             cost = (1 - lb) + pa + fl(lb) + self.fpm(w, pa)
         return 1 - cost, dict(lighter_book=[lb, la, lbs, las], pm_book=[pb, pa, pbs, pas])
 
+    def book_ages(self, w):
+        """Per venue: age_ms = local now - exchange timestamp of the book's last update; lag_ms = local receive time of
+        that update - its exchange timestamp; since_recv_ms = local now - that receive time. None if no timestamp yet."""
+        now = self.clock()
+
+        def one(b):
+            if not b.x:
+                return dict(age_ms=None, lag_ms=None, since_recv_ms=None)
+            return dict(age_ms=round(now * 1000 - b.x, 1), lag_ms=round(b.t * 1000 - b.x, 1), since_recv_ms=round((now - b.t) * 1000, 1))
+
+        return dict(pm=one(w.pbook), lighter=one(w.lbook))
+
+    @staticmethod
+    def stale_reason(ages):
+        """'stale_pm' / 'stale_lighter' / None for one ages snapshot; a venue with no exchange timestamp is stale."""
+        for venue, lim, why in (("pm", STALE_PM_MS, "stale_pm"), ("lighter", STALE_L_MS, "stale_lighter")):
+            a = ages[venue]
+            if a["age_ms"] is None or a["age_ms"] > lim or a["lag_ms"] > lim:
+                return why
+        return None
+
     def persist_check(self, w, tid, side):
         try:
             edge, books = self.pair_edge(w, side)
             ok = edge is not None and round(edge, 9) >= PERSIST_MIN_EDGE
-            self.persist[tid] = ok
+            a0, a250 = self.ages.pop(tid, None), self.book_ages(w)
+            stale = (self.stale_reason(a0) if a0 else "stale_pm") or self.stale_reason(a250)
+            self.persist[tid] = ok and not stale
             while len(self.persist) > 2000:  # triggers whose +500 check never ran (window end, stop)
                 self.persist.pop(next(iter(self.persist)))
             e = None if edge is None else round(edge, 5)
-            self.log("persist", id=tid, window=w.e, side=side, at_ms=PERSIST_MS, edge=e, ok=ok, **books)
-            if not ok:
+            self.log("persist", id=tid, window=w.e, side=side, at_ms=PERSIST_MS, edge=e, ok=ok, stale=stale,
+                     ages=dict(trigger=a0, at_250=a250), **books)
+            if stale:
+                at = "trigger" if a0 is None or self.stale_reason(a0) else "at_250"
+                self.skip(tid, w, side, stale, at=at, ages=dict(trigger=a0, at_250=a250),
+                          limits_ms=dict(pm=STALE_PM_MS, lighter=STALE_L_MS))
+            elif not ok:
                 self.skip(tid, w, side, "not_persistent", at_ms=PERSIST_MS, edge=e, min_edge=PERSIST_MIN_EDGE)
         except Exception as ex:  # noqa: BLE001
             self.persist[tid] = False
@@ -802,7 +884,7 @@ class Probe(Paper):
     def on_displayed(self, w, tid, side, lpx):
         persistent = self.persist.pop(tid, None)
         if persistent is False:
-            return  # already skipped `not_persistent` at +250 ms
+            return  # already skipped (`stale_*` or `not_persistent`) at +250 ms
         g = self.gate()
         if g:
             if g == "loss_cap" and self.counts["loss_cap"] == 0:
@@ -1120,6 +1202,157 @@ def stale_outcome(e, mid):
     return dict(pm_winner=names[pr.index(max(pr))], lighter_outcome=[str(ob["outcome"]), str(ob.get("status"))]), w
 
 
+# ======================= --mode check (operator, before go-live) =======================
+def current_btc15m(http=None, now=None):
+    """(window epoch, Lighter market id) of the BTC 15m window in progress, else the next one (Lighter events listing,
+    the request paper.discover makes)."""
+    http = http or P.http_json
+    now = time.time() if now is None else now
+    d = http(P.L_REST + f"events?active=true&sort=start_at&order=asc&limit=40&tag={P.TAG}")
+    evs = d if isinstance(d, list) else next((v for v in d.values() if isinstance(v, list)), [])
+    best = None
+    for ev in evs:
+        try:
+            ob = ev["order_books"][0]
+            m = re.match(r"BTC-UPDOWN-15M-(\d+)$", ob["symbol"], re.I)
+            e, mid = int(m.group(1)), int(ob["market_id"])
+        except (KeyError, IndexError, TypeError, AttributeError):
+            continue
+        if e + 900 > now and (best is None or e < best[0]):
+            best = (e, mid)
+    return best
+
+
+def _brief_lighter_order(o):
+    return {k: o.get(k) for k in ("market_index", "is_ask", "price", "remaining_base_amount", "initial_base_amount", "type",
+                                  "time_in_force", "status", "client_order_index")}
+
+
+def _brief_pm_order(o):
+    return {k: o.get(k) for k in ("market", "asset_id", "side", "price", "original_size", "size_matched", "order_type", "status")}
+
+
+def _brief_pm_position(p):
+    return {k: p.get(k) for k in ("slug", "title", "outcome", "size", "avgPrice", "curPrice", "redeemable", "conditionId")}
+
+
+async def account_check(lv, pv, ledger, http=None, now=None):
+    """Everything the operator needs before go-live, read-only: authenticates (the client constructors), reads balances,
+    positions, open orders, account type, market tradability, client versions and allowance. Places and cancels nothing
+    (lv/pv order methods are never called). -> dict with `ok` and `problems`."""
+    from importlib.metadata import version
+
+    http = http or P.http_json
+    out, problems, notes = {}, [], []
+
+    async def part(name, coro):
+        try:
+            return await coro
+        except Exception as ex:  # noqa: BLE001
+            problems.append(f"{name}: {ex!r}"[:300])
+            return None
+
+    # ---- Lighter
+    acct = await part("lighter account", lv.account_info())
+    bal = await part("lighter balance", lv.balance())
+    lo = await part("lighter open orders", lv.open_orders())
+    out["lighter"] = dict(account=acct, balance=None if bal is None else bal.get("free"),
+                          collateral=None if bal is None else bal.get("collateral"),
+                          positions=None if bal is None else bal.get("positions"),
+                          open_orders=None if lo is None else [_brief_lighter_order(o) for o in lo])
+    cur = None
+    try:
+        cur = current_btc15m(http, now)
+    except Exception as ex:  # noqa: BLE001
+        problems.append(f"lighter events: {ex!r}"[:300])
+    trad = dict(window=None, verdict="no")
+    if cur:
+        e, mid = cur
+        trad.update(window=e, market_id=mid, symbol=l_symbol(e))
+        ob = None
+        try:
+            ob = (http(P.L_REST + f"orderBooks?market_id={mid}").get("order_books") or [None])[0]
+        except Exception as ex:  # noqa: BLE001
+            problems.append(f"lighter orderBooks: {ex!r}"[:300])
+        if ob:
+            trad.update(status=ob.get("status"), market_type=ob.get("market_type"), min_base_amount=ob.get("min_base_amount"),
+                        taker_fee=ob.get("taker_fee"), is_taker_fee_enabled=ob.get("is_taker_fee_enabled"))
+        mi = await part("lighter market registration", lv.market_info(mid))
+        trad["signer_market"] = mi
+        checks = dict(market_active=bool(ob) and str(ob.get("status")).lower() == "active", signer_registered=bool(mi),
+                      account_read=acct is not None, auth_read=lo is not None,
+                      balance_for_one_clip=bal is not None and (bal.get("free") or 0) >= MAX_LEG_COST_USD)
+        trad["checks"] = checks
+        trad["verdict"] = "yes_by_api" if all(checks.values()) else "no"
+        for k, v in checks.items():
+            if not v:
+                problems.append(f"lighter btc15m not tradable: {k}")
+    else:
+        problems.append("lighter: no active BTC 15m window found")
+    trad["note"] = ("Lighter exposes no per-account permission for binary markets; 'yes_by_api' means every API-side check "
+                    "passed. Only the first live order proves the account may trade it (a rejection reason is logged).")
+    out["lighter_btc15m"] = trad
+
+    # ---- Polymarket
+    inst = None
+    try:
+        inst = version("py_clob_client_v2")
+    except Exception:  # noqa: BLE001
+        pass
+    sv = getattr(pv, "server_version", None)
+    out["pm_client"] = dict(py_clob_client_v2=inst, required=PM_CLIENT_VERSION, clob_server_version=sv)
+    if inst != PM_CLIENT_VERSION:
+        problems.append(f"py_clob_client_v2 {inst} != {PM_CLIENT_VERSION}")
+    pbal = await part("pm balance", pv.balance())
+    al = await part("pm allowance", pv.allowance())
+    co = await part("pm closed-only", pv.closed_only())
+    po = await part("pm open orders", pv.open_orders())
+    pp = await part("pm positions", pv.positions())
+    alw = dict((al or {}).get("allowances") or {})
+    if al and "allowance" in al and not alw:
+        alw = {"(single)": al["allowance"]}
+    need = None
+    if sv is not None:
+        name, addr = pv.spender(sv)
+        have = next((v for k, v in alw.items() if str(k).lower() == str(addr).lower()), None)
+        if have is None and "(single)" in alw:
+            have = alw["(single)"]
+        try:
+            have_usd = float(have) / 1e6 if have is not None else 0.0
+        except ValueError:
+            have_usd = 0.0
+        need = dict(spender=name, address=addr, allowance_usd=None if have_usd > 1e12 else round(have_usd, 2),
+                    unlimited=have_usd > 1e12, ok=have_usd >= MAX_OPEN_COST_PM_USD)
+        if not need["ok"]:
+            problems.append(f"pm allowance to {name} is ${have_usd:.2f} < ${MAX_OPEN_COST_PM_USD:.0f} (approve USDC for that exchange)")
+    closed = co.get("closed_only") if isinstance(co, dict) else co
+    if closed:
+        problems.append("pm account is in closed-only mode")
+    out["pm"] = dict(balance=None if pbal is None else pbal.get("free"), allowance=need,
+                     allowances_raw={k: ("unlimited" if _big(v) else v) for k, v in alw.items()}, closed_only=closed,
+                     open_orders=None if po is None else [_brief_pm_order(o) for o in po],
+                     positions=None if pp is None else [_brief_pm_position(p) for p in pp])
+
+    # ---- would a live start refuse?
+    if bal is not None and lo is not None and pp is not None and po is not None:
+        rp, rw = reconcile(ledger, bal.get("positions") or {}, lo, pp, po)
+        out["reconcile"] = dict(ok=not rp, problems=rp, warnings=rw, expected=ledger.expected())
+        problems += [f"reconcile: {x}" for x in rp]
+        if rw:
+            notes += rw
+    out["limits"] = dict(daily_loss_cap=DAILY_LOSS_CAP_USD, open_pm=MAX_OPEN_COST_PM_USD, open_lighter=MAX_OPEN_COST_LIGHTER_USD,
+                         leg=MAX_LEG_COST_USD, persist_min_edge=PERSIST_MIN_EDGE)
+    out.update(ok=not problems, problems=problems, notes=notes, placed_orders=0, cancelled_orders=0)
+    return out
+
+
+def _big(v):
+    try:
+        return float(v) > 1e18
+    except (TypeError, ValueError):
+        return False
+
+
 def build_live(red):
     bad = verify_pins()
     if bad:
@@ -1138,7 +1371,8 @@ def build_live(red):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    ap.add_argument("--mode", choices=("dry", "live"), default="dry")
+    ap.add_argument("--mode", choices=("dry", "live", "check"), default="dry",
+                    help="check: load SSM like live, authenticate, print accounts/markets/allowance; places nothing")
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--minutes", type=float, default=None)
     a = ap.parse_args(argv)
@@ -1150,6 +1384,13 @@ def main(argv=None):
 
     sys.excepthook = hook
     lv = pv = None
+    if a.mode == "check":
+        lv, pv = build_live(red)
+        ledger = Ledger("live")
+        ledger.replay(OUT_LIVE)
+        res = asyncio.run(account_check(lv, pv, ledger))
+        print(json.dumps(red.obj(res), indent=1, default=str))
+        return 0 if res["ok"] else 1
     if a.mode == "live":
         lv, pv = build_live(red)
     probe = Probe(ProbeLog(out, red), a.mode, time.time() + a.minutes * 60 if a.minutes else None, lighter=lv, pm=pv)
@@ -1157,4 +1398,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

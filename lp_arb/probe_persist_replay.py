@@ -37,12 +37,28 @@ def load_books(day):
     return {e: LB[LB["e"] == e] for e in np.unique(LB["e"])}, {e: PM[PM["e"] == e] for e in np.unique(PM["e"])}
 
 
-def book_at(L, Pm, t_us):
-    """(lb, la, lbs, las), (pb, pa, pbs, pas) as of local time t_us, or None where the recorder has no row yet."""
-    out = []
+def book_at(L, Pm, t_us, stamps=False):
+    """(lb, la, lbs, las), (pb, pa, pbs, pas) as of local time t_us, or None where the recorder has no row yet.
+    stamps=True: also (exchange ms, local s) of that row per venue."""
+    out, st = [], []
     for X, f in ((L, ("b1", "k1", "b1s", "k1s")), (Pm, ("b", "k", "bs", "ks"))):
         i = se.le.asof(X["l"], t_us) if X is not None and len(X) else -1
         out.append(None if i < 0 else (X[f[0]][i] / 1e4, X[f[1]][i] / 1e4, float(X[f[2]][i]), float(X[f[3]][i])))
+        st.append((0, 0.0) if i < 0 else (int(X["x"][i]), X["l"][i] / 1e6))
+    return (out, st) if stamps else out
+
+
+def paper_ages(r):
+    """Book ages at the trigger from the paper record (the probe's book_ages at that instant, same code path):
+    age = t_local - exchange ts; since_recv = book_age_ms; lag = age - since_recv."""
+    out = {}
+    for venue, xk, j in (("lighter", "t_exch_lighter", 0), ("pm", "t_exch_pm", 1)):
+        x, since = r.get(xk), (r.get("book_age_ms") or [None, None])[j]
+        if not x or since is None:
+            out[venue] = dict(age_ms=None, lag_ms=None, since_recv_ms=None)
+            continue
+        age = r["t_local"] * 1000 - x
+        out[venue] = dict(age_ms=round(age, 1), lag_ms=round(age - since, 1), since_recv_ms=since)
     return out
 
 
@@ -112,15 +128,23 @@ def main():
         e0 = pr.pair_edge(w, side)[0]
         if e0 is not None:
             agree.append((r["edge"], e0))
-        ql, qp = book_at(L, Pm, t_us + R.PERSIST_MS * 1000)
+        (ql, qp), ((lx, lt), (px_, pt)) = book_at(L, Pm, t_us + R.PERSIST_MS * 1000, stamps=True)
         set_book(w.lbook, ql), set_book(w.pbook, qp)
+        w.lbook.x, w.lbook.t, w.pbook.x, w.pbook.t = lx, lt, px_, pt  # recorder row stamps at +250 ms
+        a0 = paper_ages(r)
+        pr.ages[r["id"]] = a0
+        pr.clock = lambda t=r["t_local"] + R.PERSIST_MS / 1000: t
         pr.persist_check(w, r["id"], side)
         h = hedge.get(r["id"])
         rows.append(dict(id=r["id"], batch=r["id"] in bm, ok=pr.persist[r["id"]], trig_edge=r["edge"], d500=bool(d500.get(r["id"])),
                          hedged=h is not None, qty=h["qty"] if h else 0.0, pnl=h["pnl_per_share"] if h else 0.0))
     per = {p["id"]: p for p in (json.loads(x) for f in tmp.glob("*.jsonl") for x in f.open()) if p["kind"] == "persist"}
     for row in rows:
-        row["edge250"] = per[row["id"]]["edge"]
+        pp = per[row["id"]]
+        row["edge250"], row["edge_ok"] = pp["edge"], pp["ok"]
+        row["stale0"] = R.Probe.stale_reason(pp["ages"]["trigger"])
+        row["stale250"] = R.Probe.stale_reason(pp["ages"]["at_250"])
+        row["ages"] = pp["ages"]
 
     def grp(sel):
         h = [x for x in sel if x["hedged"]]
@@ -131,7 +155,20 @@ def main():
     out = {}
     for name, f in (("all", lambda x: True), ("batch_matched", lambda x: x["batch"]), ("paper_only", lambda x: not x["batch"])):
         sel = [x for x in rows if f(x)]
-        out[name] = dict(all=grp(sel), survive=grp([x for x in sel if x["ok"]]), dropped=grp([x for x in sel if not x["ok"]]))
+        es = [x for x in sel if x["edge_ok"]]  # survive the 4c re-price (the 53 of the persistence addendum)
+        out[name] = dict(all=grp(sel), edge_survive=grp(es),
+                         edge_and_fresh_at_trigger=grp([x for x in es if not x["stale0"]]),
+                         edge_and_fresh_both=grp([x for x in es if not x["stale0"] and not x["stale250"]]),
+                         dropped_stale_at_trigger={k: sum(1 for x in es if x["stale0"] == k) for k in ("stale_pm", "stale_lighter")},
+                         dropped_stale_at_250_only={k: sum(1 for x in es if not x["stale0"] and x["stale250"] == k)
+                                                    for k in ("stale_pm", "stale_lighter")})
+
+    def pct(v):
+        v = [z for z in v if z is not None]
+        return [round(float(np.percentile(v, q)), 1) for q in (10, 50, 90)] if v else None
+    out["ages_p10_50_90_ms"] = {f"{when}.{venue}.{k}": pct([x["ages"][when][venue][k] for x in rows])
+                                for when in ("trigger", "at_250") for venue in ("pm", "lighter") for k in ("age_ms", "lag_ms")}
+    out["fresh_at_trigger_all_153"] = sum(1 for x in rows if not x["stale0"])
     dif = np.array([b - p for p, b in agree])
     out["recorder_vs_paper_edge_at_trigger"] = dict(n=len(agree), of=len(trig), median_c=round(100 * float(np.median(dif)), 2),
                                                     p10_c=round(100 * float(np.percentile(dif, 10)), 2),

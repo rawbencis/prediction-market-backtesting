@@ -177,7 +177,7 @@ def test_replay_paper_log_fires_same_trigger_ids(tmp_path, monkeypatch):
     disp = {k[0] for k, c in checks.items() if k[1] == 500 and c["displayed"]}
     skipped = {s["id"] for s in records(tmp_path, "skip")}
     assert skipped and skipped <= {r["id"] for r in trig}
-    assert {s["reason"] for s in records(tmp_path, "skip")} <= {"kill_switch", "not_persistent"}
+    assert {s["reason"] for s in records(tmp_path, "skip")} <= {"kill_switch", "not_persistent", "stale_pm", "stale_lighter"}
     assert len(skipped) >= 0.9 * len(disp)
 
 
@@ -650,19 +650,37 @@ class StepLoop(FakeLoop):
             fn(*a)
 
 
-def trigger_then(tmp_path, monkeypatch, at_250):
-    """Side a trigger (edge 4.9c on make_window's books); `at_250(w)` changes the books just before the +250 ms check."""
+def stamp(book, now, age_ms, lag_ms):
+    """Book last updated age_ms before `now` (exchange time), received lag_ms after its exchange timestamp."""
+    book.x = int(now * 1000 - age_ms)
+    book.t = (book.x + lag_ms) / 1000
+
+
+def fresh(w, now):
+    stamp(w.pbook, now, 120, 110)  # PM: ~110 ms feed lag (Tokyo), just updated
+    stamp(w.lbook, now, 5, 3)
+
+
+def trigger_then(tmp_path, monkeypatch, at_250, at_0=fresh):
+    """Side a trigger (edge 4.9c on make_window's books); `at_0(w, now)` stamps the books at the trigger, `at_250(w)`
+    changes them just before the +250 ms check (default: both books updated again, fresh)."""
     pr = make_probe(tmp_path)
     w = make_window(pr)
     pr.win[w.e] = w
     loop = StepLoop()
     monkeypatch.setattr(P.asyncio, "get_running_loop", lambda: loop)
+    pr.clock = lambda: loop.now
     t0 = w.e + 100.0
     loop.now = t0
+    at_0(w, t0)
     pr.evaluate(w, t0, "lighter")
     trig = records(tmp_path, "trigger")
     assert len(trig) == 1 and trig[0]["side"] == "a" and trig[0]["edge"] > 0.04
-    loop.run_until(t0 + 2, before=lambda t, fn: at_250(w) if fn.__name__ == "persist_check" else None)
+    def before(t, fn):
+        if fn.__name__ == "persist_check":
+            fresh(w, t)
+            at_250(w)
+    loop.run_until(t0 + 2, before=before)
     for c in loop.spawned:
         c.close()
     return pr, w, trig[0]["id"], loop
@@ -708,3 +726,201 @@ def test_no_persistence_verdict_fails_closed(tmp_path):
     pr = make_probe(tmp_path)
     pr.on_displayed(make_window(pr), "t9", "a", 0.19)
     assert [s["reason"] for s in records(tmp_path, "skip")] == ["persist_unchecked"] and pr.busy is None
+
+
+# ---------------------------------------------------------------- --mode check
+EXV2 = "0xE111180000d2663C0091e4f400237545B87B996B"
+PM_SPENDER = R.PMLive.spender  # kept: one test replaces R.PMLive
+
+
+class CheckL(FakeL):
+    def __init__(self, status="active", **kw):
+        super().__init__(**kw)
+        self.status, self.registered = status, []
+
+    async def ioc(self, *a, **k):
+        raise AssertionError("check mode placed a Lighter order")
+
+    async def account_info(self):
+        return dict(account_type=0, account_trading_mode=0, status=1, user_tier="std", user_tier_name="Standard")
+
+    async def market_info(self, mid):
+        self.registered.append(mid)
+        return dict(symbol="BTC-UPDOWN-15M-1795700700", l_min=5.0, l_size_dec=4, l_px_dec=2)
+
+
+class CheckPM(FakePM):
+    server_version = 2
+
+    def __init__(self, allowance="115792089237316195423570985008687907853269984665640564039457584007913129639935", closed=False, **kw):
+        super().__init__(**kw)
+        self.al, self.closed = allowance, closed
+
+    async def fak_buy(self, *a, **k):
+        raise AssertionError("check mode placed a Polymarket order")
+
+    async def allowance(self):
+        return dict(balance="40000000", allowances={EXV2: self.al, "0xC5d563A36AE78145C45a50134d48A1215220f80a": "0"})
+
+    async def closed_only(self):
+        return dict(closed_only=self.closed)
+
+    def spender(self, version, neg_risk=False):
+        return PM_SPENDER(types_ns(), version, neg_risk)
+
+
+def types_ns():
+    import types
+    return types.SimpleNamespace(c=types.SimpleNamespace(chain_id=137))
+
+
+def fake_http(status="active"):
+    def http(url):
+        if "events?" in url:
+            return {"events": [{"order_books": [{"symbol": "BTC-UPDOWN-15M-1795700700", "market_id": 13001}]},
+                               {"order_books": [{"symbol": "BTC-UPDOWN-15M-1795699800", "market_id": 12999}]},  # already ended
+                               {"order_books": [{"symbol": "ETH-UPDOWN-15M-1795700700", "market_id": 13002}]}]}
+        if "orderBooks?market_id=13001" in url:
+            return {"order_books": [{"symbol": "BTC-UPDOWN-15M-1795700700", "market_id": 13001, "status": status,
+                                     "market_type": "binary", "min_base_amount": "5.0000", "taker_fee": "0.0000"}]}
+        raise AssertionError(url)
+    return http
+
+
+def test_pm_spender_follows_order_builder():
+    assert R.PMLive.spender(types_ns(), 2) == ("exchange_v2", EXV2)
+    assert R.PMLive.spender(types_ns(), 3)[0] == "exchange_v3"
+    assert R.PMLive.spender(types_ns(), 2, neg_risk=True)[0] == "neg_risk_exchange_v2"
+
+
+def test_check_mode_reads_everything_places_nothing(tmp_path):
+    L, PM = CheckL(), CheckPM()
+    res = run(R.account_check(L, PM, R.Ledger("live"), http=fake_http(), now=1795700700 + 100))
+    assert res["ok"], res["problems"]
+    t = res["lighter_btc15m"]
+    assert (t["window"], t["market_id"], t["verdict"]) == (1795700700, 13001, "yes_by_api") and L.registered == [13001]
+    assert all(t["checks"].values()) and "first live order" in t["note"]
+    assert res["lighter"]["account"]["user_tier_name"] == "Standard" and res["lighter"]["balance"] == 50.0
+    assert res["pm"]["allowance"] == dict(spender="exchange_v2", address=EXV2, allowance_usd=None, unlimited=True, ok=True)
+    assert res["pm"]["balance"] == 40.0 and res["pm"]["closed_only"] is False
+    assert res["pm_client"]["required"] == "1.2.2" and res["pm_client"]["clob_server_version"] == 2
+    assert res["reconcile"]["ok"] and res["placed_orders"] == 0 == res["cancelled_orders"]
+    assert not L.calls and not PM.calls
+
+
+def test_check_mode_flags_every_problem(tmp_path):
+    L = CheckL(positions={555: 5.0}, orders=[{"market_index": 555, "is_ask": True, "price": "0.5"}], free=3.0)
+    PM = CheckPM(allowance="12000000", closed=True, orders=[{"market": "0xabc", "side": "BUY"}],
+                 positions=[{"asset": "999", "size": 7.0, "slug": "btc-updown-15m-1", "redeemable": False}])
+    res = run(R.account_check(L, PM, R.Ledger("live"), http=fake_http(status="inactive"), now=1795700700 + 100))
+    assert not res["ok"] and res["lighter_btc15m"]["verdict"] == "no"
+    p = " | ".join(res["problems"])
+    for want in ("market_active", "balance_for_one_clip", "allowance to exchange_v2 is $12.00", "closed-only", "reconcile:"):
+        assert want in p, (want, p)
+    assert res["pm"]["allowance"]["allowance_usd"] == 12.0 and res["reconcile"]["ok"] is False
+    assert not L.calls and not PM.calls
+
+
+def test_check_mode_survives_a_venue_error():
+    class Broken(CheckPM):
+        async def allowance(self):
+            raise RuntimeError("503 from CLOB")
+
+    res = run(R.account_check(CheckL(), Broken(), R.Ledger("live"), http=fake_http(), now=1795700700 + 100))
+    assert not res["ok"] and any("pm allowance" in x for x in res["problems"]) and res["lighter"]["account"]
+
+
+def test_check_mode_main_loads_like_live_and_never_prints_a_key(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdout", sys.stdout)  # build_live wraps stdout/stderr; restore after the test
+    monkeypatch.setattr(sys, "stderr", sys.stderr)
+    loaded = []
+
+    def secrets(client=None):
+        loaded.append(1)
+        return {k: (FAKE_KEY if "KEY" in k else f"secret-{k.lower()}-value") for k in R.SSM}
+
+    class LeakyL(CheckL):
+        async def account_info(self):  # a venue echoing the key back must still not reach stdout
+            return dict(account_type=0, name=f"acct {FAKE_KEY}", user_tier_name="Standard")
+
+    built = {}
+    monkeypatch.setattr(R, "verify_pins", lambda: [])
+    monkeypatch.setattr(R, "load_secrets", secrets)
+    monkeypatch.setattr(R, "LighterLive", lambda sec: built.setdefault("l", (LeakyL(), dict(sec)))[0])
+    monkeypatch.setattr(R, "PMLive", lambda sec, red: built.setdefault("p", (CheckPM(), dict(sec)))[0])
+    monkeypatch.setattr(R, "OUT_LIVE", tmp_path)
+    monkeypatch.setattr(P, "http_json", fake_http())
+    monkeypatch.setattr(R.time, "time", lambda: 1795700700 + 100.0)
+    rc = R.main(["--mode", "check"])
+    out = capsys.readouterr()
+    assert loaded == [1] and built["l"][1]["L_API_KEY_PRIVATE_KEY"] == FAKE_KEY  # the same SSM load as live
+    res = json.loads(out.out)
+    assert rc == 0 and res["ok"] and res["lighter"]["account"]["name"].startswith("acct ")
+    for s in (FAKE_KEY, FAKE_KEY[2:], "secret-pm_funder-value"):
+        assert s not in out.out and s not in out.err
+    assert not list(tmp_path.glob("*.jsonl"))  # check writes no log
+
+
+def test_check_mode_refuses_when_reused_code_changed(monkeypatch):
+    monkeypatch.setattr(R, "verify_pins", lambda: ["rd3_live.py: aaaa != pinned bbbb"])
+    monkeypatch.setattr(R, "load_secrets", lambda client=None: (_ for _ in ()).throw(AssertionError("secrets read")))
+    with pytest.raises(SystemExit, match="reused code changed"):
+        R.main(["--mode", "check"])
+
+
+# ---------------------------------------------------------------- stale books
+@pytest.mark.parametrize("when,venue,age,lag,reason", [
+    ("trigger", "pm", 450, 110, "stale_pm"),      # PM book not updated for 450 ms (exchange time)
+    ("trigger", "pm", 320, 310, "stale_pm"),      # PM message arrived 310 ms after its exchange timestamp
+    ("trigger", "lighter", 150, 3, "stale_lighter"),
+    ("trigger", "lighter", 120, 110, "stale_lighter"),
+    ("at_250", "pm", 400, 110, "stale_pm"),
+    ("at_250", "lighter", 101, 3, "stale_lighter"),
+])
+def test_stale_book_skips(tmp_path, monkeypatch, when, venue, age, lag, reason):
+    book = (lambda w: w.pbook) if venue == "pm" else (lambda w: w.lbook)
+
+    def at_0(w, now):
+        fresh(w, now)
+        if when == "trigger":
+            stamp(book(w), now, age, lag)
+
+    holder = {}
+
+    def at_250(w):
+        if when == "at_250":
+            stamp(book(w), holder["loop"].now, age, lag)
+
+    orig = StepLoop.__init__
+
+    def init(self):
+        orig(self)
+        holder["loop"] = self
+    monkeypatch.setattr(StepLoop, "__init__", init)
+    pr, w, tid, loop = trigger_then(tmp_path, monkeypatch, at_250, at_0)
+    (p,) = records(tmp_path, "persist")
+    assert p["stale"] == reason and p["ok"] is True  # edge still >= 4c: only staleness blocks it
+    a = p["ages"]["trigger" if when == "trigger" else "at_250"][venue]
+    assert a["age_ms"] == pytest.approx(age, abs=1.5) and a["lag_ms"] == pytest.approx(lag, abs=1.5)
+    (s,) = records(tmp_path, "skip")
+    assert s["reason"] == reason and s["at"] == when and s["limits_ms"] == {"pm": 300, "lighter": 100}
+    assert not loop.spawned and pr.busy is None
+
+
+def test_fresh_books_at_the_limits_pass_and_ages_logged(tmp_path, monkeypatch):
+    def at_0(w, now):
+        stamp(w.pbook, now, 300, 300)
+        stamp(w.lbook, now, 100, 100)
+    pr, w, tid, loop = trigger_then(tmp_path, monkeypatch, lambda w: None, at_0)
+    (p,) = records(tmp_path, "persist")
+    assert p["stale"] is None and p["ok"] and set(p["ages"]) == {"trigger", "at_250"}
+    assert p["ages"]["trigger"]["pm"]["age_ms"] == pytest.approx(300, abs=1.5)
+    assert len(loop.spawned) == 1
+
+
+def test_book_without_exchange_timestamp_is_stale(tmp_path, monkeypatch):
+    def at_0(w, now):
+        fresh(w, now)
+        w.pbook.x = 0
+    pr, w, tid, loop = trigger_then(tmp_path, monkeypatch, lambda w: None, at_0)
+    assert records(tmp_path, "skip")[0]["reason"] == "stale_pm" and not loop.spawned
