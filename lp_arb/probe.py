@@ -101,7 +101,12 @@ SSM = {
     "PM_SIGNATURE_TYPE": "/lparb/probe/polymarket/SIGNATURE_TYPE",
 }
 CLOB = "https://clob.polymarket.com"
-DATA_API = "https://data-api.polymarket.com/positions?sizeThreshold=0&limit=500&user="
+DATA_API_V2 = "https://data-api.polymarket.com/v2/positions"  # v1 /positions retired 2026-11-02 (HTTP 410)
+DATA_API_PAGE = 500  # v2 max 1000
+DATA_API_MAX_PAGES = 20
+BTC15M_SLUG = "btc-updown-15m-"  # reconcile scope: only these markets can block a start
+L_FEE_LOOKUP_S = (5, 10, 20)  # Lighter charged-fee lookups after a fill (seconds after the fill)
+L_FEE_PLAUSIBLE_X = 5.0  # a charged fee > 5x the model (+1c) is not applied (unit check), only logged
 L_BASE = "https://mainnet.zklighter.elliot.ai"
 # Reused venue code, imported in live mode only and pinned by content hash (a changed file -> refuse to trade).
 STATARB_DIR = Path(os.environ.get("LPARB_STATARB_DIR", str(Path.home() / "Stat_Arb")))
@@ -256,7 +261,7 @@ def size_and_check(side, lpx, lsz, hedge_px, pm_rate, l_min, pm_min, open_l, ope
 
 # ======================= ledger (state = function of the probe's own log records) =======================
 class Ledger:
-    KINDS = ("l_fill", "pm_fill", "unwind", "pair", "unhedged", "probe_settle")
+    KINDS = ("l_fill", "pm_fill", "unwind", "pair", "unhedged", "probe_settle", "l_fee")
 
     def __init__(self, mode):
         self.mode = mode
@@ -299,6 +304,15 @@ class Ledger:
         elif kind == "probe_settle":
             self.win.pop(int(r["window"]), None)
             self.realised[day] += r.get("realised_usd", 0.0)
+        elif kind == "l_fee" and r.get("realised_usd"):
+            # charged-vs-model Lighter fee, realised when known. Settlement nets it out (cost += adj, locked -= adj) so
+            # it is counted once.
+            d = r["realised_usd"]
+            self.realised[day] += d
+            if int(r["window"]) in self.win:
+                w = self.win[int(r["window"])]
+                w["locked"] += d
+                w["ladj"] = w.get("ladj", 0.0) - d
 
     def replay(self, root):
         for f in sorted(Path(root).glob("????-??-??.jsonl")):
@@ -328,16 +342,23 @@ class Ledger:
         return dict(lpos), dict(ppos)
 
 
-def reconcile(ledger, l_positions, l_orders, pm_positions, pm_orders, tol=1e-3):
-    """Pure. l_positions {market id: signed qty} (binary `bo_positions`; perps as "perp:SYMBOL", always foreign);
-    pm_positions [{asset, size, redeemable}]. -> (problems, warnings)."""
+def reconcile(ledger, l_positions, l_orders, pm_positions, pm_orders, tol=1e-3, l_symbols=None):
+    """Pure. l_positions {market id: signed qty} (binary `bo_positions`; perps as "perp:SYMBOL");
+    pm_positions [{token, size, slug, ...}] (pm_positions_v2 rows); l_symbols {market id: symbol}.
+    Scope: a position the probe's log does not know is a PROBLEM (refuse to start) only in a BTC 15m up/down market;
+    in any other market it is a WARNING. A market whose identity is unknown counts as BTC 15m (fail closed).
+    Open orders on either venue are problems (the probe only sends IOC/FAK). -> (problems, warnings)."""
     exp_l, exp_pm = ledger.expected()
     problems, warns = [], []
+    l_symbols = l_symbols or {}
     for sym, q in l_positions.items():
         if abs(q) <= tol:
             continue
         if sym not in ledger.mids:
-            problems.append(f"lighter position {sym} {q:+} not created by the probe")
+            name = sym if isinstance(sym, str) else l_symbols.get(sym)
+            in_scope = not (isinstance(sym, str) and sym.startswith("perp:")) and (name is None or str(name).upper().startswith("BTC-UPDOWN-15M-"))
+            msg = f"lighter position {sym}{f' ({name})' if name and name != sym else ''} {q:+} not created by the probe"
+            (problems if in_scope else warns).append(msg if in_scope else msg + " (other market: not blocking)")
         elif abs(q - exp_l.get(sym, 0.0)) > tol:
             problems.append(f"lighter position {sym} {q:+} != probe ledger {exp_l.get(sym, 0.0):+}")
     for sym, q in exp_l.items():
@@ -346,11 +367,107 @@ def reconcile(ledger, l_positions, l_orders, pm_positions, pm_orders, tol=1e-3):
     if l_orders:
         problems.append(f"{len(l_orders)} open Lighter order(s); the probe only sends IOC")
     for p in pm_positions:
-        if float(p.get("size") or 0) > tol and str(p.get("asset")) not in ledger.tokens:
-            problems.append(f"polymarket position {str(p.get('asset'))[:12]}.. size {p.get('size')} not created by the probe")
+        if float(p.get("size") or 0) <= tol or str(p.get("token")) in ledger.tokens:
+            continue
+        slug = str(p.get("slug") or "")
+        msg = f"polymarket position {slug or str(p.get('token'))[:12] + '..'} {p.get('outcome') or ''} size {p.get('size')} not created by the probe"
+        if not slug or slug.startswith(BTC15M_SLUG):
+            problems.append(msg)
+        else:
+            warns.append(msg + " (other market: not blocking)")
     if pm_orders:
         problems.append(f"{len(pm_orders)} open Polymarket order(s); the probe only sends FAK")
     return problems, warns
+
+
+def pm_positions_v2(user, get_json=None):
+    """All open Polymarket positions of `user` (the funder) from Data API v2, cursor-paginated.
+    GET /v2/positions?user=&limit=&filter_type=TOKENS&filter_amount=0 (v2 replaced sizeThreshold with filter_type/
+    filter_amount; the default floor is 0.1 shares, 0 keeps dust). status defaults to OPEN, which includes settled but
+    unredeemed winners. If the API rejects filter_amount=0 (400), retries once without the filter (0.1 sh floor) and
+    says so. -> (rows normalised to {token, condition, size, slug, title, outcome, redeemable, value, status}, notes)."""
+    import urllib.error
+    import urllib.parse
+
+    get_json = get_json or _get_json
+    notes = []
+    base = dict(user=user, limit=DATA_API_PAGE, filter_type="TOKENS", filter_amount=0)
+    for attempt in (0, 1):
+        rows, cursor, seen = [], None, set()
+        try:
+            for _ in range(DATA_API_MAX_PAGES):
+                q = dict(base, cursor=cursor) if cursor else base  # a cursor must keep the user anchor
+                body = get_json(DATA_API_V2 + "?" + urllib.parse.urlencode(q))
+                if not isinstance(body, dict) or not isinstance(body.get("data"), list):
+                    raise RuntimeError("Data API v2 positions: response has no data list")
+                rows += body["data"]
+                pg = body.get("pagination") or {}
+                if not pg.get("has_more"):
+                    return [_pm_row(r) for r in rows], notes
+                cursor = pg.get("next_cursor")
+                if not cursor or cursor in seen:
+                    raise RuntimeError("Data API v2 positions: has_more without a new next_cursor")
+                seen.add(cursor)
+            raise RuntimeError(f"Data API v2 positions: more than {DATA_API_MAX_PAGES} pages")
+        except urllib.error.HTTPError as e:
+            try:
+                err = json.loads(e.read() or b"{}")
+            except Exception:  # noqa: BLE001
+                err = {}
+            if e.code == 400 and attempt == 0 and str(err.get("parameter", "")).startswith("filter"):
+                base = dict(user=user, limit=DATA_API_PAGE)
+                notes.append("Data API rejected filter_amount=0; positions below 0.1 sh (dust) are not listed")
+                continue
+            raise RuntimeError(f"Data API v2 positions HTTP {e.code}: {err.get('error') or e.reason}"[:300]) from None
+    raise RuntimeError("unreachable")
+
+
+def _get_json(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "lp-arb-probe"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.load(r)
+
+
+def _pm_row(r):
+    return dict(token=str(r.get("token_id") or r.get("asset") or ""), condition=r.get("condition_id"),
+                size=float(r.get("current_size") if r.get("current_size") is not None else r.get("size") or 0),
+                slug=r.get("slug") or "", title=r.get("title"), outcome=r.get("outcome"), redeemable=bool(r.get("redeemable")),
+                value=float(r.get("current_value") or 0), status=r.get("status"))
+
+
+def lighter_fee_charged(trades, coid):
+    """Our IOC's charged Lighter fee from its trades (recentTrades / account trades rows).
+    `taker_fee`/`maker_fee` are integers that do NOT scale with trade size; across public BTC 15m trades they track
+    ~8000 x (1 - p). Read as a rate in millionths of notional, fee = rate * usd_amount / 1e6 (= ~0.008 p(1-p) per share,
+    next to the 0.01 p(1-p) model). That unit is inferred from public trades, not documented: the raw values are logged
+    and a result > L_FEE_PLAUSIBLE_X x the model is not applied. -> (usd or None, [per-trade detail])."""
+    rows, usd = [], 0.0
+    for t in trades:
+        bid, ask = str(t.get("bid_client_id")), str(t.get("ask_client_id"))
+        if str(coid) not in (bid, ask):
+            continue
+        we_bid = str(coid) == bid
+        maker_ask = bool(t.get("is_maker_ask"))
+        taker = we_bid == maker_ask  # we bid and the maker was the ask -> we took
+        rate = t.get("taker_fee") if taker else t.get("maker_fee")
+        n = float(t.get("usd_amount") or (float(t.get("size") or 0) * float(t.get("price") or 0)))
+        f = (float(rate) * n / 1e6) if rate is not None else 0.0
+        usd += f
+        rows.append(dict(trade_id=t.get("trade_id"), price=t.get("price"), size=t.get("size"), usd_amount=n, role="taker" if taker else "maker",
+                         fee_rate_raw=rate, fee_usd=round(f, 8)))
+    return (round(usd, 8) if rows else None), rows
+
+
+def lighter_symbols(mids, http=None):
+    """{market id: symbol} from the public orderBooks?market_id= (binary markets are not in the default listing)."""
+    http = http or P.http_json
+    out = {}
+    for m in mids:
+        try:
+            out[m] = (http(P.L_REST + f"orderBooks?market_id={m}").get("order_books") or [{}])[0].get("symbol")
+        except Exception:  # noqa: BLE001
+            out[m] = None
+    return out
 
 
 # ======================= secrets / reused code (live only) =======================
@@ -456,6 +573,21 @@ class LighterLive:
                     out["limits_error"] = repr(ex)[:200]
                 return out
 
+            def my_trades(self, market_id):
+                """The account's latest trades in a market (authenticated), as dicts with fee fields."""
+                r = self._with_retries("trades(account)", lambda: self._order_api.trades(
+                    sort_by="timestamp", limit=100, market_id=int(market_id), account_index=self._config.account_index,
+                    sort_dir="desc", authorization=self._auth()))
+                return [t.to_dict() for t in (getattr(r, "trades", None) or ())]
+
+            def close(self):
+                """Stat_Arb's close() closes its ApiClient only; the SignerClient holds a second aiohttp session."""
+                try:
+                    self._run(self._signer.close())
+                except Exception:  # noqa: BLE001
+                    pass
+                super().close()
+
             def active_orders(self):
                 r = self._with_retries("account_active_orders(all)", lambda: self._order_api.account_active_orders(
                     account_index=self._config.account_index, authorization=self._auth()))
@@ -511,11 +643,21 @@ class LighterLive:
         return dict(out, status="ambiguous", filled=0.0, reason=f"no terminal status within {L_FILL_TIMEOUT_S}s")
 
     async def fee_charged(self, market_id, coid):
-        """Off the hot path: the order's trades from the public recentTrades (taker_fee, price, size, exchange time)."""
-        d = await asyncio.to_thread(P.http_json, P.L_REST + f"recentTrades?market_id={market_id}&limit=100")
-        return [dict(price=float(t["price"]), size=float(t["size"]), taker_fee=t.get("taker_fee"), usd=t.get("usd_amount"),
-                     timestamp=t.get("timestamp"), tx_hash=t.get("tx_hash"), trade_id=t.get("trade_id"))
-                for t in d.get("trades") or () if str(coid) in (str(t.get("ask_client_id")), str(t.get("bid_client_id")))]
+        """Off the hot path: the order's trades, from the account's own trades (authenticated), else the public
+        recentTrades. -> raw trade dicts that carry our client order id."""
+        rows = []
+        try:
+            rows = await asyncio.to_thread(self.c.my_trades, market_id)
+        except Exception:  # noqa: BLE001
+            rows = []
+        mine = [t for t in rows if str(coid) in (str(t.get("ask_client_id")), str(t.get("bid_client_id")))]
+        if not mine:
+            d = await asyncio.to_thread(P.http_json, P.L_REST + f"recentTrades?market_id={market_id}&limit=100")
+            mine = [t for t in d.get("trades") or () if str(coid) in (str(t.get("ask_client_id")), str(t.get("bid_client_id")))]
+        return mine
+
+    def close(self):
+        self.c.close()
 
     async def balance(self):
         s = await asyncio.to_thread(self.c.snapshot)
@@ -538,8 +680,12 @@ class PMLive:
 
     def __init__(self, sec, red):
         self.rd3 = import_rd3()
-        self.c = self.rd3.make_client({"POLY_PRIVATE_KEY": sec["PM_PRIVATE_KEY"], "POLY_SIGNATURE_TYPE": sec["PM_SIGNATURE_TYPE"],
-                                       "POLY_FUNDER_ADDRESS": sec["PM_FUNDER"]})
+        from py_clob_client_v2 import ClobClient
+
+        with derive_first(ClobClient):  # rd3.make_client calls create_or_derive_api_key: create first -> 400 logged each start
+            self.c = self.rd3.make_client({"POLY_PRIVATE_KEY": sec["PM_PRIVATE_KEY"], "POLY_SIGNATURE_TYPE": sec["PM_SIGNATURE_TYPE"],
+                                           "POLY_FUNDER_ADDRESS": sec["PM_FUNDER"]})
+        self.creds_source = getattr(self.c, "_probe_creds_source", None)
         cr = self.c.creds
         for v in (cr.api_key, cr.api_secret, cr.api_passphrase):
             red.add(v)
@@ -634,12 +780,48 @@ class PMLive:
         return await asyncio.to_thread(self.c.get_open_orders)
 
     async def positions(self):
-        def go():
-            req = urllib.request.Request(DATA_API + self.funder, headers={"User-Agent": "lp-arb-probe"})
-            with urllib.request.urlopen(req, timeout=10) as r:
-                return json.load(r)
+        rows, notes = await asyncio.to_thread(pm_positions_v2, self.funder)
+        self.positions_notes = notes
+        return rows
 
-        return await asyncio.to_thread(go)
+    def close(self):
+        try:
+            import py_clob_client_v2.http_helpers.helpers as H
+
+            hc = getattr(H, "_http_client", None)
+            if hc is not None and hasattr(hc, "close"):
+                hc.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+class derive_first:
+    """Context manager: ClobClient.create_or_derive_api_key -> derive the existing key first, create only if that fails.
+    The library's order (create, then derive) logs `Could not create api key` (400) on every start once a key exists."""
+
+    def __init__(self, cls):
+        self.cls = cls
+
+    def __enter__(self):
+        self.orig = self.cls.create_or_derive_api_key
+
+        def derive_then_create(c, nonce=None):
+            try:
+                cr = c.derive_api_key(nonce=nonce)
+                if cr and cr.api_key:
+                    c._probe_creds_source = "derived"
+                    return cr
+            except Exception:  # noqa: BLE001
+                pass
+            c._probe_creds_source = "created"
+            return c.create_api_key(nonce=nonce)
+
+        self.cls.create_or_derive_api_key = derive_then_create
+        return self
+
+    def __exit__(self, *exc):
+        self.cls.create_or_derive_api_key = self.orig
+        return False
 
 
 class LighterSim:
@@ -732,6 +914,7 @@ class Probe(Paper):
         self.persist = {}  # trigger id -> True / False from the +250 ms check (popped at +500 ms)
         self.ages = {}  # trigger id -> book ages at the trigger (consumed at +250 ms)
         self.clock = time.time  # tests replace it with the fake loop's clock
+        self.l_symbols_fn = lighter_symbols  # market id -> symbol for the reconcile scope (tests: a fake)
         if isinstance(log, ProbeLog):
             log.hooks.append(self.ledger.apply)
             log.hooks.append(self._capture)
@@ -947,7 +1130,7 @@ class Probe(Paper):
         self.log("l_fill", **base, symbol=l_symbol(w.e), market_id=w.mid, qty=f, px=lfill, fee_usd_model=round(lfee, 6), coid=r.get("coid"),
                  t_send=r.get("t_send"), t_ack=r.get("t_ack"), t_fill=r.get("t_fill"), exch=r.get("exch"))
         if self.mode == "live" and r.get("coid"):
-            self.spawn(self.log_lighter_fees(base, w.mid, r["coid"]))
+            self.spawn(self.lighter_fee_true_up(base, w.mid, r["coid"], lfee, "entry"))
         hedged, pm_cost, pm_fee, attempts, ambiguous = await self.hedge_pm(w, tid, side, tok, f, base)
         if ambiguous:
             return self.halt("pm_ambiguous", **base, hedged=hedged)
@@ -1004,12 +1187,30 @@ class Probe(Paper):
                 return hedged, cost, fee, attempt + 1, False
         return hedged, cost, fee, attempt + 1, False
 
-    async def log_lighter_fees(self, base, mid, coid):
-        await asyncio.sleep(5)
-        try:
-            self.log("fees", **base, venue="lighter", coid=coid, trades=await self.lv.fee_charged(mid, coid))
-        except Exception as ex:  # noqa: BLE001
-            self.err("fees", ex)
+    async def lighter_fee_true_up(self, base, mid, coid, model_usd, purpose):
+        """P&L carries the model Lighter fee when the fill happens (no venue call on the hot path); 5-35 s later the fee
+        Lighter charged is read from the order's trades and an `l_fee` record books the difference as realised:
+        realised_usd = model - charged. Both fees are logged. Not found or implausible -> the model stays (logged)."""
+        tried = 0.0
+        for wait in L_FEE_LOOKUP_S:
+            await asyncio.sleep(max(0.0, wait - tried))
+            tried = wait
+            try:
+                trades = await self.lv.fee_charged(mid, coid)
+            except Exception as ex:  # noqa: BLE001
+                self.err("l_fee", ex)
+                continue
+            charged, detail = lighter_fee_charged(trades, coid)
+            if charged is None:
+                continue
+            ok = charged <= L_FEE_PLAUSIBLE_X * model_usd + 0.01
+            delta = round(model_usd - charged, 8) if ok else 0.0
+            self.log("l_fee", **base, purpose=purpose, coid=coid, market_id=mid, fee_model_usd=round(model_usd, 8), fee_charged_usd=charged,
+                     applied=ok, realised_usd=delta, trades=detail,
+                     note=None if ok else "charged fee implausible vs model (unit?): not applied, P&L keeps the model")
+            return
+        self.log("l_fee", **base, purpose=purpose, coid=coid, market_id=mid, fee_model_usd=round(model_usd, 8), fee_charged_usd=None,
+                 applied=False, realised_usd=0.0, note="order's trades not found; P&L keeps the model fee")
 
     async def log_fees(self, base, oid):
         await asyncio.sleep(5)
@@ -1037,7 +1238,10 @@ class Probe(Paper):
                 realised = ((upx - lfill) if side == "a" else (lfill - upx)) * done - (fl(lfill) + fl(upx)) * done
                 # proceeds: side a sells Up at upx; side b buys Up back at upx = sells Down at 1 - upx (collateral released)
                 self.spend("lighter", -(((upx if side == "a" else 1 - upx) - fl(upx)) * done))
-                self.log("unwind", **base, qty=done, px=upx, entry_px=lfill, realised_usd=round(realised, 6), coid=r.get("coid"))
+                self.log("unwind", **base, qty=done, px=upx, entry_px=lfill, realised_usd=round(realised, 6), coid=r.get("coid"),
+                         fee_usd_model=round(fl(upx) * done, 6))
+                if self.mode == "live" and r.get("coid"):
+                    self.spawn(self.lighter_fee_true_up(base, w.mid, r["coid"], fl(upx) * done, "unwind"))
         residual = round(rem - done, 4)
         self.log("unhedged", **base, qty=rem, unwound=done, residual_held=residual, loss_usd=round(-realised, 6),
                  note="residual is held to settlement" if residual > 0 else None,
@@ -1074,6 +1278,7 @@ class Probe(Paper):
                     cost += c
                     if won and sh > 0:
                         redeem.append(dict(token=tok, shares=sh, slug=w.slug))
+                cost += legs.get("ladj", 0.0)  # Lighter fee charged above (+) or below (-) the model, already realised
                 actual = pay - cost
                 settle_realised = actual - legs["locked"]
                 self.log("probe_settle", window=w.e, mode=self.mode, pm_winner=pm_w, lighter_up=l_up, venues_agree=l_up == pm_up,
@@ -1108,8 +1313,8 @@ class Probe(Paper):
         """Every window: all redeemable winners still on the Polymarket account (claim them in the UI)."""
         try:
             pos = await self.pv.positions()
-            due = [dict(token=str(p.get("asset")), shares=p.get("size"), value=p.get("currentValue"), title=p.get("title"))
-                   for p in pos if p.get("redeemable") and float(p.get("currentValue") or 0) > 0]
+            due = [dict(token=p["token"], shares=p["size"], value=p["value"], title=p.get("title"), slug=p.get("slug"))
+                   for p in pos if p.get("redeemable") and float(p.get("value") or 0) > 0]
             if due:
                 self.log("redeem_due", window=w.e, mode=self.mode, sweep=True, winners=due, usd=round(sum(float(d["value"] or 0) for d in due), 4),
                          note="claim in the Polymarket UI")
@@ -1152,7 +1357,10 @@ class Probe(Paper):
         lo = await self.lv.open_orders()
         pp = await self.pv.positions()
         po = await self.pv.open_orders()
-        problems, warns = reconcile(self.ledger, lb["positions"], lo, pp, po)
+        unknown = [m for m in lb["positions"] if not isinstance(m, str) and m not in self.ledger.mids]
+        syms = await asyncio.to_thread(self.l_symbols_fn, unknown) if unknown else {}
+        problems, warns = reconcile(self.ledger, lb["positions"], lo, pp, po, l_symbols=syms)
+        warns += list(getattr(self.pv, "positions_notes", None) or ())
         self.log("reconcile", ok=not problems, problems=problems, warnings=warns, lighter_positions=lb["positions"],
                  pm_positions=len(pp), expected=self.ledger.expected())
         if problems:
@@ -1238,7 +1446,7 @@ def _brief_pm_order(o):
 
 
 def _brief_pm_position(p):
-    return {k: p.get(k) for k in ("slug", "title", "outcome", "size", "avgPrice", "curPrice", "redeemable", "conditionId")}
+    return {k: p.get(k) for k in ("slug", "title", "outcome", "size", "value", "redeemable", "status", "condition")}
 
 
 async def account_check(lv, pv, ledger, http=None, now=None):
@@ -1305,7 +1513,8 @@ async def account_check(lv, pv, ledger, http=None, now=None):
     except Exception:  # noqa: BLE001
         pass
     sv = getattr(pv, "server_version", None)
-    out["pm_client"] = dict(py_clob_client_v2=inst, required=PM_CLIENT_VERSION, clob_server_version=sv)
+    out["pm_client"] = dict(py_clob_client_v2=inst, required=PM_CLIENT_VERSION, clob_server_version=sv,
+                            api_creds=getattr(pv, "creds_source", None))
     if inst != PM_CLIENT_VERSION:
         problems.append(f"py_clob_client_v2 {inst} != {PM_CLIENT_VERSION}")
     pbal = await part("pm balance", pv.balance())
@@ -1340,7 +1549,9 @@ async def account_check(lv, pv, ledger, http=None, now=None):
 
     # ---- would a live start refuse?
     if bal is not None and lo is not None and pp is not None and po is not None:
-        rp, rw = reconcile(ledger, bal.get("positions") or {}, lo, pp, po)
+        unknown = [m for m in (bal.get("positions") or {}) if not isinstance(m, str) and m not in ledger.mids]
+        rp, rw = reconcile(ledger, bal.get("positions") or {}, lo, pp, po, l_symbols=lighter_symbols(unknown, http) if unknown else {})
+        rw = rw + list(getattr(pv, "positions_notes", None) or ())
         out["reconcile"] = dict(ok=not rp, problems=rp, warnings=rw, expected=ledger.expected())
         problems += [f"reconcile: {x}" for x in rp]
         if rw:
@@ -1366,9 +1577,13 @@ def build_live(red):
     for v in sec.values():
         red.add(v)
     sys.stdout, sys.stderr = ScrubStream(sys.stdout, red), ScrubStream(sys.stderr, red)
+    lv = None
     try:
         lv = LighterLive(sec)
         pv = PMLive(sec, red)
+    except BaseException:
+        close_venues(lv)
+        raise
     finally:
         sec.clear()
     return lv, pv
@@ -1389,17 +1604,30 @@ def main(argv=None):
 
     sys.excepthook = hook
     lv = pv = None
-    if a.mode == "check":
-        lv, pv = build_live(red)
-        ledger = Ledger("live")
-        ledger.replay(OUT_LIVE)
-        res = asyncio.run(account_check(lv, pv, ledger))
-        print(json.dumps(red.obj(res), indent=1, default=str))
-        return 0 if res["ok"] else 1
-    if a.mode == "live":
-        lv, pv = build_live(red)
-    probe = Probe(ProbeLog(out, red), a.mode, time.time() + a.minutes * 60 if a.minutes else None, lighter=lv, pm=pv)
-    asyncio.run(probe.run())
+    try:
+        if a.mode == "check":
+            lv, pv = build_live(red)
+            ledger = Ledger("live")
+            ledger.replay(OUT_LIVE)
+            res = asyncio.run(account_check(lv, pv, ledger))
+            print(json.dumps(red.obj(res), indent=1, default=str))
+            return 0 if res["ok"] else 1
+        if a.mode == "live":
+            lv, pv = build_live(red)
+        probe = Probe(ProbeLog(out, red), a.mode, time.time() + a.minutes * 60 if a.minutes else None, lighter=lv, pm=pv)
+        asyncio.run(probe.run())
+    finally:
+        close_venues(lv, pv)
+
+
+def close_venues(*venues):
+    """Close the venues' HTTP sessions (Lighter: two aiohttp sessions + its IO loop; Polymarket: the httpx client)."""
+    for v in venues:
+        if v is not None and hasattr(v, "close"):
+            try:
+                v.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 if __name__ == "__main__":

@@ -91,6 +91,7 @@ def make_probe(tmp_path, lighter=None, pm=None, mode="live", red=None, stop_file
     pr = R.Probe(R.ProbeLog(tmp_path, red), mode, lighter=lighter or FakeL(), pm=pm or FakePM(),
                  stop_file=stop_file or (tmp_path / "STOP"))
     pr.free = {"lighter": 50.0, "pm": 40.0}
+    pr.l_symbols_fn = lambda mids: {m: None for m in mids}  # no network in tests: unknown symbol (fail closed)
     return pr
 
 
@@ -420,7 +421,7 @@ def test_restart_with_foreign_position_refuses(tmp_path):
 
 
 def test_restart_with_foreign_pm_position_or_order_refuses(tmp_path):
-    pr = make_probe(tmp_path, FakeL(), FakePM(positions=[dict(asset="999", size=3.0)]))
+    pr = make_probe(tmp_path, FakeL(), FakePM(positions=[dict(token="999", size=3.0)]))
     run(pr.startup_reconcile())
     assert pr.reconcile_failed
     pr2 = make_probe(tmp_path / "b", FakeL(orders=[{"order_index": 1}]), FakePM())
@@ -437,7 +438,7 @@ def test_restart_with_own_positions_passes(tmp_path):
     first.log("pm_fill", id="j", window=e - 900, side="a", mode="live", token="OLDTOK", shares=5.0, cost=3.0, fee_usd=0.05)
     first.log("probe_settle", window=e - 900, mode="live", realised_usd=0.0)
     L = FakeL(positions={12572: -5.0})
-    PM = FakePM(positions=[dict(asset="UPTOK", size=5.0), dict(asset="OLDTOK", size=5.0, redeemable=True)])
+    PM = FakePM(positions=[dict(token="UPTOK", size=5.0), dict(token="OLDTOK", size=5.0, redeemable=True)])
     pr = make_probe(tmp_path, L, PM)
     pr.ledger.replay(tmp_path)
     run(pr.startup_reconcile())
@@ -593,12 +594,13 @@ def test_stale_window_settles_after_restart(tmp_path, monkeypatch):
     assert records(tmp_path, "probe_settle")[0]["window"] == e and records(tmp_path, "redeem_due")
 
 
-def test_reconcile_size_mismatch_and_perp_are_foreign(tmp_path):
+def test_reconcile_size_mismatch_and_perp_scope(tmp_path):
     led = R.Ledger("live")
     led.apply("l_fill", dict(mode="live", window=1, side="a", symbol="S", market_id=5, qty=5.0, px=0.4, t_local=time.time()))
     assert R.reconcile(led, {5: 5.0}, [], [], [])[0] == []
-    assert R.reconcile(led, {5: 9.0}, [], [], [])[0]  # more than the probe bought
-    assert R.reconcile(led, {5: 5.0, "perp:BTC": 0.1}, [], [], [])[0]  # a perp on the probe sub-account
+    assert R.reconcile(led, {5: 9.0}, [], [], [])[0]  # more than the probe bought, in a probe market
+    pr, wr = R.reconcile(led, {5: 5.0, "perp:BTC": 0.1}, [], [], [])  # a perp is another market: warning only
+    assert pr == [] and "perp:BTC" in wr[0] and "not blocking" in wr[0]
 
 
 def test_lighter_snapshot_reads_bo_positions():
@@ -811,7 +813,7 @@ def test_check_mode_reads_everything_places_nothing(tmp_path):
 def test_check_mode_flags_every_problem(tmp_path):
     L = CheckL(positions={555: 5.0}, orders=[{"market_index": 555, "is_ask": True, "price": "0.5"}], free=3.0)
     PM = CheckPM(allowance="12000000", closed=True, orders=[{"market": "0xabc", "side": "BUY"}],
-                 positions=[{"asset": "999", "size": 7.0, "slug": "btc-updown-15m-1", "redeemable": False}])
+                 positions=[{"token": "999", "size": 7.0, "slug": "btc-updown-15m-1", "redeemable": False}])
     res = run(R.account_check(L, PM, R.Ledger("live"), http=fake_http(status="inactive"), now=1795700700 + 100))
     assert not res["ok"] and res["lighter_btc15m"]["verdict"] == "no"
     p = " | ".join(res["problems"])
@@ -946,3 +948,323 @@ def test_book_without_exchange_timestamp_is_stale(tmp_path, monkeypatch):
         w.pbook.x = 0
     pr, w, tid, loop = trigger_then(tmp_path, monkeypatch, lambda w: None, at_0)
     assert records(tmp_path, "skip")[0]["reason"] == "stale_pm" and not loop.spawned
+
+
+# ---------------------------------------------------------------- reconcile scope (11-26 operator check)
+def test_reconcile_scope_btc15m_blocks_other_markets_warn():
+    led = R.Ledger("live")
+    led.apply("pm_fill", dict(mode="live", window=1, side="a", token="OURS", shares=5.0, cost=2.0, t_local=time.time()))
+    pm = [dict(token="OURS", size=5.0, slug="btc-updown-15m-1"),
+          dict(token="T1", size=3.0, slug="btc-updown-15m-1795700700", outcome="Up"),  # foreign BTC 15m -> refuse
+          dict(token="T2", size=40.0, slug="will-it-rain-in-tokyo", outcome="Yes"),  # other market -> warn
+          dict(token="T3", size=2.0, slug="eth-updown-15m-1795700700"),  # ETH 15m is another market -> warn
+          dict(token="T4", size=1.0, slug=""),  # unknown market -> refuse (fail closed)
+          dict(token="T5", size=0.0, slug="btc-updown-15m-1")]  # zero size ignored
+    lpos = {77: 5.0, 78: -5.0, 79: 1.0}
+    syms = {77: "BTC-UPDOWN-15M-1795700700", 78: "ETH-UPDOWN-15M-1795700700", 79: None}
+    probs, warns = R.reconcile(led, lpos, [], pm, [], l_symbols=syms)
+    assert len(probs) == 4 and len(warns) == 3
+    joined = " | ".join(probs)
+    for x in ("btc-updown-15m-1795700700", "T4", "77", "79"):
+        assert x in joined
+    assert all("not blocking" in w for w in warns)
+    assert any("will-it-rain" in w for w in warns) and any("ETH-UPDOWN" in w for w in warns)
+
+
+def test_startup_reconcile_other_market_positions_do_not_block(tmp_path):
+    pr = make_probe(tmp_path, FakeL(positions={91: 2.0}), FakePM(positions=[dict(token="X", size=9.0, slug="us-election-2028")]))
+    pr.l_symbols_fn = lambda mids: {m: "ETH-UPDOWN-15M-1" for m in mids}
+    run(pr.startup_reconcile())
+    rec = records(tmp_path, "reconcile")[-1]
+    assert pr.reconcile_failed is None and rec["ok"] is True and len(rec["warnings"]) == 2
+
+
+# ---------------------------------------------------------------- Data API v2 positions
+def v2_pages(pages, reject_zero=False):
+    calls = []
+
+    def get(url):
+        import urllib.error
+        import urllib.parse
+        q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
+        calls.append((url.split("?")[0], q))
+        if reject_zero and q.get("filter_amount") == "0":
+            import io
+            raise urllib.error.HTTPError(url, 400, "Bad Request", {}, io.BytesIO(
+                b'{"error":"filter_amount must be > 0","code":"invalid_request","parameter":"filter_amount"}'))
+        if q.get("user") == "0xprotocol":
+            import io
+            raise urllib.error.HTTPError(url, 400, "Bad Request", {}, io.BytesIO(
+                b'{"error":"user is a protocol contract address","code":"invalid_request","parameter":"user"}'))
+        i = 0 if "cursor" not in q else int(q["cursor"][1:])
+        return pages[i]
+    return get, calls
+
+
+def row(tok, size, slug="btc-updown-15m-1", redeemable=False):
+    return dict(proxy_wallet="0xfunder", token_id=tok, condition_id="0xc", current_size=size, slug=slug, title="t", outcome="Up",
+                status="OPEN", current_value=size * 0.5, redeemable=redeemable)
+
+
+def test_pm_positions_v2_paginates_with_user_anchor_and_keeps_dust():
+    pages = [dict(data=[row("a", 5.0), row("b", 0.04)], pagination=dict(has_more=True, next_cursor="c1")),
+             dict(data=[row("c", 1.0, redeemable=True)], pagination=dict(has_more=True, next_cursor="c2")),
+             dict(data=[], pagination=dict(has_more=False, next_cursor=None))]
+    get, calls = v2_pages(pages)
+    rows, notes = R.pm_positions_v2("0xfunder", get)
+    assert [r["token"] for r in rows] == ["a", "b", "c"] and rows[1]["size"] == 0.04 and rows[2]["redeemable"] is True
+    assert rows[0] == dict(token="a", condition="0xc", size=5.0, slug="btc-updown-15m-1", title="t", outcome="Up", redeemable=False,
+                           value=2.5, status="OPEN")
+    assert all(u == "https://data-api.polymarket.com/v2/positions" for u, _ in calls) and len(calls) == 3
+    assert all(q["user"] == "0xfunder" and q["filter_type"] == "TOKENS" and q["filter_amount"] == "0" for _, q in calls)
+    assert "cursor" not in calls[0][1] and calls[1][1]["cursor"] == "c1" and calls[2][1]["cursor"] == "c2"
+    assert notes == []
+
+
+def test_pm_positions_v2_falls_back_without_filter_and_says_so():
+    get, calls = v2_pages([dict(data=[row("a", 5.0)], pagination=dict(has_more=False, next_cursor=None))], reject_zero=True)
+    rows, notes = R.pm_positions_v2("0xfunder", get)
+    assert len(rows) == 1 and "filter_amount" not in calls[-1][1] and "dust" in notes[0]
+
+
+def test_pm_positions_v2_other_400_is_reported_not_retried():
+    get, calls = v2_pages([])
+    with pytest.raises(RuntimeError, match="HTTP 400: user is a protocol contract address"):
+        R.pm_positions_v2("0xprotocol", get)
+    assert len(calls) == 1
+
+
+def test_pm_positions_v2_rejects_broken_pagination():
+    get, _ = v2_pages([dict(data=[row("a", 1.0)], pagination=dict(has_more=True, next_cursor=None))])
+    with pytest.raises(RuntimeError, match="next_cursor"):
+        R.pm_positions_v2("0xfunder", get)
+    loop_pages = [dict(data=[], pagination=dict(has_more=True, next_cursor="c0"))]
+    get, _ = v2_pages(loop_pages)
+    with pytest.raises(RuntimeError, match="next_cursor"):
+        R.pm_positions_v2("0xfunder", get)
+
+
+def test_redeem_sweep_uses_v2_rows(tmp_path):
+    PM = FakePM(positions=[dict(token="W", size=5.0, value=5.0, redeemable=True, slug="btc-updown-15m-1", title="t"),
+                           dict(token="L", size=5.0, value=0.0, redeemable=True, slug="btc-updown-15m-1")])
+    pr = make_probe(tmp_path, pm=PM)
+    run(pr.redeem_sweep(make_window(pr)))
+    (r,) = records(tmp_path, "redeem_due")
+    assert [w["token"] for w in r["winners"]] == ["W"] and r["usd"] == 5.0
+
+
+# ---------------------------------------------------------------- Polymarket API creds: derive first
+class FakeClob:
+    def __init__(self, derive_ok=True):
+        self.calls, self.derive_ok = [], derive_ok
+
+    def derive_api_key(self, nonce=None):
+        self.calls.append("derive")
+        if not self.derive_ok:
+            raise RuntimeError("400 no key")
+        return types_ns_creds("k-derived")
+
+    def create_api_key(self, nonce=None):
+        self.calls.append("create")
+        return types_ns_creds("k-created")
+
+    def create_or_derive_api_key(self, nonce=None):  # the library's order
+        self.calls.append("library")
+        return self.create_api_key(nonce)
+
+
+def types_ns_creds(k):
+    import types
+    return types.SimpleNamespace(api_key=k, api_secret="s", api_passphrase="p")
+
+
+def test_derive_first_derives_and_never_creates_when_a_key_exists():
+    c = FakeClob()
+    with R.derive_first(FakeClob):
+        cr = c.create_or_derive_api_key()
+    assert cr.api_key == "k-derived" and c.calls == ["derive"] and c._probe_creds_source == "derived"
+    assert FakeClob.create_or_derive_api_key.__name__ == "create_or_derive_api_key"  # restored
+
+
+def test_derive_first_creates_only_if_derive_fails():
+    c = FakeClob(derive_ok=False)
+    with R.derive_first(FakeClob):
+        cr = c.create_or_derive_api_key()
+    assert cr.api_key == "k-created" and c.calls == ["derive", "create"] and c._probe_creds_source == "created"
+
+
+def test_derive_first_wraps_the_real_client_class():
+    from py_clob_client_v2 import ClobClient
+    orig = ClobClient.create_or_derive_api_key
+    with R.derive_first(ClobClient):
+        assert ClobClient.create_or_derive_api_key is not orig
+    assert ClobClient.create_or_derive_api_key is orig
+
+
+# ---------------------------------------------------------------- sessions closed on exit
+def test_main_closes_venues_on_exit_and_on_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "stdout", sys.stdout)
+    monkeypatch.setattr(sys, "stderr", sys.stderr)
+    closed = []
+
+    class C(CheckL):
+        def close(self):
+            closed.append("l")
+
+    class D(CheckPM):
+        def close(self):
+            closed.append("p")
+
+    monkeypatch.setattr(R, "build_live", lambda red: (C(), D()))
+    monkeypatch.setattr(R, "OUT_LIVE", tmp_path)
+    monkeypatch.setattr(P, "http_json", fake_http())
+    monkeypatch.setattr(R.time, "time", lambda: 1795700700 + 100.0)
+    R.main(["--mode", "check"])
+    assert closed == ["l", "p"]
+
+    async def boom(*a, **k):
+        raise RuntimeError("venue down")
+    monkeypatch.setattr(R, "account_check", boom)
+    with pytest.raises(RuntimeError):
+        R.main(["--mode", "check"])
+    assert closed == ["l", "p", "l", "p"]
+
+
+def test_build_live_closes_lighter_if_polymarket_setup_fails(monkeypatch):
+    closed = []
+
+    class L:
+        def close(self):
+            closed.append("l")
+
+    def pm_fails(sec, red):
+        raise RuntimeError("clob down")
+    monkeypatch.setattr(sys, "stdout", sys.stdout)
+    monkeypatch.setattr(sys, "stderr", sys.stderr)
+    monkeypatch.setattr(R, "verify_pins", lambda: [])
+    monkeypatch.setattr(R, "load_secrets", lambda client=None: {k: "x" * 20 for k in R.SSM})
+    monkeypatch.setattr(R, "LighterLive", lambda sec: L())
+    monkeypatch.setattr(R, "PMLive", pm_fails)
+    with pytest.raises(RuntimeError, match="clob down"):
+        R.build_live(R.Redactor())
+    assert closed == ["l"]
+
+
+def test_lighter_sdk_api_client_close_leaves_no_unclosed_session():
+    """The mechanism BinaryLighterClient.close relies on: the SDK ApiClient built on a loop thread (as Stat_Arb does)
+    closes its aiohttp session; no 'Unclosed client session' at garbage collection. No network: no request is made."""
+    import gc
+    import threading
+    import warnings
+
+    import lighter
+
+    loop = asyncio.new_event_loop()
+    t = threading.Thread(target=loop.run_forever, daemon=True)
+    t.start()
+
+    async def build():
+        a = lighter.ApiClient(configuration=lighter.Configuration(host="https://example.invalid"))
+        lighter.OrderApi(a)
+        return a
+
+    a = asyncio.run_coroutine_threadsafe(build(), loop).result(5)
+    asyncio.run_coroutine_threadsafe(a.close(), loop).result(5)
+    loop.call_soon_threadsafe(loop.stop)
+    t.join(5)
+    with warnings.catch_warnings(record=True) as ws:
+        warnings.simplefilter("always")
+        del a
+        gc.collect()
+    assert not [w for w in ws if "Unclosed" in str(w.message)]
+
+
+# ---------------------------------------------------------------- Lighter fee: charged on the fill, not the model
+def ltrade(coid, rate, usd, we_bid=True, maker_ask=True, size=5.0, price=0.4):
+    return dict(trade_id=1, price=str(price), size=str(size), usd_amount=str(usd), is_maker_ask=maker_ask,
+                bid_client_id=coid if we_bid else 99, ask_client_id=99 if we_bid else coid, taker_fee=rate, maker_fee=None)
+
+
+def test_lighter_fee_charged_reads_rate_times_notional():
+    usd, rows = R.lighter_fee_charged([ltrade(7, 4800, 2.0), ltrade(7, 4800, 1.0), ltrade(8, 9999, 9.0)], 7)
+    assert usd == pytest.approx(4800 * 3.0 / 1e6) and len(rows) == 2 and rows[0]["role"] == "taker"
+    assert R.lighter_fee_charged([ltrade(8, 1, 1.0)], 7) == (None, [])
+    # we sold (ask) and the maker was the bid -> we took; a resting maker fill would use maker_fee
+    usd, rows = R.lighter_fee_charged([ltrade(7, 3000, 2.0, we_bid=False, maker_ask=False)], 7)
+    assert usd == pytest.approx(0.006) and rows[0]["role"] == "taker"
+
+
+class FeeL(FakeL):
+    def __init__(self, trades, **kw):
+        super().__init__(**kw)
+        self.trades, self.fee_calls = trades, 0
+
+    async def fee_charged(self, mid, coid):
+        self.fee_calls += 1
+        return self.trades
+
+
+def test_fee_true_up_books_charged_minus_model_and_logs_both(tmp_path, monkeypatch):
+    async def no_sleep(s):
+        return None
+    monkeypatch.setattr(R.asyncio, "sleep", no_sleep)
+    L = FeeL([ltrade(1, 4800, 0.95)], results=[("filled", 5.0, 0.19)])  # 5 sh @0.19 -> notional 0.95
+    PM = FakePM([("filled", 5.0, 0.76)])
+    pr = make_probe(tmp_path, L, PM)
+    w = make_window(pr)
+
+    async def go():
+        await pr.execute(w, "t1", "a", 0.19, 5.0, "DOWNTOK", {})
+        await asyncio.gather(*list(pr.tasks))
+    run(go())
+    (pair,) = records(tmp_path, "pair")
+    (f,) = records(tmp_path, "l_fee")
+    model = P.fl(0.19) * 5
+    charged = 4800 * 0.95 / 1e6
+    assert f["fee_model_usd"] == pytest.approx(model) and f["fee_charged_usd"] == pytest.approx(charged) and f["applied"] is True
+    assert f["realised_usd"] == pytest.approx(model - charged, abs=1e-8) and f["purpose"] == "entry"
+    # the day's realised P&L = the pair at the model fee + the true-up = the pair at the charged fee
+    led = R.Ledger("live").replay(tmp_path)
+    assert led.realised_today() == pytest.approx(pair["realised_usd"] + model - charged, abs=1e-6)
+
+
+def test_fee_true_up_nets_out_at_settlement(tmp_path):
+    """Pair at the model fee, true-up, settlement: total realised = payout - all costs with the CHARGED Lighter fee."""
+    e = 1795606200
+    pr = make_probe(tmp_path)
+    w = make_window(pr, e=e)
+    model, charged = P.fl(0.19) * 5, 0.0040  # the ledger books the model fee in the leg cost (lighter_unit_cost)
+    pr.log("l_fill", id="t", window=e, side="a", mode="live", symbol=R.l_symbol(e), market_id=12572, qty=5.0, px=0.19,
+           fee_usd_model=model)
+    pr.log("pm_fill", id="t", window=e, side="a", mode="live", token="DOWNTOK", shares=5.0, cost=3.8, fee_usd=0.0912)
+    locked = (1 - 0.19 - 0.76) * 5 - model - 0.0912
+    pr.log("pair", id="t", window=e, side="a", mode="live", qty=5.0, realised_usd=locked)
+    pr.log("l_fee", id="t", window=e, side="a", mode="live", realised_usd=model - charged)
+    run(pr.probe_settle(w, dict(pm_winner="UP", lighter_outcome=["2", "x"])))
+    led = R.Ledger("live").replay(tmp_path)
+    total_cost = 5 * 0.19 + charged + 3.8 + 0.0912
+    assert led.realised_today() == pytest.approx(5.0 - total_cost, abs=1e-6)
+    s = records(tmp_path, "probe_settle")[0]
+    assert s["realised_usd"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_fee_true_up_not_found_or_implausible_keeps_model(tmp_path, monkeypatch):
+    async def no_sleep(s):
+        return None
+    monkeypatch.setattr(R.asyncio, "sleep", no_sleep)
+    pr = make_probe(tmp_path, FeeL([]))
+    base = dict(id="t", window=1, side="a", mode="live")
+    run(pr.lighter_fee_true_up(base, 5, 1, 0.01, "entry"))
+    pr2 = make_probe(tmp_path / "b", FeeL([ltrade(1, 4_800_000, 1.0)]))  # 4.8 USD on a 1 USD fill: unit wrong
+    run(pr2.lighter_fee_true_up(base, 5, 1, 0.01, "entry"))
+    a, = records(tmp_path, "l_fee")
+    b, = records(tmp_path / "b", "l_fee")
+    assert a["fee_charged_usd"] is None and a["realised_usd"] == 0.0 and pr.lv.fee_calls == 3
+    assert b["applied"] is False and b["realised_usd"] == 0.0 and b["fee_charged_usd"] == pytest.approx(4.8)
+
+
+def test_dry_mode_never_looks_up_lighter_fees(tmp_path):
+    L = FeeL([], results=[("filled", 5.0, 0.19)])
+    pr = make_probe(tmp_path, L, FakePM([("filled", 5.0, 0.76)]), mode="dry")
+    run(pr.execute(make_window(pr), "t1", "a", 0.19, 5.0, "DOWNTOK", {}))
+    assert L.fee_calls == 0 and not records(tmp_path, "l_fee")

@@ -102,16 +102,29 @@ Other Lighter facts the code depends on:
 - **Positions:** binary positions are **not** in `/account` `positions`. They come back as `bo_positions`
   `[{market_id, sign (1 Up / −1 Down), size, avg_entry_price, entry_quote}]` (checked on a public account,
   2026-11-25). lighter-sdk 1.1.2 does not model that field, so the probe reads it from `additional_properties`.
-  Reconcile and `lighter_settled` key Lighter positions by market id; any perp position on the sub-account counts as
-  foreign.
+  Reconcile and `lighter_settled` key Lighter positions by market id. A position the log does not know is a
+  blocking problem only in a BTC 15m market (symbol `BTC-UPDOWN-15M-*`, looked up by id; unknown → blocking); perps and
+  other markets are warnings (see "Reconcile scope").
 - **Rate limits:** a standard account gets 60 REST requests per rolling minute, `sendTx` included, limited per IP and
   per L1 address. Going over returns 429 with a 60 s firewall cooldown. One probe order costs 1 `sendTx` plus at most
   12 status polls (every 250 ms for ≤ 3 s). Public reads (`orderBooks`, `account`, `recentTrades`) count against the
   box's **IP** limit, which is shared with lp-arb-paper, xsmom, ladder and the recorders. A 429 during the fill poll
   ends as an ambiguous leg → `halt`, which is safe but stops the probe.
-- **Fees as charged:** about 5 s after a Lighter fill, the probe logs a `fees` record with `taker_fee`, price, size and
-  exchange timestamp. They come from the public `recentTrades`, matched on the probe's client order id
-  (`ask_client_id`/`bid_client_id`).
+- **Fees as charged, and in the P&L (2026-11-26).** The market reports `taker_fee: "0.0000"` with
+  `is_taker_fee_enabled: true`, so the market field is not the fee. Each trade carries an integer `taker_fee` /
+  `maker_fee`. On public BTC 15m trades it does **not** scale with trade size (5 sh → 4250, 300 sh → 1600) and tracks
+  about 8000 × (1 − p) (7,650–10,000). The probe reads it as a rate in millionths of notional:
+  fee = rate × `usd_amount` / 1e6, about 0.008·p(1−p) per share, next to the 0.01·p(1−p) model. **That unit is inferred,
+  not documented.** How the probe uses it:
+  - When a Lighter IOC fills (entry or unwind), P&L is booked at the model fee; no venue call is made on the hot path.
+  - 5, 10 and 20 s later the probe looks up the order's own trades: the account's trades (authenticated), else the
+    public `recentTrades`, matched on our client order id, as taker or maker.
+  - It then logs `l_fee` with `fee_model_usd`, `fee_charged_usd`, the raw per-trade rates and
+    `realised_usd = model − charged`. The ledger books that as realised, and settlement nets it out (the leg cost rises
+    and the locked amount falls by the same), so the day's P&L carries the **charged** fee, counted once.
+  - If the trades are not found, or the charged fee is more than 5× the model (+1¢), the model stays and the record
+    says so (`applied: false`).
+  - Polymarket's charged `fee_rate_bps` is still logged (`fees`) but not booked; its P&L stays on the model.
 
 ## Polymarket: redemption (answer)
 
@@ -124,7 +137,21 @@ There is **no redeem implementation on this box** to reuse:
 The probe therefore logs `redeem_due` in two ways:
 
 - per settled window, for its own winning Polymarket shares;
-- live only, a sweep of all redeemable positions on the account (data-api `positions?user=<funder>`) at every window.
+- live only, a sweep of all redeemable positions on the account (Data API v2 `/v2/positions?user=<funder>`, see below) at
+  every window.
+
+**Positions source (2026-11-26).** Data API v1 `/positions` was retired on 2026-11-02 and returns HTTP 410
+(`{"error":"Data API v1 has been retired"}`). Both the reconcile and check mode use
+`GET https://data-api.polymarket.com/v2/positions` with:
+- `user=<funder>&limit=500&filter_type=TOKENS&filter_amount=0`. v2 replaced `sizeThreshold` with
+  `filter_type`/`filter_amount`, whose default floor is 0.1 sh; 0 keeps dust. If the API ever rejects
+  `filter_amount=0` (a 400 naming the filter), the probe retries without the filter and says so in the warnings.
+- Cursor pagination: `pagination.has_more` / `next_cursor`, each cursor request keeping the `user` anchor, at most 20
+  pages. A repeated or missing cursor raises an error.
+- `status` defaults to OPEN, which includes settled but unredeemed winners.
+
+Rows are snake_case (`token_id`, `condition_id`, `current_size`, `slug`, `outcome`, `redeemable`, `current_value`) and
+are normalised to `{token, condition, size, slug, title, outcome, redeemable, value, status}`.
 
 **Claim them in the Polymarket UI.** Unclaimed winners are not cash. With ~$40 on Polymarket and ~$4 per 5-share
 hedge, PM cash runs short after about 10 pairs unless claimed; the probe then skips with `pm_balance`.
@@ -146,6 +173,33 @@ sign against the v2 exchange now. 1.2.0 would sign v3 orders against the wrong c
 
 In live mode the probe refuses to start if any reused file's sha256 differs from the pinned one, or if the CLOB client
 is not 1.2.2. It also logs the CLOB's order version at start (`probe_start.pm_clob_version`).
+
+## Reconcile scope (2026-11-26)
+
+At a live start, and in `--mode check`, both accounts are compared with the probe's log:
+
+| found on the venue, not in the probe's log | result |
+|---|---|
+| position in a **BTC 15m up/down** market (PM slug `btc-updown-15m-*`, Lighter symbol `BTC-UPDOWN-15M-*`) | **problem**: `reconcile_fail`, the probe will not trade |
+| position whose market cannot be identified (no slug / symbol lookup failed) | **problem** (fail closed) |
+| position in any other market (other assets, 5m markets, perps, non-crypto) | **warning** only, logged in `reconcile.warnings` |
+| a probe position whose size differs from the log | problem |
+| any open order on either venue | problem (the probe only sends IOC / FAK) |
+
+## Polymarket API credentials
+
+`rd3_live.make_client` (pinned) calls the library's `create_or_derive_api_key`, which tries **create** first. Once a
+key exists, that logs `Could not create api key` (400) on every start. The probe wraps that one call (`derive_first`)
+for the duration of `make_client`: it **derives** the existing key first and creates one only if deriving fails.
+`--mode check` reports which happened (`pm_client.api_creds`: `derived` / `created`).
+
+## Shutdown
+
+`main` closes both venues on every exit path, including errors and a failed start:
+- Lighter: both aiohttp sessions (Stat_Arb's ApiClient and the SignerClient's own), then its IO loop.
+- Polymarket: the httpx client.
+
+This removes the `Unclosed client session` warnings.
 
 ## Secrets
 
@@ -208,7 +262,9 @@ Before the first start, check these:
    - `pm`: cash `balance`; `allowance` to the exchange contract a BUY is signed for (v2 non-neg-risk → `exchange_v2`,
      v3 → `exchange_v3`), `ok` if ≥ $30 or unlimited; `allowances_raw` for every spender; `closed_only` (must be
      false); `open_orders`, `positions` (must be empty or redeemed).
-   - `reconcile`: what the live start-up reconcile would say against `~/lp-arb/probe` (must be `ok: true`).
+   - `reconcile`: what the live start-up reconcile would say against `~/lp-arb/probe` (must be `ok: true`); positions
+     in other markets appear under `warnings` and do not block (see "Reconcile scope").
+   - `pm_client.api_creds` should read `derived` (an existing key was reused).
 
    The key, funder and account index are registered with the redactor before anything is printed; they appear as
    `[REDACTED]` if a venue echoes them.
@@ -298,9 +354,10 @@ The probe adds these:
 | `skip` | trigger id + reason + sizing (`not_persistent` carries `edge`, `min_edge`; `stale_pm`/`stale_lighter`, only with `STALE_GUARD = "skip"`, carry `at`, `ages`, `limits_ms`) |
 | `l_order` | send/ack/fill times (local), client order id, tx hash, status, filled, avg px, exchange timestamps; `purpose: unwind` for unwinds |
 | `l_fill` | qty, px, model fee |
+| `l_fee` | live, 5–35 s after a Lighter fill (`purpose` entry / unwind): `fee_model_usd`, `fee_charged_usd`, per-trade raw rates, `applied`, `realised_usd` = model − charged (booked) |
 | `pm_order` | per hedge attempt: ask, limit, size, status, order id, times |
 | `pm_fill` | shares, cost, px, fee |
-| `fees` | live, ~5 s later: Polymarket trades' `fee_rate_bps` as charged |
+| `fees` | live, ~5 s later: Polymarket trades' `fee_rate_bps` as charged (logged, not booked) |
 | `pair` | hedged qty, both prices, fees, attempts, `pnl_usd` (= `realised_usd`), over-hedge |
 | `unwind` / `unhedged` | unwind fill and loss; residual held |
 | `balance` | every 60 s: free balances, collateral, Lighter positions, open costs, realised today, flags, skip counts |

@@ -20,8 +20,9 @@ Reports:
   unhedged      every `unhedged` / `unwind` with its realised cost, and `halt` records
 
 Fees charged: Polymarket from each trade's `fee_rate_bps`, priced with the model's own form (shares * rate * p * (1 - p));
-Lighter from recentTrades `taker_fee` reported raw and as micro-USDC. **The Lighter unit is not documented**; compare
-the raw sum against the model before trusting the USD figure.
+Lighter from the probe's `l_fee` records (taker_fee read as millionths of notional; inferred unit, see probe.py
+lighter_fee_charged). The probe's P&L already uses the charged Lighter fee (`l_fee.realised_usd` = model - charged);
+`live_cps` here is shown both at the model fee (the `pair` record) and at the charged fee.
 """
 
 import argparse
@@ -153,7 +154,11 @@ def summarise(probe, paper, mode="live"):
         pmo[r["id"]].append(r)
     fees = collections.defaultdict(lambda: {"lighter": [], "pm": []})
     for r in by["fees"]:
-        fees[r["id"]][r.get("venue")].extend(r.get("trades") or [])
+        if r.get("venue") == "pm":
+            fees[r["id"]]["pm"].extend(r.get("trades") or [])
+    lfee = collections.defaultdict(list)
+    for r in by["l_fee"]:
+        lfee[r["id"]].append(r)
     pairs = []
     for p in by["pair"]:
         tid, t = p["id"], ptrig.get(p["id"], {})
@@ -163,13 +168,17 @@ def summarise(probe, paper, mode="live"):
         tl, th = t.get("lighter_px"), t.get("pm_px")
         lslip = None if tl is None else round(100 * ((p["lighter_px"] - tl) if side == "a" else (tl - p["lighter_px"])), 2)
         first_ask = next((o.get("ask") for o in sorted(pmo[tid], key=lambda o: o.get("attempt", 0)) if o.get("ask") is not None), None)
-        lf_ch = fees[tid]["lighter"]
+        entry_fee = [x for x in lfee[tid] if x.get("purpose") == "entry"]
         pm_ch = fees[tid]["pm"]
-        l_raw = sum(float(x.get("taker_fee") or 0) for x in lf_ch) if lf_ch else None
+        l_ch = entry_fee[0].get("fee_charged_usd") if entry_fee else None
+        l_adj = sum(x.get("realised_usd") or 0 for x in entry_fee)  # model - charged, for the whole Lighter fill
+        fq = float(lf.get("qty") or p["qty"])
         pm_usd = sum(float(x["size"]) * float(x.get("fee_rate_bps") or 0) / 1e4 * float(x["price"]) * (1 - float(x["price"])) for x in pm_ch) if pm_ch else None
         pairs.append(dict(
             id=tid, paper_id=q[0] if q else None, join=q[1] if q else None, side=side, qty=p["qty"], attempts=p.get("attempts"),
-            live_cps=round(100 * p["pnl_per_share"], 2), paper_cps=round(100 * qh["pnl_per_share"], 2) if qh and qh.get("hedged") else None,
+            live_cps=round(100 * p["pnl_per_share"], 2),
+            live_cps_charged_fee=round(100 * (p["pnl_usd"] + l_adj * p["qty"] / fq) / p["qty"], 2) if entry_fee else None,
+            paper_cps=round(100 * qh["pnl_per_share"], 2) if qh and qh.get("hedged") else None,
             paper_hedged=bool(qh and qh.get("hedged")) if q else None, paper_reason=(qh or {}).get("reason"),
             trig_lighter_px=tl, lighter_px=p["lighter_px"], lighter_slip_c=lslip,
             trig_hedge_px=th, first_ask=first_ask, pm_px=p["pm_px"],
@@ -177,7 +186,8 @@ def summarise(probe, paper, mode="live"):
             pm_slip_vs_ask_c=None if first_ask is None else round(100 * (p["pm_px"] - first_ask), 2),
             paper_pm_px=(qh or {}).get("pm_px") if qh and qh.get("hedged") else None,
             fee_model_lighter=lf.get("fee_usd_model"), fee_model_pm=round(sum(f.get("fee_usd") or 0 for f in pmf[tid]), 6),
-            fee_charged_lighter_raw=l_raw, fee_charged_lighter_usd_if_micro=None if l_raw is None else round(l_raw / 1e6, 6),
+            fee_charged_lighter_usd=l_ch, fee_lighter_applied=entry_fee[0].get("applied") if entry_fee else None,
+            fee_lighter_rates_raw=sorted({t.get("fee_rate_raw") for t in entry_fee[0].get("trades") or ()}) if entry_fee else None,
             fee_charged_pm_usd=None if pm_usd is None else round(pm_usd, 6),
             fee_rate_bps_charged=sorted({x.get("fee_rate_bps") for x in pm_ch}) if pm_ch else None,
             fee_rate_model=(pmf[tid][0].get("fee_rate") if pmf[tid] else None), pnl_usd=p["pnl_usd"]))
@@ -196,10 +206,13 @@ def summarise(probe, paper, mode="live"):
         fees_model_usd=dict(lighter=round(sum(x["fee_model_lighter"] or 0 for x in pairs), 6), pm=round(sum(x["fee_model_pm"] for x in pairs), 6)),
         fees_charged=dict(pm_usd=round(sum(x["fee_charged_pm_usd"] or 0 for x in pairs), 6),
                           pm_pairs_with_record=sum(1 for x in pairs if x["fee_charged_pm_usd"] is not None),
-                          lighter_raw=sum(x["fee_charged_lighter_raw"] or 0 for x in pairs),
-                          lighter_usd_if_micro=round(sum(x["fee_charged_lighter_usd_if_micro"] or 0 for x in pairs), 6),
-                          lighter_pairs_with_record=sum(1 for x in pairs if x["fee_charged_lighter_raw"] is not None),
-                          note="Lighter taker_fee unit undocumented; micro-USDC is an assumption"),
+                          lighter_usd=round(sum(x["fee_charged_lighter_usd"] or 0 for x in pairs), 6),
+                          lighter_pairs_with_record=sum(1 for x in pairs if x["fee_charged_lighter_usd"] is not None),
+                          lighter_not_applied=sum(1 for x in pairs if x["fee_lighter_applied"] is False),
+                          note="Lighter: taker_fee read as millionths of notional (inferred unit); the probe's P&L uses it"),
+        live_cps_charged_fee=round(sum((x["live_cps_charged_fee"] if x["live_cps_charged_fee"] is not None else x["live_cps"]) * x["qty"]
+                                       for x in pairs) / q, 2) if q else None,
+        l_fee_true_up_usd=round(sum(r.get("realised_usd") or 0 for r in by["l_fee"]), 6),
         rows=pairs)
 
     # ---- unhedged / unwind / halts
@@ -213,7 +226,7 @@ def summarise(probe, paper, mode="live"):
                 for r in by["unhedged"]])
     out["unwinds"] = dict(n=len(by["unwind"]), realised_usd=round(sum(r.get("realised_usd") or 0 for r in by["unwind"]), 4))
     out["halts"] = [{k: r.get(k) for k in ("t_local", "reason", "id", "coid", "hedged")} for r in by["halt"]]
-    out["realised_usd"] = round(sum(r.get("realised_usd") or 0 for k in ("pair", "unwind", "probe_settle") for r in by[k]), 4)
+    out["realised_usd"] = round(sum(r.get("realised_usd") or 0 for k in ("pair", "unwind", "probe_settle", "l_fee") for r in by[k]), 4)
     out["only_probe_ids"], out["only_paper_ids"] = only_probe[:50], only_paper[:50]
     return out
 
@@ -229,7 +242,8 @@ def show(s):
           f"live fill rate {lf['live_fill_rate']} vs paper d500 on the same triggers {lf['paper_d500_same_triggers']} "
           f"(paper d500 all triggers {lf['paper_d500_all']}); {lf['live_vs_paper']}")
     p = s["pairs"]
-    print(f"pairs: {p['n']}, {p['shares']} sh, ${p['usd']}, live {p['live_cps']} c/sh; where paper also paired ({p['with_paper_pair']}): "
+    print(f"pairs: {p['n']}, {p['shares']} sh, ${p['usd']}, live {p['live_cps']} c/sh (model Lighter fee), "
+          f"{p['live_cps_charged_fee']} c/sh (charged); where paper also paired ({p['with_paper_pair']}): "
           f"live {p['live_cps_where_paper_paired']} vs paper {p['paper_cps_same']} c/sh; paper did not pair {p['paper_not_paired']}")
     print(f"  median slippage c: lighter {p['median_lighter_slip_c']}, pm vs trigger {p['median_pm_slip_vs_trigger_c']}, "
           f"pm vs ask at send {p['median_pm_slip_vs_ask_c']}")

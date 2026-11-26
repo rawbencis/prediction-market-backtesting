@@ -35,7 +35,8 @@ def build():
         dict(kind="pair", t_local=tA + 0.7, id=A, window=E, side="a", mode=L, qty=5.0, lighter_px=0.41, pm_px=0.57, attempts=1,
              pnl_usd=0.0766, realised_usd=0.0766, pnl_per_share=0.01532),
         dict(kind="fees", t_local=tA + 6, id=A, side="a", mode=L, venue="pm", trades=[dict(price=0.57, size=5.0, fee_rate_bps=500)]),
-        dict(kind="fees", t_local=tA + 6, id=A, side="a", mode=L, venue="lighter", trades=[dict(price=0.41, size=5.0, taker_fee=6000)]),
+        dict(kind="l_fee", t_local=tA + 6, id=A, window=E, side="a", mode=L, purpose="entry", fee_model_usd=0.0121, fee_charged_usd=0.0123,
+             applied=True, realised_usd=-0.0002, trades=[dict(fee_rate_raw=6000, usd_amount=2.05, fee_usd=0.0123)]),
         dict(kind="l_order", t_local=tB + 0.6, id=B, side="b", mode=L, status="filled", size=5.0, filled=5.0, avg_px=0.60),
         dict(kind="l_fill", t_local=tB + 0.6, id=B, side="b", mode=L, qty=5.0, px=0.60, fee_usd_model=0.012),
         dict(kind="pm_order", t_local=tB + 0.7, id=B, side="b", mode=L, attempt=0, ask=0.34, status="filled"),
@@ -95,7 +96,8 @@ def test_per_pair_slippage_fees_and_paper_comparison():
     assert a["lighter_slip_c"] == 1.0  # bought at 0.41 vs trigger 0.40: 1c worse
     assert a["pm_slip_vs_trigger_c"] == 2.0 and a["pm_slip_vs_ask_c"] == 1.0
     assert a["fee_charged_pm_usd"] == pytest.approx(5 * 0.05 * 0.57 * 0.43, abs=1e-6) and a["fee_rate_bps_charged"] == [500]
-    assert a["fee_charged_lighter_raw"] == 6000 and a["fee_charged_lighter_usd_if_micro"] == 0.006 and a["fee_model_lighter"] == 0.0121
+    assert a["fee_charged_lighter_usd"] == 0.0123 and a["fee_lighter_rates_raw"] == [6000] and a["fee_model_lighter"] == 0.0121
+    assert a["live_cps_charged_fee"] == pytest.approx(100 * (0.0766 - 0.0002) / 5, abs=0.01)
     assert b["join"] == "time" and b["paper_hedged"] is False and b["paper_cps"] is None and b["paper_reason"] == "hedge size < 5"
     assert b["lighter_slip_c"] == 1.0  # sold at 0.60 vs trigger 0.61: 1c worse
     assert p["n"] == 3 and p["with_paper_pair"] == 1 and p["paper_not_paired"] == 1
@@ -109,7 +111,8 @@ def test_unhedged_and_unwind_costs():
     u = s["unhedged"]
     assert u["n"] == 1 and u["loss_usd"] == 0.2627 and u["events"][0]["unwind_px"] == 0.15 and u["events"][0]["entry_px"] == 0.20
     assert s["unwinds"] == {"n": 1, "realised_usd": -0.2627}
-    assert s["realised_usd"] == pytest.approx(0.0766 + 0.1 + 0.1 - 0.2627, abs=1e-4)
+    assert s["realised_usd"] == pytest.approx(0.0766 + 0.1 + 0.1 - 0.2627 - 0.0002, abs=1e-4)
+    assert s["pairs"]["l_fee_true_up_usd"] == -0.0002
 
 
 def test_uptime_handles_a_day_file_starting_mid_run():
