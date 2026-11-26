@@ -877,7 +877,10 @@ def test_check_mode_refuses_when_reused_code_changed(monkeypatch):
     ("at_250", "pm", 400, 110, "stale_pm"),
     ("at_250", "lighter", 101, 3, "stale_lighter"),
 ])
-def test_stale_book_skips(tmp_path, monkeypatch, when, venue, age, lag, reason):
+@pytest.mark.parametrize("guard", ["log", "skip"])
+def test_stale_book(tmp_path, monkeypatch, when, venue, age, lag, reason, guard):
+    """Ages and the stale reason are always logged; only STALE_GUARD = "skip" turns them into a skip."""
+    monkeypatch.setattr(R, "STALE_GUARD", guard)
     book = (lambda w: w.pbook) if venue == "pm" else (lambda w: w.lbook)
 
     def at_0(w, now):
@@ -899,12 +902,15 @@ def test_stale_book_skips(tmp_path, monkeypatch, when, venue, age, lag, reason):
     monkeypatch.setattr(StepLoop, "__init__", init)
     pr, w, tid, loop = trigger_then(tmp_path, monkeypatch, at_250, at_0)
     (p,) = records(tmp_path, "persist")
-    assert p["stale"] == reason and p["ok"] is True  # edge still >= 4c: only staleness blocks it
+    assert p["stale"] == reason and p["ok"] is True and p["stale_guard"] == guard  # edge still >= 4c
     a = p["ages"]["trigger" if when == "trigger" else "at_250"][venue]
     assert a["age_ms"] == pytest.approx(age, abs=1.5) and a["lag_ms"] == pytest.approx(lag, abs=1.5)
-    (s,) = records(tmp_path, "skip")
-    assert s["reason"] == reason and s["at"] == when and s["limits_ms"] == {"pm": 300, "lighter": 100}
-    assert not loop.spawned and pr.busy is None
+    if guard == "skip":
+        (s,) = records(tmp_path, "skip")
+        assert s["reason"] == reason and s["at"] == when and s["limits_ms"] == {"pm": 300, "lighter": 100}
+        assert not loop.spawned and pr.busy is None
+    else:  # log only: the trigger goes on to execute
+        assert not records(tmp_path, "skip") and len(loop.spawned) == 1 and pr.busy == tid
 
 
 def test_fresh_books_at_the_limits_pass_and_ages_logged(tmp_path, monkeypatch):
@@ -918,7 +924,23 @@ def test_fresh_books_at_the_limits_pass_and_ages_logged(tmp_path, monkeypatch):
     assert len(loop.spawned) == 1
 
 
+def test_stale_guard_defaults_to_log():
+    assert R.STALE_GUARD == "log"
+
+
+def test_log_mode_keeps_the_persistence_filter(tmp_path, monkeypatch):
+    def at_0(w, now):
+        fresh(w, now)
+        stamp(w.pbook, now, 900, 110)  # stale PM: logged, not enforced
+    pr, w, tid, loop = trigger_then(tmp_path, monkeypatch, lambda w: set_book(w.pbook, 0.24, 0.26), at_0)  # edge 3.9c at +250
+    (p,) = records(tmp_path, "persist")
+    assert p["stale"] == "stale_pm" and p["ok"] is False
+    assert [s["reason"] for s in records(tmp_path, "skip")] == ["not_persistent"] and not loop.spawned
+
+
 def test_book_without_exchange_timestamp_is_stale(tmp_path, monkeypatch):
+    monkeypatch.setattr(R, "STALE_GUARD", "skip")
+
     def at_0(w, now):
         fresh(w, now)
         w.pbook.x = 0

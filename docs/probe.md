@@ -19,18 +19,22 @@ trigger is not traded even if the +500 ms check says the quote is still displaye
 with no verdict is skipped `persist_unchecked` (fail closed). The paper's checks and cool-downs are not changed, so
 trigger ids are unchanged. Replay of 11-25: `lp_arb/probe_persist_replay.py` (see the Tokyo report).
 
-**Stale books (same two moments, checked before the edge).** At the trigger (in the `trigger` log hook) and again
+**Stale books (same two moments; log-only by default).** At the trigger (in the `trigger` log hook) and again
 at +250 ms the probe measures, per venue: `age_ms` = local now − exchange timestamp of the book's last update,
 `lag_ms` = local receive time of that update − its exchange timestamp, and `since_recv_ms`. Polymarket `age_ms` or
-`lag_ms` > 300 ms (`STALE_PM_MS`) → `skip` reason `stale_pm`; Lighter > 100 ms (`STALE_L_MS`) → `stale_lighter`. A book
-with no exchange timestamp yet is stale. The skip carries `at` (`trigger` / `at_250`) and both age snapshots; every
-`persist` record carries `ages.trigger` and `ages.at_250`, so the thresholds can be re-judged from the log. Note that
+`lag_ms` > 300 ms (`STALE_PM_MS`) → `stale_pm`; Lighter > 100 ms (`STALE_L_MS`) → `stale_lighter`. A book with no
+exchange timestamp yet is stale. Every `persist` record carries `ages.trigger`, `ages.at_250`, the reason (`stale`,
+null if fresh) and `stale_guard`, so the thresholds can be judged from the log.
+`STALE_GUARD` at the top of `probe.py` decides what happens next:
+- `"log"` (**default**): nothing more; a stale trigger still goes on to the 4¢ check and can trade.
+- `"skip"`: the trigger is skipped with `skip` reason `stale_pm` / `stale_lighter`, checked before the edge. The skip
+  carries `at` (`trigger` / `at_250`), both age snapshots and the limits. Note that
 `age_ms` ≥ `lag_ms` by construction, and Polymarket sends only on change, so a quiet but correct book also counts as
 stale under this rule (see the Tokyo report §10 for how much this drops on 11-25).
 
 The hooked moment is the +500 ms check that the paper counts as its Lighter fill. At that moment:
 
-1. **Gates**, in order: stale or not persistent (already logged at +250 ms) → halted → reconcile failed → kill switch → daily loss cap → an execution already open → no
+1. **Gates**, in order: not persistent, or stale with `STALE_GUARD = "skip"` (already logged at +250 ms) → halted → reconcile failed → kill switch → daily loss cap → an execution already open → no
    +250 ms verdict → venue metadata missing → quote gone. A blocked trigger is logged as `skip` with the reason.
 2. **Size**: q = max(5, Lighter `min_base_amount`, Polymarket `min_order_size`, ⌈$1 / hedge ask⌉), whole shares.
    Whole shares fit both size steps (Lighter 0.0001, Polymarket 0.01) and keep Polymarket BUY amounts at ≤ 2 decimals.
@@ -65,7 +69,7 @@ the live ledger.
 | kill switch | `/home/ubuntu/lp-arb/probe/STOP` exists → open nothing; a hedge in progress is finished |
 | hedge chase | ask + 3¢, cap 0.99, 1 + 3 attempts within 2 s |
 | persistence | edge after fees ≥ 4¢ at +250 ms, else `not_persistent` |
-| stale book | PM age or lag ≤ 300 ms, Lighter ≤ 100 ms, at the trigger and at +250 ms, else `stale_pm` / `stale_lighter` |
+| stale book | PM age or lag ≤ 300 ms, Lighter ≤ 100 ms, at the trigger and at +250 ms; **logged only** (`STALE_GUARD = "log"`); `"skip"` makes it a `stale_pm` / `stale_lighter` skip |
 
 "Realised" counts these when they happen:
 
@@ -239,9 +243,10 @@ Before the first start, check these:
    - Per trigger: `trigger` → `persist` (+250 ms) → `check` ×3 → `skip` (reason) or `l_order` → `l_fill` → `pm_order`/`pm_fill` → `pair`.
      A `pm_order` with `status: rejected` that reads "version" or "invalid signature" means the CLOB client is out of
      date: stop.
-   - Most triggers will end in `skip` `stale_pm` (on 11-25, 24 of the 53 edge survivors were stale at the trigger
-     alone). If **every** trigger is `stale_pm`, look at `persist.ages.*.pm.lag_ms`: a lag that never drops below
-     300 ms is the box's feed or clock (check `timedatectl`/chrony offset), not the market.
+   - With the default `STALE_GUARD = "log"`, staleness is not a skip. Expect most `persist` records to show
+     `stale: "stale_pm"` (on 11-25, 24 of the 53 edge survivors were stale at the trigger alone); those triggers still
+     trade. If **every** trigger is stale, look at `persist.ages.*.pm.lag_ms`: a lag that never drops below 300 ms is
+     the box's feed or clock (check the `timedatectl`/chrony offset), not the market.
    - `unhedged`, `halt` or `error` records: look at each one.
    - After each window (~6–8 min after its end): `settle` (paper), `probe_settle`, `lighter_settled`
      (`position_gone: true`), and `redeem_due` for Polymarket winners. Claim those in the UI.
@@ -289,8 +294,8 @@ The probe adds these:
 |---|---|
 | `probe_start` / `probe_stop` | limits, ledger state, CLOB version |
 | `meta` | per window: Lighter min/decimals, PM min/tick, condition id |
-| `persist` | every trigger at +250 ms: re-priced `edge` after fees, `ok` (≥ 4c), `stale` (reason or null), `ages` {trigger, at_250} × {pm, lighter} × {age_ms, lag_ms, since_recv_ms}, both books |
-| `skip` | trigger id + reason + sizing (`not_persistent` carries `edge`, `min_edge`; `stale_pm`/`stale_lighter` carry `at`, `ages`, `limits_ms`) |
+| `persist` | every trigger at +250 ms: re-priced `edge` after fees, `ok` (≥ 4c), `stale` (reason or null), `stale_guard` (`log` / `skip`), `ages` {trigger, at_250} × {pm, lighter} × {age_ms, lag_ms, since_recv_ms}, both books |
+| `skip` | trigger id + reason + sizing (`not_persistent` carries `edge`, `min_edge`; `stale_pm`/`stale_lighter`, only with `STALE_GUARD = "skip"`, carry `at`, `ages`, `limits_ms`) |
 | `l_order` | send/ack/fill times (local), client order id, tx hash, status, filled, avg px, exchange timestamps; `purpose: unwind` for unwinds |
 | `l_fill` | qty, px, model fee |
 | `pm_order` | per hedge attempt: ask, limit, size, status, order id, times |

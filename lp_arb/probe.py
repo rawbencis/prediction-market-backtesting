@@ -17,8 +17,9 @@ is still displayed (the paper's own "Lighter fill"); from there it sizes a clip 
 Persistence (before 1): +250 ms after each trigger the pair is re-priced from the current books with the trigger's own
 after-fee formula; edge < 4c -> `skip` reason `not_persistent` (and a `persist` record for every trigger). A trigger
 with no +250 ms verdict is skipped `persist_unchecked` (fail closed).
-Staleness (same moments, checked first): at the trigger or at +250 ms, a PM book older than 300 ms by exchange timestamp
-or arriving with > 300 ms lag -> `stale_pm`; Lighter, 100 ms -> `stale_lighter`. The ages are in every `persist` record.
+Staleness (same moments): at the trigger or at +250 ms, a PM book older than 300 ms by exchange timestamp or arriving
+with > 300 ms lag -> `stale_pm`; Lighter, 100 ms -> `stale_lighter`. The ages and the reason are in every `persist`
+record. STALE_GUARD = "log" (default) only logs them; "skip" also skips the trigger (checked before the edge).
 
 Modes:
   dry  (default) real market data, simulated fills against the live books, NO credentials loaded, never calls SSM
@@ -78,6 +79,9 @@ PERSIST_MS = 250  # persistence check: +250 ms after the trigger, re-price the p
 PERSIST_MIN_EDGE = 0.04  # edge after fees still < this at +250 ms -> skip `not_persistent` (brief 2026-11-26)
 STALE_PM_MS = 300  # at the trigger or at +250 ms: PM book age (local now - exchange ts of its last update) or lag > this -> stale_pm
 STALE_L_MS = 100  # same for the Lighter book -> stale_lighter
+STALE_GUARD = "log"  # "log": compute and log the ages and the stale reason on every trigger, never skip for it (default)
+#                      "skip": a stale trigger is skipped (`skip` reason stale_pm / stale_lighter)
+assert STALE_GUARD in ("log", "skip"), STALE_GUARD
 UNWIND_SLIP = 0.05  # unwind IOC worst price = best price -/+ this (fills at book prices, never worse than this)
 L_FILL_TIMEOUT_S = 3.0  # Lighter IOC: wait this long for a terminal status, else the leg is ambiguous -> halt
 L_POLL_S = 0.25  # status poll interval: <= 12 polls + 1 sendTx per order; standard tier = 60 requests / rolling minute
@@ -841,13 +845,14 @@ class Probe(Paper):
             ok = edge is not None and round(edge, 9) >= PERSIST_MIN_EDGE
             a0, a250 = self.ages.pop(tid, None), self.book_ages(w)
             stale = (self.stale_reason(a0) if a0 else "stale_pm") or self.stale_reason(a250)
-            self.persist[tid] = ok and not stale
+            enforce = STALE_GUARD == "skip"
+            self.persist[tid] = ok and not (stale and enforce)
             while len(self.persist) > 2000:  # triggers whose +500 check never ran (window end, stop)
                 self.persist.pop(next(iter(self.persist)))
             e = None if edge is None else round(edge, 5)
             self.log("persist", id=tid, window=w.e, side=side, at_ms=PERSIST_MS, edge=e, ok=ok, stale=stale,
-                     ages=dict(trigger=a0, at_250=a250), **books)
-            if stale:
+                     stale_guard=STALE_GUARD, ages=dict(trigger=a0, at_250=a250), **books)
+            if stale and enforce:
                 at = "trigger" if a0 is None or self.stale_reason(a0) else "at_250"
                 self.skip(tid, w, side, stale, at=at, ages=dict(trigger=a0, at_250=a250),
                           limits_ms=dict(pm=STALE_PM_MS, lighter=STALE_L_MS))
