@@ -19,9 +19,18 @@ trigger is not traded even if the +500 ms check says the quote is still displaye
 with no verdict is skipped `persist_unchecked` (fail closed). The paper's checks and cool-downs are not changed, so
 trigger ids are unchanged. Replay of 11-25: `lp_arb/probe_persist_replay.py` (see the Tokyo report).
 
+**Stale books (same two moments, checked before the edge).** At the trigger (in the `trigger` log hook) and again
+at +250 ms the probe measures, per venue: `age_ms` = local now − exchange timestamp of the book's last update,
+`lag_ms` = local receive time of that update − its exchange timestamp, and `since_recv_ms`. Polymarket `age_ms` or
+`lag_ms` > 300 ms (`STALE_PM_MS`) → `skip` reason `stale_pm`; Lighter > 100 ms (`STALE_L_MS`) → `stale_lighter`. A book
+with no exchange timestamp yet is stale. The skip carries `at` (`trigger` / `at_250`) and both age snapshots; every
+`persist` record carries `ages.trigger` and `ages.at_250`, so the thresholds can be re-judged from the log. Note that
+`age_ms` ≥ `lag_ms` by construction, and Polymarket sends only on change, so a quiet but correct book also counts as
+stale under this rule (see the Tokyo report §10 for how much this drops on 11-25).
+
 The hooked moment is the +500 ms check that the paper counts as its Lighter fill. At that moment:
 
-1. **Gates**, in order: not persistent (already logged at +250 ms) → halted → reconcile failed → kill switch → daily loss cap → an execution already open → no
+1. **Gates**, in order: stale or not persistent (already logged at +250 ms) → halted → reconcile failed → kill switch → daily loss cap → an execution already open → no
    +250 ms verdict → venue metadata missing → quote gone. A blocked trigger is logged as `skip` with the reason.
 2. **Size**: q = max(5, Lighter `min_base_amount`, Polymarket `min_order_size`, ⌈$1 / hedge ask⌉), whole shares.
    Whole shares fit both size steps (Lighter 0.0001, Polymarket 0.01) and keep Polymarket BUY amounts at ≤ 2 decimals.
@@ -55,6 +64,8 @@ the live ledger.
 | executions at a time | 1 (no new pair while a leg is unhedged) |
 | kill switch | `/home/ubuntu/lp-arb/probe/STOP` exists → open nothing; a hedge in progress is finished |
 | hedge chase | ask + 3¢, cap 0.99, 1 + 3 attempts within 2 s |
+| persistence | edge after fees ≥ 4¢ at +250 ms, else `not_persistent` |
+| stale book | PM age or lag ≤ 300 ms, Lighter ≤ 100 ms, at the trigger and at +250 ms, else `stale_pm` / `stale_lighter` |
 
 "Realised" counts these when they happen:
 
@@ -173,6 +184,31 @@ Before the first start, check these:
 - Both accounts are funded and hold **no** positions or open orders. The probe refuses to trade otherwise
   (`reconcile_fail`).
 
+0. Account check (read-only; loads SSM exactly as live does, places and cancels nothing, writes no log):
+
+   ```
+   cd /home/ubuntu/lp-arb/probe-code && /home/ubuntu/lp-arb/probe-venv/bin/python lp_arb/probe.py --mode check; echo exit=$?
+   ```
+
+   It prints one JSON document; `exit=0` means `ok: true`, `exit=1` lists `problems`. It refuses before reading any
+   secret if a pinned reused file changed (as live does). Read:
+
+   - `lighter.account`: `account_type`, `account_trading_mode` (0 classic, 1 unified), `status` (raw codes),
+     `user_tier_name` (Standard / Premium), fee ticks; `lighter.balance`, `collateral`, `positions` (binary positions by
+     market id from `bo_positions`), `open_orders`. Positions and open orders must be empty.
+   - `lighter_btc15m`: the current window's market, `status` (`active`), `market_type` (`binary_options`), and
+     `checks` (market active, the signer client registered the market, account read, authenticated read, balance ≥ one
+     $10 leg). `verdict: yes_by_api` means every API-side check passed. **Lighter has no per-account binary permission
+     endpoint: only the first live order proves the account may trade it.**
+   - `pm_client`: installed `py_clob_client_v2` (must be 1.2.2) and the CLOB's `/version`.
+   - `pm`: cash `balance`; `allowance` to the exchange contract a BUY is signed for (v2 non-neg-risk → `exchange_v2`,
+     v3 → `exchange_v3`), `ok` if ≥ $30 or unlimited; `allowances_raw` for every spender; `closed_only` (must be
+     false); `open_orders`, `positions` (must be empty or redeemed).
+   - `reconcile`: what the live start-up reconcile would say against `~/lp-arb/probe` (must be `ok: true`).
+
+   The key, funder and account index are registered with the redactor before anything is printed; they appear as
+   `[REDACTED]` if a venue echoes them.
+
 1. Install the unit:
 
    ```
@@ -203,6 +239,9 @@ Before the first start, check these:
    - Per trigger: `trigger` → `persist` (+250 ms) → `check` ×3 → `skip` (reason) or `l_order` → `l_fill` → `pm_order`/`pm_fill` → `pair`.
      A `pm_order` with `status: rejected` that reads "version" or "invalid signature" means the CLOB client is out of
      date: stop.
+   - Most triggers will end in `skip` `stale_pm` (on 11-25, 24 of the 53 edge survivors were stale at the trigger
+     alone). If **every** trigger is `stale_pm`, look at `persist.ages.*.pm.lag_ms`: a lag that never drops below
+     300 ms is the box's feed or clock (check `timedatectl`/chrony offset), not the market.
    - `unhedged`, `halt` or `error` records: look at each one.
    - After each window (~6–8 min after its end): `settle` (paper), `probe_settle`, `lighter_settled`
      (`position_gone: true`), and `redeem_due` for Polymarket winners. Claim those in the UI.
@@ -223,7 +262,16 @@ Summary of a run against the paper trader:
 
 ```
 python3 lp_arb/probe_summary.py --probe ~/lp-arb/probe --paper ~/lp-arb/paper
+python3 lp_arb/probe_vs_paper.py --day $(date -u +%F)        # per day, live records only (--mode dry for probe-dry)
 ```
+
+`probe_vs_paper.py` joins the probe's and the paper's day logs by trigger id (then by window, side and ≤ 250 ms, since
+the two processes see the books on separate sockets), within the probe's uptime, and reports: triggers in both /
+probe-only / paper-only; probe skips by reason; Lighter IOC fill rate live vs the paper's +500 ms "displayed" on the
+same triggers; per pair live vs paper c/share, Lighter fill slippage vs the trigger price, Polymarket hedge slippage vs
+the trigger price and vs the ask when the FAK was sent, fees modelled vs charged; every `unhedged`/`unwind` with its
+cost; halts. Lighter's charged `taker_fee` is shown raw and as micro-USDC; that unit is not documented, so check it
+against the model on the first fills before trusting it.
 
 ## Record kinds
 
@@ -241,8 +289,8 @@ The probe adds these:
 |---|---|
 | `probe_start` / `probe_stop` | limits, ledger state, CLOB version |
 | `meta` | per window: Lighter min/decimals, PM min/tick, condition id |
-| `persist` | every trigger at +250 ms: re-priced `edge` after fees, `ok` (≥ 4c), both books |
-| `skip` | trigger id + reason + sizing (`not_persistent` carries `edge`, `min_edge`) |
+| `persist` | every trigger at +250 ms: re-priced `edge` after fees, `ok` (≥ 4c), `stale` (reason or null), `ages` {trigger, at_250} × {pm, lighter} × {age_ms, lag_ms, since_recv_ms}, both books |
+| `skip` | trigger id + reason + sizing (`not_persistent` carries `edge`, `min_edge`; `stale_pm`/`stale_lighter` carry `at`, `ages`, `limits_ms`) |
 | `l_order` | send/ack/fill times (local), client order id, tx hash, status, filled, avg px, exchange timestamps; `purpose: unwind` for unwinds |
 | `l_fill` | qty, px, model fee |
 | `pm_order` | per hedge attempt: ask, limit, size, status, order id, times |
