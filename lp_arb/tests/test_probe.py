@@ -177,7 +177,7 @@ def test_replay_paper_log_fires_same_trigger_ids(tmp_path, monkeypatch):
     disp = {k[0] for k, c in checks.items() if k[1] == 500 and c["displayed"]}
     skipped = {s["id"] for s in records(tmp_path, "skip")}
     assert skipped and skipped <= {r["id"] for r in trig}
-    assert {s["reason"] for s in records(tmp_path, "skip")} == {"kill_switch"}
+    assert {s["reason"] for s in records(tmp_path, "skip")} <= {"kill_switch", "not_persistent"}
     assert len(skipped) >= 0.9 * len(disp)
 
 
@@ -347,6 +347,7 @@ def test_on_displayed_starts_execution(tmp_path):
 
     async def go():
         w = make_window(pr)
+        pr.persist.update(t1=True, t2=True)
         pr.on_displayed(w, "t1", "a", 0.19)
         assert pr.busy == "t1"
         pr.on_displayed(w, "t2", "b", 0.15)  # second trigger while the first is open
@@ -396,6 +397,7 @@ def test_open_cost_cap_from_ledger(tmp_path):
         pr.log("l_fill", id=f"f{i}", window=w.e, side="a", mode="live", symbol=R.l_symbol(w.e), qty=5.0, px=0.60)
         pr.log("pm_fill", id=f"f{i}", window=w.e, side="a", mode="live", token="DOWNTOK", shares=5.0, cost=2.85, fee_usd=0.07)
     assert pr.ledger.open_cost("pm") == pytest.approx(10 * 2.92)
+    pr.persist["t1"] = True
     pr.on_displayed(w, "t1", "a", 0.60)
     assert records(tmp_path, "skip")[0]["reason"] == "pm_open_cap"
 
@@ -617,3 +619,92 @@ def test_lighter_snapshot_reads_bo_positions():
     except Exception as ex:  # the SDK model may require more fields; the point is additional_properties
         pytest.skip(f"model construction needs more fields: {ex!r}"[:200])
     assert (a.additional_properties or {}).get("bo_positions")[0]["market_id"] == 12694
+
+
+# ---------------------------------------------------------------- +250 ms persistence
+class StepLoop(FakeLoop):
+    """FakeLoop that can also hold spawned executions (create_task) without running them."""
+
+    def __init__(self):
+        super().__init__()
+        self.spawned = []
+
+    def create_task(self, coro):
+        self.spawned.append(coro)
+
+        class T:
+            def add_done_callback(self, fn):
+                pass
+        return T()
+
+    def run_until(self, until, before=None):
+        while self.q:
+            self.q.sort(key=lambda z: z[0])
+            t, _, fn, a = self.q[0]
+            if t > until:
+                return
+            self.q.pop(0)
+            self.now = t
+            if before:
+                before(t, fn)
+            fn(*a)
+
+
+def trigger_then(tmp_path, monkeypatch, at_250):
+    """Side a trigger (edge 4.9c on make_window's books); `at_250(w)` changes the books just before the +250 ms check."""
+    pr = make_probe(tmp_path)
+    w = make_window(pr)
+    pr.win[w.e] = w
+    loop = StepLoop()
+    monkeypatch.setattr(P.asyncio, "get_running_loop", lambda: loop)
+    t0 = w.e + 100.0
+    loop.now = t0
+    pr.evaluate(w, t0, "lighter")
+    trig = records(tmp_path, "trigger")
+    assert len(trig) == 1 and trig[0]["side"] == "a" and trig[0]["edge"] > 0.04
+    loop.run_until(t0 + 2, before=lambda t, fn: at_250(w) if fn.__name__ == "persist_check" else None)
+    for c in loop.spawned:
+        c.close()
+    return pr, w, trig[0]["id"], loop
+
+
+def test_persistence_edge_gone_at_250ms_skips_not_persistent(tmp_path, monkeypatch):
+    # PM Up bid drops 0.25 -> 0.24: the Down hedge costs 0.76, edge 1 - (0.19 + 0.76 + fees) = 3.9c < 4c.
+    # The Lighter ask stays displayed, so the paper's +500 ms check still says "filled"; the probe must not trade.
+    pr, w, tid, loop = trigger_then(tmp_path, monkeypatch, lambda w: set_book(w.pbook, 0.24, 0.26))
+    (p,) = records(tmp_path, "persist")
+    assert p["id"] == tid and p["at_ms"] == 250 and p["ok"] is False and p["edge"] < 0.04
+    (s,) = records(tmp_path, "skip")
+    assert s["id"] == tid and s["reason"] == "not_persistent" and s["edge"] == p["edge"] and s["min_edge"] == 0.04
+    assert [c["displayed"] for c in records(tmp_path, "check") if c["at_ms"] == 500] == [True]  # paper path unchanged
+    assert not loop.spawned and pr.busy is None and not pr.lv.calls and tid not in pr.persist
+
+
+def test_persistence_edge_kept_at_250ms_executes(tmp_path, monkeypatch):
+    pr, w, tid, loop = trigger_then(tmp_path, monkeypatch, lambda w: None)
+    (p,) = records(tmp_path, "persist")
+    assert p["ok"] is True and p["edge"] >= 0.04 and p["pm_book"][0] == 0.25
+    assert not records(tmp_path, "skip")
+    assert len(loop.spawned) == 1 and pr.busy == tid and pr.counts["exec"] == 1
+
+
+def test_persistence_invalid_book_at_250ms_skips(tmp_path, monkeypatch):
+    pr, w, tid, loop = trigger_then(tmp_path, monkeypatch, lambda w: w.pbook.clear())
+    assert records(tmp_path, "persist")[0]["edge"] is None
+    assert [s["reason"] for s in records(tmp_path, "skip")] == ["not_persistent"] and not loop.spawned
+
+
+def test_persistence_edge_uses_trigger_formula(tmp_path):
+    pr = make_probe(tmp_path)
+    for lb, la, pb, pa in ((0.15, 0.19, 0.25, 0.26), (0.61, 0.63, 0.52, 0.55), (0.14, 0.16, 0.08, 0.09)):
+        w = make_window(pr, lbid=lb, lask=la, pbid=pb, pask=pa)
+        ea = 1 - (la + (1 - pb) + P.fl(la) + 0.05 * (1 - pb) * pb)
+        eb = 1 - ((1 - lb) + pa + P.fl(lb) + 0.05 * pa * (1 - pa))
+        assert pr.pair_edge(w, "a")[0] == pytest.approx(ea, abs=1e-12)
+        assert pr.pair_edge(w, "b")[0] == pytest.approx(eb, abs=1e-12)
+
+
+def test_no_persistence_verdict_fails_closed(tmp_path):
+    pr = make_probe(tmp_path)
+    pr.on_displayed(make_window(pr), "t9", "a", 0.19)
+    assert [s["reason"] for s in records(tmp_path, "skip")] == ["persist_unchecked"] and pr.busy is None

@@ -14,6 +14,10 @@ is still displayed (the paper's own "Lighter fill"); from there it sizes a clip 
      Lighter remainder with an IOC at the best available price and log `unhedged`
   4. one execution at a time: no new pair while a leg is unhedged
 
+Persistence (before 1): +250 ms after each trigger the pair is re-priced from the current books with the trigger's own
+after-fee formula; edge < 4c -> `skip` reason `not_persistent` (and a `persist` record for every trigger). A trigger
+with no +250 ms verdict is skipped `persist_unchecked` (fail closed).
+
 Modes:
   dry  (default) real market data, simulated fills against the live books, NO credentials loaded, never calls SSM
   live loads 6 parameters from SSM (ap-northeast-1, instance role) at start, keeps them in memory only, redacts them
@@ -22,7 +26,7 @@ Modes:
 Records (OUT/YYYY-MM-DD.jsonl, UTC): the paper trader's kinds and ids unchanged (start, window, trigger, check,
 hedge = the paper model's hedge, settle = the paper settle, health, error), plus: meta, skip, l_order, l_fill,
 pm_order, pm_fill, unwind, unhedged, pair, fees, balance, probe_settle, lighter_settled, redeem_due, reconcile,
-reconcile_fail, halt, loss_cap. P&L-bearing records carry `realised_usd`; the ledger (open legs, open cost, today's
+reconcile_fail, halt, loss_cap, persist. P&L-bearing records carry `realised_usd`; the ledger (open legs, open cost, today's
 realised P&L) is rebuilt from these records at start, so limits survive a restart.
 
 Facts behind the numbers (sources in docs/probe.md):
@@ -64,6 +68,8 @@ HEDGE_OVER_ASK = 0.03  # Polymarket FAK worst price = min(HEDGE_MAX_PX, ask + th
 HEDGE_MAX_PX = 0.99
 HEDGE_RETRIES = 3  # after the first attempt
 HEDGE_RETRY_WINDOW_S = 2.0
+PERSIST_MS = 250  # persistence check: +250 ms after the trigger, re-price the pair from the current books
+PERSIST_MIN_EDGE = 0.04  # edge after fees still < this at +250 ms -> skip `not_persistent` (brief 2026-11-26)
 UNWIND_SLIP = 0.05  # unwind IOC worst price = best price -/+ this (fills at book prices, never worse than this)
 L_FILL_TIMEOUT_S = 3.0  # Lighter IOC: wait this long for a terminal status, else the leg is ambiguous -> halt
 L_POLL_S = 0.25  # status poll interval: <= 12 polls + 1 sendTx per order; standard tier = 60 requests / rolling minute
@@ -670,15 +676,24 @@ class Probe(Paper):
         self.settled = {}  # window epoch -> the paper settle record
         self.tasks = set()
         self.counts = collections.Counter()
+        self.persist = {}  # trigger id -> True / False from the +250 ms check (popped at +500 ms)
         if isinstance(log, ProbeLog):
             log.hooks.append(self.ledger.apply)
             log.hooks.append(self._capture)
+            log.hooks.append(self._on_trigger)
 
     def _capture(self, kind, kw):
         if kind == "start":
             kw["mode"] = f"probe-{self.mode}"
         elif kind == "settle":
             self.settled[kw["window"]] = kw
+
+    def _on_trigger(self, kind, kw):
+        """Each paper `trigger` record (logged inside the unchanged paper.evaluate) schedules the +250 ms check."""
+        if kind == "trigger":
+            w = self.win.get(kw["window"])
+            if w is not None:
+                asyncio.get_running_loop().call_later(PERSIST_MS / 1000, self.persist_check, w, kw["id"], kw["side"])
 
     def window_of_token(self, tok):
         for w in self.win.values():
@@ -731,6 +746,35 @@ class Probe(Paper):
             except Exception as ex:  # noqa: BLE001
                 self.err("on_displayed", ex)
 
+    # ---------- +250 ms persistence ----------
+    def pair_edge(self, w, side):
+        """1 - pair cost after fees from the current best quotes, the trigger's own formula (paper.evaluate):
+        a: buy Up on Lighter at the ask + buy Down on PM at 1 - Up bid;  b: sell Up on Lighter at the bid + buy Up on PM."""
+        if not (w.lbook.valid() and w.pbook.valid()):
+            return None, {}
+        lb, la, lbs, las = w.lbook.best()
+        pb, pa, pbs, pas = w.pbook.best()
+        if side == "a":
+            cost = la + (1 - pb) + fl(la) + self.fpm(w, 1 - pb)
+        else:
+            cost = (1 - lb) + pa + fl(lb) + self.fpm(w, pa)
+        return 1 - cost, dict(lighter_book=[lb, la, lbs, las], pm_book=[pb, pa, pbs, pas])
+
+    def persist_check(self, w, tid, side):
+        try:
+            edge, books = self.pair_edge(w, side)
+            ok = edge is not None and round(edge, 9) >= PERSIST_MIN_EDGE
+            self.persist[tid] = ok
+            while len(self.persist) > 2000:  # triggers whose +500 check never ran (window end, stop)
+                self.persist.pop(next(iter(self.persist)))
+            e = None if edge is None else round(edge, 5)
+            self.log("persist", id=tid, window=w.e, side=side, at_ms=PERSIST_MS, edge=e, ok=ok, **books)
+            if not ok:
+                self.skip(tid, w, side, "not_persistent", at_ms=PERSIST_MS, edge=e, min_edge=PERSIST_MIN_EDGE)
+        except Exception as ex:  # noqa: BLE001
+            self.persist[tid] = False
+            self.err("persist_check", ex)
+
     def skip(self, tid, w, side, reason, **kw):
         self.counts[reason] += 1
         self.log("skip", id=tid, window=w.e, side=side, reason=reason, mode=self.mode, **kw)
@@ -756,11 +800,16 @@ class Probe(Paper):
         return (w.down_token, round(1 - pb, 4)) if side == "a" else (w.up_token, pa)
 
     def on_displayed(self, w, tid, side, lpx):
+        persistent = self.persist.pop(tid, None)
+        if persistent is False:
+            return  # already skipped `not_persistent` at +250 ms
         g = self.gate()
         if g:
             if g == "loss_cap" and self.counts["loss_cap"] == 0:
                 self.log("loss_cap", realised_today=round(self.ledger.realised_today(), 4), cap=DAILY_LOSS_CAP_USD)
             return self.skip(tid, w, side, g)
+        if persistent is None:  # fail closed: no +250 ms verdict for this trigger
+            return self.skip(tid, w, side, "persist_unchecked")
         m = self.meta.get(w.e)
         if not m:
             return self.skip(tid, w, side, "meta_not_ready")

@@ -9,12 +9,20 @@ itself well before either could matter.
 `Probe` subclasses `paper.Paper` (the `lp-arb-paper` trader). Discovery, both websockets, the trigger (`evaluate`),
 the +100/+300/+500 ms quote checks (`check`, `lquote_there`) and the cool-downs are the paper's own methods, not
 copies (a test asserts `Probe.evaluate is Paper.evaluate`, and a replay of the 11-25 paper log fires the same 153
-trigger ids). The probe hooks one moment: the +500 ms check that the paper counts as its Lighter fill.
+trigger ids). The probe adds one check and hooks one moment.
 
-At that moment:
+**Persistence (+250 ms, added 2026-11-26).** Each paper `trigger` record schedules `Probe.persist_check` 250 ms
+later. It re-prices the pair from the current best quotes with the trigger's own after-fee formula
+(`pair_edge`, the same expression as `paper.evaluate`). It logs a `persist` record for every trigger. If the edge is
+now < 4c (`PERSIST_MIN_EDGE`), or either book is invalid, it also logs `skip` reason `not_persistent`, and the
+trigger is not traded even if the +500 ms check says the quote is still displayed. A trigger that reaches +500 ms
+with no verdict is skipped `persist_unchecked` (fail closed). The paper's checks and cool-downs are not changed, so
+trigger ids are unchanged. Replay of 11-25: `lp_arb/probe_persist_replay.py` (see the Tokyo report).
 
-1. **Gates**, in order: halted → reconcile failed → kill switch → daily loss cap → an execution already open → venue
-   metadata missing → quote gone. A blocked trigger is logged as `skip` with the reason.
+The hooked moment is the +500 ms check that the paper counts as its Lighter fill. At that moment:
+
+1. **Gates**, in order: not persistent (already logged at +250 ms) → halted → reconcile failed → kill switch → daily loss cap → an execution already open → no
+   +250 ms verdict → venue metadata missing → quote gone. A blocked trigger is logged as `skip` with the reason.
 2. **Size**: q = max(5, Lighter `min_base_amount`, Polymarket `min_order_size`, ⌈$1 / hedge ask⌉), whole shares.
    Whole shares fit both size steps (Lighter 0.0001, Polymarket 0.01) and keep Polymarket BUY amounts at ≤ 2 decimals.
    Skip if q > Lighter displayed size, either leg > $10, open cost over its cap, or the tracked free balance is short.
@@ -150,8 +158,8 @@ corrupt every number; they are never logged on purpose.
 
 ```
 python3 -m venv /home/ubuntu/lp-arb/probe-venv
-/home/ubuntu/lp-arb/probe-venv/bin/pip install -r /home/ubuntu/lp-arb/code/deploy/probe-requirements.txt
-cd /home/ubuntu/lp-arb/code && /home/ubuntu/lp-arb/probe-venv/bin/python -m pytest lp_arb/tests -q -p no:cacheprovider --rootdir lp_arb/tests -c /dev/null
+/home/ubuntu/lp-arb/probe-venv/bin/pip install -r /home/ubuntu/lp-arb/probe-code/deploy/probe-requirements.txt
+cd /home/ubuntu/lp-arb/probe-code && /home/ubuntu/lp-arb/probe-venv/bin/python -m pytest lp_arb/tests -q -p no:cacheprovider --rootdir lp_arb/tests -c /dev/null
 ```
 
 The unit runs this venv's Python, not `/usr/bin/python3`, because the system Python has neither SDK.
@@ -168,7 +176,7 @@ Before the first start, check these:
 1. Install the unit:
 
    ```
-   sudo cp /home/ubuntu/lp-arb/code/deploy/lp-arb-probe.service /etc/systemd/system/ && sudo systemctl daemon-reload
+   sudo cp /home/ubuntu/lp-arb/probe-code/deploy/lp-arb-probe.service /etc/systemd/system/ && sudo systemctl daemon-reload
    ```
 
 2. Start it:
@@ -192,7 +200,7 @@ Before the first start, check these:
      `{}`.
    - After the first `l_fill`, the next `balance.lighter_positions` must show that window's symbol (±q). **If it stays
      `{}`, binary positions are not in `/account` positions, and the reconcile is blind: stop and report.**
-   - Per trigger: `trigger` → `check` ×3 → `skip` (reason) or `l_order` → `l_fill` → `pm_order`/`pm_fill` → `pair`.
+   - Per trigger: `trigger` → `persist` (+250 ms) → `check` ×3 → `skip` (reason) or `l_order` → `l_fill` → `pm_order`/`pm_fill` → `pair`.
      A `pm_order` with `status: rejected` that reads "version" or "invalid signature" means the CLOB client is out of
      date: stop.
    - `unhedged`, `halt` or `error` records: look at each one.
@@ -233,7 +241,8 @@ The probe adds these:
 |---|---|
 | `probe_start` / `probe_stop` | limits, ledger state, CLOB version |
 | `meta` | per window: Lighter min/decimals, PM min/tick, condition id |
-| `skip` | trigger id + reason + sizing |
+| `persist` | every trigger at +250 ms: re-priced `edge` after fees, `ok` (≥ 4c), both books |
+| `skip` | trigger id + reason + sizing (`not_persistent` carries `edge`, `min_edge`) |
 | `l_order` | send/ack/fill times (local), client order id, tx hash, status, filled, avg px, exchange timestamps; `purpose: unwind` for unwinds |
 | `l_fill` | qty, px, model fee |
 | `pm_order` | per hedge attempt: ask, limit, size, status, order id, times |
