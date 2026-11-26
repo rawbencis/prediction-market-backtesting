@@ -40,7 +40,9 @@ The hooked moment is the +500 ms check that the paper counts as its Lighter fill
    Whole shares fit both size steps (Lighter 0.0001, Polymarket 0.01) and keep Polymarket BUY amounts at ≤ 2 decimals.
    Skip if q > Lighter displayed size, either leg > $10, open cost over its cap, or the tracked free balance is short.
 3. **Lighter IOC** limit at the trigger's Lighter price, size q. Side a buys Up; side b sells Up (= buys Down). The
-   probe polls the authoritative order status (`account_orders`) for ≤ 3 s. No terminal status → `halt`.
+   order carries the **nil expiry** (0) that a limit IOC requires; Stat_Arb's `place_order` passes the 28-day default,
+   which the signer rejects (`OrderExpiry is invalid`), so the probe sends IOCs itself (`ioc_order_args`). The probe polls
+   the authoritative order status (`account_orders`) for ≤ 3 s. No terminal status → `halt`.
 4. **Polymarket FAK BUY** of the complementary token (side a: Down, side b: Up), f = filled shares, worst price
    min(0.99, ask + 0.03). If short, it retries at the fresh ask + 0.03, up to 3 more times within 2 s.
 5. **Unwind**: any remainder still unhedged goes back on Lighter as an IOC at the best price ∓ 5¢ (it fills at book
@@ -51,6 +53,23 @@ The hooked moment is the +500 ms check that the paper counts as its Lighter fill
 
 An ambiguous order on either venue sets `halt`: no further trades until a restart and a human look at the accounts.
 The probe never blind-unwinds a leg it is unsure about.
+
+**Deterministic local rejections halt at the first occurrence (2026-11-26).** An order rejected before it reached a
+venue would be rejected the same way on every later trigger. Three cases, each a `halt` with the venue's text in `error`;
+later triggers are then logged as `skip` reason `halted`:
+
+| case | trigger | what happens |
+|---|---|---|
+| Lighter order rejected with no tx hash, and the reason matches the signer's validation errors (`LOCAL_REJECT_RE`, e.g. "MarketIndex is not valid", "OrderExpiry is invalid") or Stat_Arb's local checks | entry IOC | `halt` reason `lighter_local_reject`; nothing is open |
+| the same on an unwind IOC | unwind | `unhedged` logged (residual held), then `lighter_local_reject` |
+| Polymarket order that fails while being built or signed (before sending) | hedge | no retries; the Lighter leg is unwound, then `halt` reason `pm_local_reject` |
+| sign-only preflight of each window's market fails (live) | window start | `halt` reason `lighter_sign_reject` before any trigger can fire |
+
+Venue rejections (an HTTP error with a code, e.g. not enough margin) are not deterministic and do not halt.
+
+**Sign-only preflight.** At every window's start in live mode, the probe signs, with the real key, the exact IOC it
+would send on that market (buy 5 sh @0.50, nil expiry, explicit nonce 0) and discards it; nothing is submitted. The
+result is in `meta.sign_check` (`ok` or the error). `--mode check` runs the same step on the current market.
 
 Dry mode (`--mode dry`, the default) runs the same code with simulated venues. The Lighter IOC meets the live book
 150 ms after sending; the Polymarket FAK meets it 100 ms after sending. No credentials are loaded, SSM is never
@@ -101,7 +120,9 @@ Other Lighter facts the code depends on:
   The default `orderBooks` listing has **no** binary markets, so the probe adds each window's market by id.
 - **Positions:** binary positions are **not** in `/account` `positions`. They come back as `bo_positions`
   `[{market_id, sign (1 Up / −1 Down), size, avg_entry_price, entry_quote}]` (checked on a public account,
-  2026-11-25). lighter-sdk 1.1.2 does not model that field, so the probe reads it from `additional_properties`.
+  2026-11-25). lighter-sdk 1.1.8 models the field (`DetailedAccount.bo_positions`); 1.1.2 left it in
+  `additional_properties`. The probe reads both (`account_positions`): on 1.1.8 the old path alone would return nothing
+  and the reconcile would be blind.
   Reconcile and `lighter_settled` key Lighter positions by market id. A position the log does not know is a
   blocking problem only in a BTC 15m market (symbol `BTC-UPDOWN-15M-*`, looked up by id; unknown → blocking); perps and
   other markets are warnings (see "Reconcile scope").
@@ -112,10 +133,12 @@ Other Lighter facts the code depends on:
   ends as an ambiguous leg → `halt`, which is safe but stops the probe.
 - **Fees as charged, and in the P&L (2026-11-26).** The market reports `taker_fee: "0.0000"` with
   `is_taker_fee_enabled: true`, so the market field is not the fee. Each trade carries an integer `taker_fee` /
-  `maker_fee`. On public BTC 15m trades it does **not** scale with trade size (5 sh → 4250, 300 sh → 1600) and tracks
-  about 8000 × (1 − p) (7,650–10,000). The probe reads it as a rate in millionths of notional:
-  fee = rate × `usd_amount` / 1e6, about 0.008·p(1−p) per share, next to the 0.01·p(1−p) model. **That unit is inferred,
-  not documented.** How the probe uses it:
+  `maker_fee`: per Lighter's docs (docs.lighter.xyz, binary options › trading and fees) the **effective rate in fee
+  ticks, 1e6 = 100%**, and the fee is `0.01 × bo_fee_rate × size × P × (1 − P)` (Up/Down: taker 1%, maker 0%;
+  `bo_fee_rate` = the account's binary-options volume × LIT-staking tier, 1 by default; from `accountLimits`). So
+  fee = rate × `usd_amount` / 1e6; the docs' example is 4900 at 0.51 = $0.2499 on 100 sh. Public trades agree: the rate
+  does not scale with size and is ≈ 10000 × (1 − p) × bo_fee_rate (observed 7,650–10,000 × (1 − p) across takers).
+  At `bo_fee_rate = 1` the charged fee equals the probe's model 0.01·p(1−p). How the probe uses it:
   - When a Lighter IOC fills (entry or unwind), P&L is booked at the model fee; no venue call is made on the hot path.
   - 5, 10 and 20 s later the probe looks up the order's own trades: the account's trades (authenticated), else the
     public `recentTrades`, matched on our client order id, as taker or maker.
@@ -164,7 +187,17 @@ hedge, PM cash runs short after about 10 pairs unless claimed; the probe then sk
 | Polymarket client setup, FAK parsing | `rd3-repo/research/rd3_live/rd3_live.py` @5c81bb8 (R-D3 live taker run) | `make_client`, `parse_post`, `classify_api_error`, `resolve_fill`, `fill_within_order`, `cash`; hash-pinned |
 | trigger, checks, books, sockets, log files | `lp_arb/paper.py` | subclassed |
 
-`lighter-sdk` 1.1.2 @fd4ee25 is the same pin as Stat_Arb, xsmom and ladder.
+`lighter-sdk` **1.1.8** @56b3537 (2026-10-19), in the probe venv only; Stat_Arb, xsmom and ladder stay on 1.1.2 @fd4ee25.
+1.1.2's signer (lighter-go 7b5bba93, 2026-08-19) has an `int16` market index and accepts only perps 0–254 and spot
+2048–4094, so every binary-option order (ids ≈ 12,800 and rising ~480/day) is rejected locally: "MarketIndex is not
+valid". That is what the first live run hit (3 orders, no tx, 1–25 ms). lighter-go #93 (2026-10-12) widened the index to
+`int64` (≤ 2⁴⁸ − 1); lighter-python v1.1.7 shipped that signer and v1.1.8 (signer eb70ce6a) added the binary-options
+models (`bo_positions`, order fields). Lighter's docs: "use lighter-sdk 1.1.8 or newer". Live and check mode refuse any
+other lighter-sdk version or commit (`verify_pins`).
+
+Stat_Arb's `place_order` is reused for everything except the IOC, which the probe builds itself with the nil expiry.
+Stat_Arb's own Lighter IOC path (`execution.py`, `OrderType.IOC`) passes the 28-day default expiry and would be
+rejected by any signer version with `OrderExpiry is invalid`; that is outside this repo and was not changed.
 
 `py_clob_client_v2` **1.2.2**, the newest release (2026-11-12). rd3 used 1.2.0 and Octopus live uses 1.1.0. The only
 difference between 1.2.0 and 1.2.2 is the `exchange_v3` contract address: 1.2.0 has `0x9fE6…`, and 1.2.2 has
@@ -256,7 +289,8 @@ Before the first start, check these:
      market id from `bo_positions`), `open_orders`. Positions and open orders must be empty.
    - `lighter_btc15m`: the current window's market, `status` (`active`), `market_type` (`binary_options`), and
      `checks` (market active, the signer client registered the market, account read, authenticated read, balance ≥ one
-     $10 leg). `verdict: yes_by_api` means every API-side check passed. **Lighter has no per-account binary permission
+     $10 leg, `signs_ioc`). `sign_check` signs, with the real key, the exact IOC the probe would send on the current
+     market and discards it (`submitted: false`); `ok: false` with the signer's error means live orders would be rejected. `verdict: yes_by_api` means every API-side check passed. **Lighter has no per-account binary permission
      endpoint: only the first live order proves the account may trade it.**
    - `pm_client`: installed `py_clob_client_v2` (must be 1.2.2) and the CLOB's `/version`.
    - `pm`: cash `balance`; `allowance` to the exchange contract a BUY is signed for (v2 non-neg-risk → `exchange_v2`,
@@ -303,8 +337,9 @@ Before the first start, check these:
      `stale: "stale_pm"` (on 11-25, 24 of the 53 edge survivors were stale at the trigger alone); those triggers still
      trade. If **every** trigger is stale, look at `persist.ages.*.pm.lag_ms`: a lag that never drops below 300 ms is
      the box's feed or clock (check the `timedatectl`/chrony offset), not the market.
+   - Each window's `meta` should show `sign_check: "ok"`. Anything else is followed by `halt` `lighter_sign_reject`.
    - `unhedged`, `halt` or `error` records: look at each one.
-   - After each window (~6–8 min after its end): `settle` (paper), `probe_settle`, `lighter_settled`
+   - After each window (~6–8 min after its end): `paper_settle` (simulated), `probe_settle`, `lighter_settled`
      (`position_gone: true`), and `redeem_due` for Polymarket winners. Claim those in the UI.
 
 4. Stop it:
@@ -331,18 +366,20 @@ the two processes see the books on separate sockets), within the probe's uptime,
 probe-only / paper-only; probe skips by reason; Lighter IOC fill rate live vs the paper's +500 ms "displayed" on the
 same triggers; per pair live vs paper c/share, Lighter fill slippage vs the trigger price, Polymarket hedge slippage vs
 the trigger price and vs the ask when the FAK was sent, fees modelled vs charged; every `unhedged`/`unwind` with its
-cost; halts. Lighter's charged `taker_fee` is shown raw and as micro-USDC; that unit is not documented, so check it
-against the model on the first fills before trusting it.
+cost; halts. The Lighter fee charged comes from the probe's `l_fee` records. The probe log's simulated paper records
+(`paper_hedge`, `paper_settle`, `sim: true`; `hedge`/`settle` in logs before 2026-11-26) are excluded and counted
+(`sim_records_excluded`); the paper side comes only from the paper trader's own log.
 
 ## Record kinds
 
-The paper trader's records keep their kinds and ids:
+The paper trader's records keep their kinds and ids, except its two simulated P&L records, which are renamed in the
+probe log so they cannot be read as trades (logs written before 2026-11-26 still have `hedge` / `settle`):
 
 | kind | meaning |
 |---|---|
 | `start`, `window`, `trigger`, `check`, `health`, `error`, `stop` | as in the paper trader |
-| `hedge` | the paper model's hedge, for comparison |
-| `settle` | the paper's settle |
+| `paper_hedge` (`sim: true`) | the paper model's simulated hedge. **Not a trade.** |
+| `paper_settle` (`sim: true`) | the paper model's settle. **Not a trade.** It also tells the probe both venues' outcomes. |
 
 The probe adds these:
 
@@ -362,4 +399,4 @@ The probe adds these:
 | `unwind` / `unhedged` | unwind fill and loss; residual held |
 | `balance` | every 60 s: free balances, collateral, Lighter positions, open costs, realised today, flags, skip counts |
 | `probe_settle`, `lighter_settled`, `redeem_due`, `settle_unknown` | settlement records (see above) |
-| `reconcile`, `reconcile_fail`, `halt`, `loss_cap` | start-up check and stop conditions |
+| `reconcile`, `reconcile_fail`, `halt`, `loss_cap` | start-up check and stop conditions; `halt.reason` includes `lighter_local_reject`, `pm_local_reject`, `lighter_sign_reject` (with `error`) |

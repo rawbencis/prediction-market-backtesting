@@ -121,7 +121,29 @@ PINNED = {  # Stat_Arb @b7ef8d3, rd3-repo @5c81bb8
     "rd3_live.py": "9d004f7b36b9b2360e57dcdaa59d28d9ea8932606e5c0a5051e9b9575b20d5a5",
 }
 PM_CLIENT_VERSION = "1.2.2"  # py_clob_client_v2; 1.2.0's exchange_v3 address is stale (see docs/probe.md)
-LIGHTER_SDK_COMMIT = "fd4ee2530f78940cbed3dd80131d0fa66f74ad2a"  # same pin as Stat_Arb / xsmom / ladder
+LIGHTER_SDK_VERSION = "1.1.8"  # lighter-python v1.1.8 @56b3537; signer = lighter-go eb70ce6a (2026-10-19), int64 market index
+LIGHTER_SDK_COMMIT = "56b3537cd311117a5a665d74db4c2cce7da155de"  # probe venv only; Stat_Arb/xsmom/ladder stay on 1.1.2 @fd4ee25
+SIGN_CHECK_NONCE = 0  # nonce for sign-only checks: the tx is never submitted
+# Rejections that come from local validation (the Go signer's txtypes/errors.go, Stat_Arb Market.validate_order) are
+# deterministic: the same order is rejected the same way on every trigger -> halt at the first one.
+LOCAL_REJECT_RE = re.compile(
+    r"is not valid|is invalid|should not be (less|larger) than|should be (nil|larger|equal|either|0 or 1|unique)|should match|"
+    r"must be the|is in invalid range|is out of range|must be positive|below market minimum|invalid (private|pub) key|"
+    r"client is not created|failed to sign", re.I)
+
+
+def is_local_reject(reason):
+    return bool(reason) and bool(LOCAL_REJECT_RE.search(str(reason)))
+
+
+def ioc_order_args(signer_cls, market_index, client_order_index, base_amount, price, is_ask):
+    """CreateOrder fields for a limit IOC, as the probe sends them and as the sign-only checks sign them.
+    order_expiry MUST be the nil expiry (DEFAULT_IOC_EXPIRY = 0): the signer rejects a limit IOC with any expiry
+    (`OrderExpiry is invalid`, lighter-go txtypes/create_order.go). Stat_Arb's place_order passes the 28-day default."""
+    return dict(market_index=int(market_index), client_order_index=int(client_order_index), base_amount=int(base_amount),
+                price=int(price), is_ask=bool(is_ask), order_type=signer_cls.ORDER_TYPE_LIMIT,
+                time_in_force=signer_cls.ORDER_TIME_IN_FORCE_IMMEDIATE_OR_CANCEL, reduce_only=False, trigger_price=0,
+                order_expiry=signer_cls.DEFAULT_IOC_EXPIRY)
 
 # dry-mode simulation
 DRY_BAL = {"lighter": 50.0, "pm": 40.0}
@@ -205,8 +227,13 @@ class ProbeLog(Log):
         super().__init__(root)
         self.red, self.hooks = red, []
 
+    # the inherited paper model's records: simulated, never trades. Renamed so they cannot be read as the probe's own.
+    SIM_KINDS = {"hedge": "paper_hedge", "settle": "paper_settle"}
+
     def __call__(self, kind, **kw):
         kw = self.red.obj(kw)
+        if kind in self.SIM_KINDS:
+            kind, kw = self.SIM_KINDS[kind], dict(kw, sim=True)
         for h in self.hooks:
             try:
                 h(kind, kw)
@@ -437,10 +464,10 @@ def _pm_row(r):
 
 def lighter_fee_charged(trades, coid):
     """Our IOC's charged Lighter fee from its trades (recentTrades / account trades rows).
-    `taker_fee`/`maker_fee` are integers that do NOT scale with trade size; across public BTC 15m trades they track
-    ~8000 x (1 - p). Read as a rate in millionths of notional, fee = rate * usd_amount / 1e6 (= ~0.008 p(1-p) per share,
-    next to the 0.01 p(1-p) model). That unit is inferred from public trades, not documented: the raw values are logged
-    and a result > L_FEE_PLAUSIBLE_X x the model is not applied. -> (usd or None, [per-trade detail])."""
+    `taker_fee`/`maker_fee` are the effective rate in fee ticks, 1e6 = 100% (docs.lighter.xyz, binary options trading and
+    fees: fee = 0.01 x bo_fee_rate x size x P(1-P); example 4900 at 0.51 = $0.2499 on 100 sh), so fee = rate x usd_amount
+    / 1e6. Public trades agree (the rate does not scale with size). The raw values are logged, and a result
+    > L_FEE_PLAUSIBLE_X x the model is not applied. -> (usd or None, [per-trade detail])."""
     rows, usd = [], 0.0
     for t in trades:
         bid, ask = str(t.get("bid_client_id")), str(t.get("ask_client_id"))
@@ -456,6 +483,24 @@ def lighter_fee_charged(trades, coid):
         rows.append(dict(trade_id=t.get("trade_id"), price=t.get("price"), size=t.get("size"), usd_amount=n, role="taker" if taker else "maker",
                          fee_rate_raw=rate, fee_usd=round(f, 8)))
     return (round(usd, 8) if rows else None), rows
+
+
+def account_positions(a):
+    """/account -> {market_id: signed Up qty (+ Up, - Down), "perp:SYM": signed qty}. Binary positions are `bo_positions`
+    [{market_id, sign (1 Up, -1 Down), size, ...}]: a model attribute on lighter-sdk >= 1.1.8, additional_properties on
+    1.1.2 (read both: an SDK change must not make the reconcile blind)."""
+    pos = {}
+    bo = [x.to_dict() if hasattr(x, "to_dict") else x for x in (getattr(a, "bo_positions", None) or ())]
+    bo = bo or list((getattr(a, "additional_properties", None) or {}).get("bo_positions") or ())
+    for p in bo:
+        q = float(p.get("size") or 0)
+        if q:
+            pos[int(p["market_id"])] = q if int(p.get("sign") or 1) == 1 else -q
+    for p in getattr(a, "positions", None) or ():
+        q = float(p.position)
+        if q:
+            pos[f"perp:{p.symbol}"] = q if int(p.sign) == 1 else -q
+    return pos
 
 
 def lighter_symbols(mids, http=None):
@@ -500,7 +545,26 @@ def verify_pins():
     v = version("py_clob_client_v2")
     if v != PM_CLIENT_VERSION:
         bad.append(f"py_clob_client_v2 {v} != {PM_CLIENT_VERSION}")
+    lv_, lc = lighter_sdk_installed()
+    if lv_ != LIGHTER_SDK_VERSION or lc != LIGHTER_SDK_COMMIT:
+        bad.append(f"lighter-sdk {lv_} @{(lc or '?')[:10]} != {LIGHTER_SDK_VERSION} @{LIGHTER_SDK_COMMIT[:10]} "
+                   "(older signers reject binary-option market ids: 'MarketIndex is not valid')")
     return bad
+
+
+def lighter_sdk_installed():
+    """(version, git commit) of the installed lighter-sdk (from its dist-info direct_url.json)."""
+    from importlib.metadata import PackageNotFoundError, distribution
+
+    try:
+        d = distribution("lighter-sdk")
+    except PackageNotFoundError:
+        return None, None
+    try:
+        commit = json.loads(d.read_text("direct_url.json") or "{}").get("vcs_info", {}).get("commit_id")
+    except ValueError:
+        commit = None
+    return d.version, commit
 
 
 def import_rd3():
@@ -511,95 +575,131 @@ def import_rd3():
 
 
 # ======================= venues =======================
+def binary_client_class():
+    """Stat_Arb's LighterClient (hash-pinned, imported from STATARB_DIR) + the binary-market bits it lacks. Module level so
+    the IOC path and sign check can be tested without building a client (which needs the network and a key)."""
+    sys.path.insert(0, str(STATARB_DIR))
+    from statarb.exchange import base as B
+    from statarb.exchange.lighter_client import LighterClient
+
+    class BinaryLighterClient(LighterClient):
+        def _refresh_markets(self):  # the default orderBooks listing has no binary markets: keep added ones
+            keep = {s: m for s, m in getattr(self, "_markets", {}).items() if "UPDOWN" in s}
+            super()._refresh_markets()
+            with self._lock:
+                self._markets.update(keep)
+
+        def add_market(self, market_id):
+            resp = self._with_retries(f"order_books({market_id})", lambda: self._order_api.order_books(market_id=market_id))
+            for ob in resp.order_books:
+                m = B.Market(symbol=ob.symbol, market_id=ob.market_id, price_decimals=ob.supported_price_decimals,
+                             size_decimals=ob.supported_size_decimals, min_base_amount=float(ob.min_base_amount),
+                             min_quote_amount=float(ob.min_quote_amount))
+                with self._lock:
+                    self._markets[ob.symbol] = m
+                return m
+
+        def _auth(self):
+            return self._signer.create_auth_token_with_expiry(api_key_index=self._config.api_key_index)[0]
+
+        def snapshot(self):
+            """Binary positions are NOT in `positions`: /account returns them as `bo_positions`
+            [{market_id, sign (1 Up, -1 Down), size, avg_entry_price, entry_quote}]: SDK 1.1.8 models it (`a.bo_positions`), 1.1.2 kept it
+            (kept in additional_properties). -> positions {market_id: signed Up qty, "perp:SYM": signed qty}."""
+            a = self._with_retries("account", lambda: self._account_api.account(by="index", value=str(self._config.account_index))).accounts[0]
+            pos = account_positions(a)
+            return dict(available=float(a.available_balance), collateral=float(a.collateral), positions=pos)
+
+        def account_detail(self):
+            """--mode check: account type/tier/status as the API reports them (raw codes; nothing interpreted)."""
+            a = self._with_retries("account", lambda: self._account_api.account(by="index", value=str(self._config.account_index))).accounts[0]
+            out = dict(account_type=a.account_type, account_trading_mode=a.account_trading_mode, status=a.status,
+                       available=float(a.available_balance), collateral=float(a.collateral),
+                       pending_order_count=a.pending_order_count, total_order_count=a.total_order_count)
+            try:
+                lim = self._with_retries("account_limits", lambda: self._account_api.account_limits(
+                    account_index=self._config.account_index, authorization=self._auth()))
+                out.update(user_tier=lim.user_tier, user_tier_name=lim.user_tier_name, taker_fee_tick=lim.current_taker_fee_tick,
+                           maker_fee_tick=lim.current_maker_fee_tick)
+            except Exception as ex:  # noqa: BLE001
+                out["limits_error"] = repr(ex)[:200]
+            return out
+
+        def my_trades(self, market_id):
+            """The account's latest trades in a market (authenticated), as dicts with fee fields."""
+            r = self._with_retries("trades(account)", lambda: self._order_api.trades(
+                sort_by="timestamp", limit=100, market_id=int(market_id), account_index=self._config.account_index,
+                sort_dir="desc", authorization=self._auth()))
+            return [t.to_dict() for t in (getattr(r, "trades", None) or ())]
+
+        def place_order(self, request):
+            """IOC: Stat_Arb's place_order, but with the nil order expiry a limit IOC requires (Stat_Arb passes the
+            28-day default -> `OrderExpiry is invalid`). Other order types: unchanged."""
+            if request.order_type is not B.OrderType.IOC:
+                return super().place_order(request)
+            market = self._market(request.symbol)
+            signer = self._signer
+            size, px_ = market.round_size(request.size), market.round_price(request.limit_price)
+            reject = market.validate_order(size, px_)
+            coid = request.client_order_id or self._id_gen.next()
+            if reject is not None:
+                return B.OrderResult(client_order_id=coid, symbol=request.symbol, side=request.side, status=B.OrderStatus.REJECTED,
+                                     requested_size=size, reason=reject)
+            args = ioc_order_args(signer, market.market_id, coid, self._to_base_int(market, size), self._to_price_int(market, px_),
+                                  request.side is B.OrderSide.SELL)
+            _, tx_hash, err = self._with_retries(f"create_order({request.symbol})", lambda: signer.create_order(**args))
+            if err is not None:
+                return B.OrderResult(client_order_id=coid, symbol=request.symbol, side=request.side, status=B.OrderStatus.REJECTED,
+                                     requested_size=size, reason=str(err))
+            with self._lock:
+                self._submitted[coid] = (request.side, size)
+            return B.OrderResult(client_order_id=coid, symbol=request.symbol, side=request.side, status=B.OrderStatus.NEW,
+                                 requested_size=size, exchange_order_id=str(tx_hash))
+
+        def sign_check(self, market_id, size, price, is_ask=False):
+            """Sign (never submit) the exact IOC the probe would send on this market, with the real key.
+            -> (ok, error). The signed tx is discarded (it carries a signature) and nothing is sent."""
+            m = self.add_market(market_id)
+            args = ioc_order_args(self._signer, market_id, 1, self._to_base_int(m, size), self._to_price_int(m, price), is_ask)
+            _, tx_info, _, err = self._signer.sign_create_order(**args, nonce=SIGN_CHECK_NONCE, api_key_index=self._config.api_key_index)
+            del tx_info
+            return err is None, err
+
+        def close(self):
+            """Stat_Arb's close() closes its ApiClient only; the SignerClient holds a second aiohttp session."""
+            try:
+                self._run(self._signer.close())
+            except Exception:  # noqa: BLE001
+                pass
+            super().close()
+
+        def active_orders(self):
+            r = self._with_retries("account_active_orders(all)", lambda: self._order_api.account_active_orders(
+                account_index=self._config.account_index, authorization=self._auth()))
+            return [o.to_dict() for o in (r.orders or ())]
+
+        def order_raw(self, coid):
+            r = self._with_retries("account_orders", lambda: self._order_api.account_orders(
+                account_index=self._config.account_index, authorization=self._auth(), client_order_indexes=str(coid)))
+            for o in getattr(r, "orders", None) or ():
+                if int(o.client_order_index) == int(coid):
+                    return o.to_dict()
+            return None
+
+
+    BinaryLighterClient.B = B
+    return BinaryLighterClient
+
+
 class LighterLive:
-    """Stat_Arb's LighterClient (lighter-sdk @fd4ee25) + the binary-market bits it lacks."""
+    """Stat_Arb's LighterClient + the binary-market bits it lacks, on lighter-sdk 1.1.8 (probe venv only)."""
 
     def __init__(self, sec):
         sys.path.insert(0, str(STATARB_DIR))
         from statarb.config import LighterConfig
-        from statarb.exchange import base as B
-        from statarb.exchange.lighter_client import LighterClient
 
-        self.B = B
-
-        class BinaryLighterClient(LighterClient):
-            def _refresh_markets(self):  # the default orderBooks listing has no binary markets: keep added ones
-                keep = {s: m for s, m in getattr(self, "_markets", {}).items() if "UPDOWN" in s}
-                super()._refresh_markets()
-                with self._lock:
-                    self._markets.update(keep)
-
-            def add_market(self, market_id):
-                resp = self._with_retries(f"order_books({market_id})", lambda: self._order_api.order_books(market_id=market_id))
-                for ob in resp.order_books:
-                    m = B.Market(symbol=ob.symbol, market_id=ob.market_id, price_decimals=ob.supported_price_decimals,
-                                 size_decimals=ob.supported_size_decimals, min_base_amount=float(ob.min_base_amount),
-                                 min_quote_amount=float(ob.min_quote_amount))
-                    with self._lock:
-                        self._markets[ob.symbol] = m
-                    return m
-
-            def _auth(self):
-                return self._signer.create_auth_token_with_expiry(api_key_index=self._config.api_key_index)[0]
-
-            def snapshot(self):
-                """Binary positions are NOT in `positions`: /account returns them as `bo_positions`
-                [{market_id, sign (1 Up, -1 Down), size, avg_entry_price, entry_quote}], which SDK 1.1.2 does not model
-                (kept in additional_properties). -> positions {market_id: signed Up qty, "perp:SYM": signed qty}."""
-                a = self._with_retries("account", lambda: self._account_api.account(by="index", value=str(self._config.account_index))).accounts[0]
-                pos = {}
-                for p in (a.additional_properties or {}).get("bo_positions") or ():
-                    q = float(p.get("size") or 0)
-                    if q:
-                        pos[int(p["market_id"])] = q if int(p.get("sign") or 1) == 1 else -q
-                for p in a.positions or ():
-                    q = float(p.position)
-                    if q:
-                        pos[f"perp:{p.symbol}"] = q if int(p.sign) == 1 else -q
-                return dict(available=float(a.available_balance), collateral=float(a.collateral), positions=pos)
-
-            def account_detail(self):
-                """--mode check: account type/tier/status as the API reports them (raw codes; nothing interpreted)."""
-                a = self._with_retries("account", lambda: self._account_api.account(by="index", value=str(self._config.account_index))).accounts[0]
-                out = dict(account_type=a.account_type, account_trading_mode=a.account_trading_mode, status=a.status,
-                           available=float(a.available_balance), collateral=float(a.collateral),
-                           pending_order_count=a.pending_order_count, total_order_count=a.total_order_count)
-                try:
-                    lim = self._with_retries("account_limits", lambda: self._account_api.account_limits(
-                        account_index=self._config.account_index, authorization=self._auth()))
-                    out.update(user_tier=lim.user_tier, user_tier_name=lim.user_tier_name, taker_fee_tick=lim.current_taker_fee_tick,
-                               maker_fee_tick=lim.current_maker_fee_tick)
-                except Exception as ex:  # noqa: BLE001
-                    out["limits_error"] = repr(ex)[:200]
-                return out
-
-            def my_trades(self, market_id):
-                """The account's latest trades in a market (authenticated), as dicts with fee fields."""
-                r = self._with_retries("trades(account)", lambda: self._order_api.trades(
-                    sort_by="timestamp", limit=100, market_id=int(market_id), account_index=self._config.account_index,
-                    sort_dir="desc", authorization=self._auth()))
-                return [t.to_dict() for t in (getattr(r, "trades", None) or ())]
-
-            def close(self):
-                """Stat_Arb's close() closes its ApiClient only; the SignerClient holds a second aiohttp session."""
-                try:
-                    self._run(self._signer.close())
-                except Exception:  # noqa: BLE001
-                    pass
-                super().close()
-
-            def active_orders(self):
-                r = self._with_retries("account_active_orders(all)", lambda: self._order_api.account_active_orders(
-                    account_index=self._config.account_index, authorization=self._auth()))
-                return [o.to_dict() for o in (r.orders or ())]
-
-            def order_raw(self, coid):
-                r = self._with_retries("account_orders", lambda: self._order_api.account_orders(
-                    account_index=self._config.account_index, authorization=self._auth(), client_order_indexes=str(coid)))
-                for o in getattr(r, "orders", None) or ():
-                    if int(o.client_order_index) == int(coid):
-                        return o.to_dict()
-                return None
+        BinaryLighterClient = binary_client_class()
+        self.B = BinaryLighterClient.B
 
         cfg = LighterConfig(base_url=L_BASE, api_key_private_key=sec["L_API_KEY_PRIVATE_KEY"], account_index=int(sec["L_ACCOUNT_INDEX"]),
                             api_key_index=int(sec["L_API_KEY_INDEX"]), request_timeout_s=5.0, max_retries=1, retry_backoff_s=0.1)
@@ -621,7 +721,8 @@ class LighterLive:
             return dict(out, status="ambiguous", filled=0.0, reason=repr(ex)[:300], t_ack=time.time())
         out.update(t_ack=time.time(), coid=res.client_order_id, tx=res.exchange_order_id)
         if res.status is B.OrderStatus.REJECTED:
-            return dict(out, status="rejected", filled=0.0, reason=res.reason)
+            local = not res.exchange_order_id and is_local_reject(res.reason)
+            return dict(out, status="rejected", filled=0.0, reason=res.reason, local=local)
         end = time.time() + L_FILL_TIMEOUT_S
         while time.time() < end:  # IOC: poll the authoritative status (not-found right after send = still pending)
             try:
@@ -655,6 +756,9 @@ class LighterLive:
             d = await asyncio.to_thread(P.http_json, P.L_REST + f"recentTrades?market_id={market_id}&limit=100")
             mine = [t for t in d.get("trades") or () if str(coid) in (str(t.get("ask_client_id")), str(t.get("bid_client_id")))]
         return mine
+
+    async def sign_check(self, mid, size=MIN_CLIP, price=0.5, is_ask=False):
+        return await asyncio.to_thread(self.c.sign_check, mid, size, price, is_ask)
 
     def close(self):
         self.c.close()
@@ -709,12 +813,17 @@ class PMLive:
         out = dict(venue="pm", token=token, limit=price, size=size, t_sign=time.time())
 
         def go():
-            signed = self.c.create_order(OrderArgs(token_id=token, price=price, size=size, side="BUY"))
+            try:
+                signed = self.c.create_order(OrderArgs(token_id=token, price=price, size=size, side="BUY"))
+            except Exception as ex:  # noqa: BLE001  built/signed locally, nothing sent: deterministic
+                raise LocalReject(repr(ex)[:300]) from None
             out["t_send"] = time.time()
             return self.c.post_order(signed, OrderType.FAK)
 
         try:
             resp = await asyncio.to_thread(go)
+        except LocalReject as e:
+            return dict(out, t_ack=time.time(), status="rejected", local=True, shares=0.0, cost=0.0, reason=str(e))
         except PolyApiException as e:
             msg = getattr(e, "error_msg", None) or str(e)
             kind = rd3.classify_api_error(e.status_code, msg)
@@ -793,6 +902,10 @@ class PMLive:
                 hc.close()
         except Exception:  # noqa: BLE001
             pass
+
+
+class LocalReject(Exception):
+    """An order that failed before anything was sent (build / sign)."""
 
 
 class derive_first:
@@ -911,6 +1024,7 @@ class Probe(Paper):
         self.settled = {}  # window epoch -> the paper settle record
         self.tasks = set()
         self.counts = collections.Counter()
+        self.pm_local_reject = None
         self.persist = {}  # trigger id -> True / False from the +250 ms check (popped at +500 ms)
         self.ages = {}  # trigger id -> book ages at the trigger (consumed at +250 ms)
         self.clock = time.time  # tests replace it with the fake loop's clock
@@ -923,7 +1037,7 @@ class Probe(Paper):
     def _capture(self, kind, kw):
         if kind == "start":
             kw["mode"] = f"probe-{self.mode}"
-        elif kind == "settle":
+        elif kind == "paper_settle":
             self.settled[kw["window"]] = kw
 
     def _on_trigger(self, kind, kw):
@@ -970,6 +1084,12 @@ class Probe(Paper):
                     m[f"pm_tick_{name}"] = float(b.get("tick_size") or 0.01)
                     m["cond"], m["neg_risk"] = b.get("market"), b.get("neg_risk")
                 await self.pv.prepare(w, m["cond"], (w.up_token, w.down_token))
+                if hasattr(self.lv, "sign_check"):  # live: sign (never send) this market's IOC with the real key
+                    ok, err = await self.lv.sign_check(w.mid)
+                    m["sign_check"] = "ok" if ok else str(err)[:200]
+                    if not ok and not self.halted:
+                        self.halt("lighter_sign_reject", window=w.e, market_id=w.mid, error=str(err)[:300],
+                                  note="the signer rejects this market's order: nothing can trade; nothing was sent")
                 self.meta[w.e] = m
                 self.log("meta", window=w.e, **m)
                 return
@@ -1121,6 +1241,8 @@ class Probe(Paper):
         self.log("l_order", **base, **{k: v for k, v in r.items() if k != "venue"}, sizing=info)
         if r["status"] == "ambiguous":
             return self.halt("lighter_ambiguous", **base, coid=r.get("coid"))
+        if r["status"] == "rejected" and r.get("local"):  # deterministic: every later trigger would fail the same way
+            return self.halt("lighter_local_reject", **base, error=r.get("reason"), note="nothing reached the exchange; fix, then restart")
         f = float(r.get("filled") or 0.0)
         if f <= 0:
             return
@@ -1144,6 +1266,8 @@ class Probe(Paper):
         rem = round(f - hedged, 4)
         if rem > 1e-9:
             await self.unwind(w, tid, side, lfill, rem, base)
+        if self.pm_local_reject and not self.halted:
+            self.halt("pm_local_reject", **base, error=self.pm_local_reject, note="Polymarket order failed before sending; fix, then restart")
 
     def spend(self, venue, usd):
         if self.mode == "dry":
@@ -1174,6 +1298,9 @@ class Probe(Paper):
             self.log("pm_order", **base, attempt=attempt, ask=ask, **{k: v for k, v in r.items() if k != "venue"})
             if r["status"] == "ambiguous":
                 return hedged, cost, fee, attempt + 1, True
+            if r["status"] == "rejected" and r.get("local"):  # no retry: the same order fails the same way; unwind, then halt
+                self.pm_local_reject = r.get("reason")
+                break
             if r["status"] == "filled" and r["shares"] > 0:
                 sh, c = float(r["shares"]), float(r["cost"])
                 fu = sh * rate * (c / sh) * (1 - c / sh)
@@ -1232,6 +1359,10 @@ class Probe(Paper):
             self.log("l_order", **base, purpose="unwind", **{k: v for k, v in r.items() if k != "venue"})
             if r["status"] == "ambiguous":
                 return self.halt("lighter_unwind_ambiguous", **base, coid=r.get("coid"))
+            if r["status"] == "rejected" and r.get("local"):
+                self.log("unhedged", **base, qty=rem, unwound=0.0, residual_held=rem, loss_usd=0.0, why_residual="unwind rejected locally",
+                         note="residual is held to settlement")
+                return self.halt("lighter_local_reject", **base, purpose="unwind", error=r.get("reason"))
             done = float(r.get("filled") or 0.0)
             if done > 0:
                 upx = float(r.get("avg_px") or px)
@@ -1492,8 +1623,11 @@ async def account_check(lv, pv, ledger, http=None, now=None):
                         taker_fee=ob.get("taker_fee"), is_taker_fee_enabled=ob.get("is_taker_fee_enabled"))
         mi = await part("lighter market registration", lv.market_info(mid))
         trad["signer_market"] = mi
+        sc = await part("lighter sign-only", lv.sign_check(mid)) if hasattr(lv, "sign_check") else None
+        trad["sign_check"] = None if sc is None else dict(ok=sc[0], error=sc[1], submitted=False,
+                                                          order="limit IOC buy 5 sh @0.50, nil expiry, nonce 0, signed and discarded")
         checks = dict(market_active=bool(ob) and str(ob.get("status")).lower() == "active", signer_registered=bool(mi),
-                      account_read=acct is not None, auth_read=lo is not None,
+                      account_read=acct is not None, auth_read=lo is not None, signs_ioc=bool(sc and sc[0]),
                       balance_for_one_clip=bal is not None and (bal.get("free") or 0) >= MAX_LEG_COST_USD)
         trad["checks"] = checks
         trad["verdict"] = "yes_by_api" if all(checks.values()) else "no"

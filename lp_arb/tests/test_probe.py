@@ -604,8 +604,10 @@ def test_reconcile_size_mismatch_and_perp_scope(tmp_path):
 
 
 def test_lighter_snapshot_reads_bo_positions():
-    """SDK 1.1.2 has no bo_positions field; the raw /account JSON (2026-11-25 sample) lands in additional_properties."""
+    """/account bo_positions (2026-11-25 sample): lighter-sdk 1.1.8 models the field, 1.1.2 left it in
+    additional_properties. The probe reads both, so an SDK upgrade cannot silently empty the reconcile."""
     import importlib.util
+    import types
 
     if importlib.util.find_spec("lighter") is None:
         pytest.skip("lighter SDK not installed (probe-venv only)")
@@ -615,12 +617,15 @@ def test_lighter_snapshot_reads_bo_positions():
            "total_isolated_order_count": 0, "pending_order_count": 0, "available_balance": "41.5", "status": 1, "collateral": "50.0",
            "account_index": 1, "name": "", "description": "", "can_invite": False, "referral_points_percentage": "0",
            "positions": [], "assets": [], "total_asset_value": "50", "cross_asset_value": "50", "pool_info": None, "shares": [],
-           "bo_positions": [{"market_id": 12694, "entry_quote": "6.400000", "avg_entry_price": "0.64", "sign": -1, "size": "10.0000"}]}
-    try:
-        a = DetailedAccount.from_dict(raw)
-    except Exception as ex:  # the SDK model may require more fields; the point is additional_properties
-        pytest.skip(f"model construction needs more fields: {ex!r}"[:200])
-    assert (a.additional_properties or {}).get("bo_positions")[0]["market_id"] == 12694
+           "bo_positions": [{"market_id": 12694, "entry_quote": "6.400000", "avg_entry_price": "0.64", "sign": -1, "size": "10.0000"},
+                            {"market_id": 12695, "entry_quote": "2.0", "avg_entry_price": "0.40", "sign": 1, "size": "5.0000"}]}
+    a = DetailedAccount.from_dict(raw)  # the installed SDK (1.1.8)
+    assert a.bo_positions and not (a.additional_properties or {}).get("bo_positions")  # modelled now
+    assert R.account_positions(a) == {12694: -10.0, 12695: 5.0}
+    old = types.SimpleNamespace(positions=[], additional_properties={"bo_positions": raw["bo_positions"]})  # 1.1.2 shape
+    assert R.account_positions(old) == {12694: -10.0, 12695: 5.0}
+    perp = types.SimpleNamespace(position="0.1", sign=-1, symbol="BTC")
+    assert R.account_positions(types.SimpleNamespace(positions=[perp], bo_positions=None)) == {"perp:BTC": -0.1}
 
 
 # ---------------------------------------------------------------- +250 ms persistence
@@ -745,6 +750,10 @@ class CheckL(FakeL):
 
     async def account_info(self):
         return dict(account_type=0, account_trading_mode=0, status=1, user_tier="std", user_tier_name="Standard")
+
+    async def sign_check(self, mid, size=5, price=0.5, is_ask=False):
+        self.signed = getattr(self, "signed", []) + [mid]
+        return getattr(self, "sign_result", (True, None))
 
     async def market_info(self, mid):
         self.registered.append(mid)
@@ -1268,3 +1277,240 @@ def test_dry_mode_never_looks_up_lighter_fees(tmp_path):
     pr = make_probe(tmp_path, L, FakePM([("filled", 5.0, 0.76)]), mode="dry")
     run(pr.execute(make_window(pr), "t1", "a", 0.19, 5.0, "DOWNTOK", {}))
     assert L.fee_calls == 0 and not records(tmp_path, "l_fee")
+
+
+# ---------------------------------------------------------------- 11-26 live: "MarketIndex is not valid"
+SIGN_PROOF = r"""
+import json, sys
+sys.path.insert(0, {repo!r})
+from lighter.signer_client import SignerClient, get_signer, create_api_key, decode_and_free
+from lp_arb import probe as R
+priv, pub, err = create_api_key()                      # throwaway keypair, generated locally, never registered
+assert err is None and priv and pub
+s = SignerClient.__new__(SignerClient)                 # signing only: no ApiClient, no nonce manager, no network
+s.signer, s.account_index = get_signer(), 100
+assert decode_and_free(s.signer.CreateClient(b"http://127.0.0.1:1", priv.encode(), 304, 4, 100)) is None
+out = {{}}
+def sign(mid, **over):
+    a = R.ioc_order_args(SignerClient, mid, 7, 50000, 45, False)
+    a.update(over)
+    _, tx, h, e = s.sign_create_order(**a, nonce=R.SIGN_CHECK_NONCE, api_key_index=4)
+    return dict(ok=e is None and bool(tx), err=e)
+for mid in (12572, 12808, 40000, 2 ** 40, 254, 255, 2 ** 48):
+    out[str(mid)] = sign(mid)
+out["12808_28day_expiry"] = sign(12808, order_expiry=SignerClient.DEFAULT_28_DAY_ORDER_EXPIRY)  # Stat_Arb's IOC args
+# the probe's own sign_check path (BinaryLighterClient.sign_check) on the real signer
+cls = R.binary_client_class()
+c = cls.__new__(cls)
+c._signer = s
+c._config = type("C", (), dict(api_key_index=4))()
+c.add_market = lambda mid: cls.B.Market(symbol="BTC-UPDOWN-15M-1", market_id=mid, price_decimals=2, size_decimals=4,
+                                        min_base_amount=5.0, min_quote_amount=0.0)
+out["sign_check_12808"] = c.sign_check(12808, 5.0, 0.5)
+print("RESULT" + json.dumps(out))
+"""
+
+
+def test_signer_accepts_binary_market_ids_offline_with_throwaway_key():
+    """Item 3: lighter-sdk 1.1.8's signer, a throwaway key, no network (API URL is a closed local port; signing never
+    contacts it). Binary-option ids sign; the nil market 255 and > 2^48-1 do not; Stat_Arb's 28-day expiry on an IOC
+    is rejected (the second defect behind the first)."""
+    import importlib.util
+    if importlib.util.find_spec("lighter") is None:
+        pytest.skip("lighter SDK not installed (probe-venv only)")
+    r = subprocess.run([sys.executable, "-c", SIGN_PROOF.format(repo=str(REPO))], capture_output=True, text=True, timeout=60)
+    line = next((x for x in r.stdout.splitlines() if x.startswith("RESULT")), None)
+    assert line, r.stderr[-2000:]
+    out = json.loads(line[6:])
+    for mid in ("12572", "12808", "40000", str(2 ** 40), "254"):
+        assert out[mid] == {"ok": True, "err": None}, (mid, out[mid])
+    assert out["255"]["err"] == "MarketIndex is not valid" and out[str(2 ** 48)]["err"] == "MarketIndex is not valid"
+    assert out["12808_28day_expiry"] == {"ok": False, "err": "OrderExpiry is invalid"}
+    assert out["sign_check_12808"] == [True, None]
+
+
+def test_pinned_lighter_sdk_is_the_binary_capable_one():
+    v, commit = R.lighter_sdk_installed()
+    if v is None:
+        pytest.skip("lighter SDK not installed (probe-venv only)")
+    assert (v, commit) == (R.LIGHTER_SDK_VERSION, R.LIGHTER_SDK_COMMIT) == ("1.1.8", "56b3537cd311117a5a665d74db4c2cce7da155de")
+
+
+def test_live_refuses_an_older_lighter_sdk(monkeypatch):
+    monkeypatch.setattr(R, "lighter_sdk_installed", lambda: ("1.1.2", "fd4ee2530f78940cbed3dd80131d0fa66f74ad2a"))
+    bad = R.verify_pins()
+    assert any("lighter-sdk 1.1.2" in b and "MarketIndex is not valid" in b for b in bad)
+
+
+class RecSigner:
+    """Signer stand-in with the SDK's constants; records create_order / sign_create_order kwargs."""
+    ORDER_TYPE_LIMIT, ORDER_TYPE_MARKET = 0, 1
+    ORDER_TIME_IN_FORCE_IMMEDIATE_OR_CANCEL, ORDER_TIME_IN_FORCE_GOOD_TILL_TIME, ORDER_TIME_IN_FORCE_POST_ONLY = 0, 1, 2
+    DEFAULT_IOC_EXPIRY, DEFAULT_28_DAY_ORDER_EXPIRY = 0, -1
+
+    def __init__(self, err=None):
+        self.calls, self.err = [], err
+
+    def create_order(self, **kw):
+        self.calls.append(("create_order", kw))
+        return (None, None, self.err) if self.err else (object(), "0xtxhash", None)
+
+    def sign_create_order(self, **kw):
+        self.calls.append(("sign_create_order", kw))
+        return (None, None, None, self.err) if self.err else (14, "{signed}", "h", None)
+
+
+def binary_client(signer):
+    import threading
+    cls = R.binary_client_class()
+    B = cls.B
+    c = cls.__new__(cls)
+    mk = B.Market(symbol="BTC-UPDOWN-15M-1795700700", market_id=12808, price_decimals=2, size_decimals=4, min_base_amount=5.0,
+                  min_quote_amount=0.0)
+    c._signer, c._lock, c._submitted = signer, threading.Lock(), {}
+    c._config = type("C", (), dict(api_key_index=4))()
+    c.get_markets = lambda: {mk.symbol: mk}
+    c.add_market = lambda mid: mk
+    c._with_retries = lambda desc, f: f()
+    c._id_gen = type("G", (), dict(next=lambda self: 4242))()
+    return c, B
+
+
+def statarb_available():
+    return (R.STATARB_DIR / "statarb" / "exchange" / "lighter_client.py").exists() and __import__("importlib").util.find_spec("lighter")
+
+
+@pytest.mark.skipif(not statarb_available(), reason="Stat_Arb + lighter SDK not on this machine")
+def test_ioc_is_sent_with_nil_expiry_on_the_binary_market():
+    sig = RecSigner()
+    c, B = binary_client(sig)
+    res = c.place_order(B.OrderRequest(symbol="BTC-UPDOWN-15M-1795700700", side=B.OrderSide.SELL, size=5.0, order_type=B.OrderType.IOC,
+                                       limit_price=0.45))
+    (name, kw), = sig.calls
+    assert name == "create_order" and kw == dict(market_index=12808, client_order_index=4242, base_amount=50000, price=45, is_ask=True,
+                                                 order_type=0, time_in_force=0, reduce_only=False, trigger_price=0, order_expiry=0)
+    assert res.status is B.OrderStatus.NEW and res.exchange_order_id == "0xtxhash"
+    # the sign-only check signs exactly the same fields (plus an explicit nonce: no nonce fetch), never create_order
+    sig2 = RecSigner()
+    c2, _ = binary_client(sig2)
+    assert c2.sign_check(12808, 5.0, 0.45, is_ask=True) == (True, None)
+    (name2, kw2), = sig2.calls
+    assert name2 == "sign_create_order" and kw2.pop("nonce") == R.SIGN_CHECK_NONCE and kw2.pop("api_key_index") == 4
+    assert {k: v for k, v in kw2.items() if k != "client_order_index"} == {k: v for k, v in kw.items() if k != "client_order_index"}
+
+
+@pytest.mark.skipif(not statarb_available(), reason="Stat_Arb + lighter SDK not on this machine")
+def test_signer_rejection_is_marked_local():
+    import types
+    c, B = binary_client(RecSigner(err="MarketIndex is not valid"))
+    lv = R.LighterLive.__new__(R.LighterLive)
+    lv.c, lv.B = c, B
+    w = types.SimpleNamespace(e=1795700700, mid=12808)
+    r = run(lv.ioc(w, False, 0.45, 5.0))
+    assert r["status"] == "rejected" and r["local"] is True and r["reason"] == "MarketIndex is not valid" and r.get("tx") in (None, "None")
+    c2, _ = binary_client(RecSigner(err="21120: not enough margin"))  # a venue rejection: not deterministic-local
+    lv.c = c2
+    assert run(lv.ioc(w, False, 0.45, 5.0))["local"] is False
+
+
+@pytest.mark.parametrize("reason,local", [
+    ("MarketIndex is not valid", True), ("OrderExpiry is invalid", True), ("BaseAmount should not be less than 1", True),
+    ("size 2.0 below market minimum base amount 5.0", True), ("ClientOrderIndex should be unique within the group", True),
+    ("21120: not enough margin", False), ("HTTP 429 too many requests", False), (None, False), ("", False)])
+def test_local_reject_classifier(reason, local):
+    assert R.is_local_reject(reason) is local
+
+
+# ---------------------------------------------------------------- item 4: deterministic local rejection -> halt once
+def test_lighter_local_reject_halts_after_the_first_trigger(tmp_path):
+    class Rej(FakeL):
+        async def ioc(self, w, is_buy_up, price, size):
+            self.calls.append(dict(price=price))
+            return dict(venue="lighter", status="rejected", local=True, filled=0.0, reason="MarketIndex is not valid", coid=1,
+                        t_send=time.time(), t_ack=time.time())
+    L = Rej()
+    pr = make_probe(tmp_path, L, FakePM())
+    w = make_window(pr)
+    run(pr.execute(w, "t1", "a", 0.19, 5.0, "DOWNTOK", {}))
+    assert pr.halted == "lighter_local_reject"
+    (h,) = records(tmp_path, "halt")
+    assert h["reason"] == "lighter_local_reject" and h["id"] == "t1" and h["error"] == "MarketIndex is not valid"
+    pr.persist.update(t2=True, t3=True)
+    pr.on_displayed(w, "t2", "a", 0.19)
+    pr.on_displayed(w, "t3", "a", 0.19)
+    assert len(L.calls) == 1 and [s["reason"] for s in records(tmp_path, "skip")] == ["halted", "halted"]
+
+
+def test_venue_rejection_does_not_halt(tmp_path):
+    class Rej(FakeL):
+        async def ioc(self, w, is_buy_up, price, size):
+            self.calls.append(1)
+            return dict(venue="lighter", status="rejected", local=False, filled=0.0, reason="21120: not enough margin", coid=1)
+    pr = make_probe(tmp_path, Rej(), FakePM())
+    run(pr.execute(make_window(pr), "t1", "a", 0.19, 5.0, "DOWNTOK", {}))
+    assert pr.halted is None and not records(tmp_path, "halt")
+
+
+def test_pm_local_reject_unwinds_then_halts_without_retrying(tmp_path):
+    class LocalPM(FakePM):
+        async def fak_buy(self, token, price, size):
+            self.calls.append(dict(price=price))
+            return dict(venue="pm", status="rejected", local=True, shares=0.0, cost=0.0, reason="ValueError('invalid tick size')")
+    L = FakeL([("filled", 5.0, 0.19), ("filled", 5.0, 0.17)])
+    PM = LocalPM()
+    pr = make_probe(tmp_path, L, PM)
+    run(pr.execute(make_window(pr), "t1", "a", 0.19, 5.0, "DOWNTOK", {}))
+    assert len(PM.calls) == 1  # no retries
+    assert records(tmp_path, "unwind")[0]["qty"] == 5.0 and records(tmp_path, "unhedged")
+    assert pr.halted == "pm_local_reject" and records(tmp_path, "halt")[0]["reason"] == "pm_local_reject"
+
+
+def test_window_sign_check_failure_halts_before_any_trade(tmp_path, monkeypatch):
+    class SignFail(FakeL):
+        async def sign_check(self, mid, size=5, price=0.5, is_ask=False):
+            return False, "MarketIndex is not valid"
+    pr = make_probe(tmp_path, SignFail(), FakePM())
+    w = make_window(pr)
+    monkeypatch.setattr(P, "http_json", lambda url: {"min_order_size": 5, "tick_size": 0.01, "market": "0xc", "neg_risk": False})
+    run(pr.prepare_window(w))
+    assert pr.halted == "lighter_sign_reject"
+    h = records(tmp_path, "halt")[0]
+    assert h["market_id"] == w.mid and "MarketIndex" in h["error"] and records(tmp_path, "meta")[0]["sign_check"] == "MarketIndex is not valid"
+    pr.persist["t1"] = True
+    pr.on_displayed(w, "t1", "a", 0.19)
+    assert not pr.lv.calls and records(tmp_path, "skip")[0]["reason"] == "halted"
+
+
+def test_window_sign_check_ok_is_logged(tmp_path, monkeypatch):
+    class SignOk(FakeL):
+        async def sign_check(self, mid, size=5, price=0.5, is_ask=False):
+            return True, None
+    pr = make_probe(tmp_path, SignOk(), FakePM())
+    monkeypatch.setattr(P, "http_json", lambda url: {"min_order_size": 5, "tick_size": 0.01, "market": "0xc", "neg_risk": False})
+    run(pr.prepare_window(make_window(pr)))
+    assert pr.halted is None and records(tmp_path, "meta")[0]["sign_check"] == "ok"
+
+
+def test_check_mode_sign_only_step(tmp_path):
+    L = CheckL()
+    res = run(R.account_check(L, CheckPM(), R.Ledger("live"), http=fake_http(), now=1795700700 + 100))
+    sc = res["lighter_btc15m"]["sign_check"]
+    assert sc["ok"] is True and sc["submitted"] is False and L.signed == [13001] and res["lighter_btc15m"]["checks"]["signs_ioc"]
+    L2 = CheckL()
+    L2.sign_result = (False, "MarketIndex is not valid")
+    res2 = run(R.account_check(L2, CheckPM(), R.Ledger("live"), http=fake_http(), now=1795700700 + 100))
+    assert not res2["ok"] and res2["lighter_btc15m"]["sign_check"]["error"] == "MarketIndex is not valid"
+    assert "lighter btc15m not tradable: signs_ioc" in res2["problems"] and not L2.calls
+
+
+# ---------------------------------------------------------------- item 5: paper simulation labelled in the probe log
+def test_paper_records_are_labelled_simulated(tmp_path):
+    pr = make_probe(tmp_path)
+    pr.log("hedge", id="t", window=1, side="a", hedged=True, pm_px=0.5, qty=50.0, pnl_per_share=0.02)
+    pr.log("settle", window=1, pm_winner="UP", paper_pnl_usd=1.0)
+    assert not records(tmp_path, "hedge") and not records(tmp_path, "settle")
+    (h,) = records(tmp_path, "paper_hedge")
+    (s,) = records(tmp_path, "paper_settle")
+    assert h["sim"] is True and s["sim"] is True and pr.settled[1]["paper_pnl_usd"] == 1.0  # still drives probe_settle
+    led = R.Ledger("live").replay(tmp_path)
+    assert led.realised_today() == 0.0  # simulated P&L never enters the probe's ledger

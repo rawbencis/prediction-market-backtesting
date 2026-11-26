@@ -3,7 +3,9 @@
     python3 lp_arb/probe_vs_paper.py --day 2026-11-27 [--probe ~/lp-arb/probe] [--paper ~/lp-arb/paper]
                                      [--mode live|dry] [--json out.json]
 
-Joins PROBE/DAY.jsonl with PAPER/DAY.jsonl by trigger id. The two processes run separate sockets, so ids (which carry
+Joins PROBE/DAY.jsonl with PAPER/DAY.jsonl by trigger id. The probe log's inherited paper-model records (`paper_hedge`,
+`paper_settle`, `sim: true`; `hedge`/`settle` in logs written before 2026-11-26) are simulated and are excluded; their
+count is reported. Paper's model comes only from PAPER/DAY.jsonl. The two processes run separate sockets, so ids (which carry
 the trigger millisecond) rarely agree exactly; unmatched ids are then paired by (window, side, |dt| <= 250 ms),
 nearest first, one-to-one, and the report says how many pairs came from each rule. Both sides are restricted to the
 probe's uptime (probe_start .. probe_stop segments, 5 s margins); paper triggers outside it are only counted.
@@ -99,7 +101,16 @@ def med(v):
     return round(statistics.median(v), 3) if v else None
 
 
+SIM_KINDS = {"paper_hedge", "paper_settle", "hedge", "settle"}  # the probe log's inherited paper model (old logs: hedge/settle)
+
+
+def is_sim(r):
+    return bool(r.get("sim")) or r.get("kind") in SIM_KINDS
+
+
 def summarise(probe, paper, mode="live"):
+    sim = [r for r in probe if is_sim(r)]
+    probe = [r for r in probe if not is_sim(r)]  # simulated paper records are never the probe's trades
     ofmode = [r for r in probe if r.get("mode") in (None, mode)]  # trigger/check have no mode; execution records do
     by = collections.defaultdict(list)
     for r in ofmode:
@@ -117,7 +128,7 @@ def summarise(probe, paper, mode="live"):
     qhedge = {r["id"]: r for r in qrecs["hedge"]}
     m, only_probe, only_paper = join(list(ptrig.values()), list(qtrig.values()))
 
-    out = dict(mode=mode, uptime=dict(segments=len(up), minutes=round(sum(b - a for a, b in up) / 60, 1),
+    out = dict(mode=mode, sim_records_excluded=dict(collections.Counter(r["kind"] for r in sim)), uptime=dict(segments=len(up), minutes=round(sum(b - a for a, b in up) / 60, 1),
                                       paper_triggers_outside=len(qall) - len(qtrig)),
                triggers=dict(probe=len(ptrig), paper=len(qtrig), both=len(m),
                                         both_exact=sum(1 for v in m.values() if v[1] == "exact"),

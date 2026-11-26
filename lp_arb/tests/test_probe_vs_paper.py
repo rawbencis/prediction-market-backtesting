@@ -130,3 +130,16 @@ def test_cli_writes_json(tmp_path, capsys):
     out = tmp_path / "s.json"
     V.main(["--day", day, "--probe", str(tmp_path / "probe"), "--paper", str(tmp_path / "paper"), "--json", str(out)])
     assert json.loads(out.read_text())["pairs"]["n"] == 3 and "unhedged: 1" in capsys.readouterr().out
+
+
+def test_simulated_paper_records_in_the_probe_log_are_excluded():
+    probe, paper, (A, B, C, D) = build()
+    fake = [dict(kind="paper_hedge", t_local=T0 + 11, id=A, sim=True, hedged=True, qty=50.0, pnl_per_share=0.5, pnl_usd=25.0),
+            dict(kind="hedge", t_local=T0 + 12, id=A, hedged=True, qty=50.0, pnl_per_share=0.5, pnl_usd=25.0),  # legacy log
+            dict(kind="paper_settle", t_local=T0 + 13, window=E, sim=True, paper_pnl_usd=25.0, realised_usd=99.0),
+            dict(kind="pair", t_local=T0 + 14, id="simpair", window=E, side="a", mode="live", sim=True, qty=5.0, lighter_px=0.5,
+                 pm_px=0.4, attempts=1, pnl_usd=9.0, realised_usd=9.0, pnl_per_share=1.8)]
+    base = V.summarise(probe, paper, "live")
+    s = V.summarise(probe + fake, paper, "live")
+    assert s["sim_records_excluded"] == {"paper_hedge": 1, "hedge": 1, "paper_settle": 1, "pair": 1}
+    assert s["pairs"]["n"] == base["pairs"]["n"] == 3 and s["realised_usd"] == base["realised_usd"]

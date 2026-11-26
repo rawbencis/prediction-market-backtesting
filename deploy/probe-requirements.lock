@@ -32,7 +32,7 @@ hyperframe==6.1.0
 idna==3.20
 iniconfig==2.3.1
 jmespath==1.1.0
-lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@fd4ee2530f78940cbed3dd80131d0fa66f74ad2a
+lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@56b3537cd311117a5a665d74db4c2cce7da155de
 multidict==7.2.1
 packaging==26.4
 parsimonious==0.10.0
