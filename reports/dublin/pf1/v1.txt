@@ -1,0 +1,6 @@
+lag 300 ms | pf1_dublin: triggers 30, PM fills 30, P&L $8.2981 (expect >0) OK
+lag 300 ms | pf1_tokyo: triggers 30, PM fills 0, P&L $0.0 (expect <=0) OK
+lag 300 ms | lighter_first_tokyo: triggers 30, PM fills 30, P&L $-3.7499 (expect <=0) OK
+lag 100 ms | pf1_dublin: triggers 30, PM fills 0, P&L $0.0 (expect <=0) OK
+lag 100 ms | pf1_tokyo: triggers 30, PM fills 0, P&L $0.0 (expect <=0) OK
+lag 100 ms | lighter_first_tokyo: triggers 30, PM fills 30, P&L $-3.7499 (expect <=0) OK
