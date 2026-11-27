@@ -1,0 +1,33 @@
+{
+  "name": "M2-1 tail side of the final minute (mirror of D2-2)",
+  "registered": "2026-11-27, before any M2-1 run; brief 2026-11-27 (Dublin box)",
+  "markets": [
+    {"asset": "btc", "tf": 5, "fee": 0.05},
+    {"asset": "btc", "tf": 15, "fee": 0.05},
+    {"asset": "eth", "tf": 5, "fee": 0.01}
+  ],
+  "fee_note": "fee per share = fee * p * (1 - p), flat post-2026-11-21 rates on all ten days (the real pre-switch fee was 0.07; a sensitivity row at 0.07 for 11-14..20 is reported, not used for the pick). The brief gives 0.05 for BTC 15m and 0.01 for ETH 5m; BTC 5m uses 0.05 (its post-switch rate).",
+  "dev_days": ["2026-11-14", "2026-11-15", "2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-21", "2026-11-22", "2026-11-23"],
+  "halves": [["2026-11-14", "2026-11-18"], ["2026-11-19", "2026-11-23"]],
+  "samples": "dublin1124/d2_samples.py --final: 1 s samples from 60 to 5 s left; only rows with a finite fvcl (Chainlink stream as S, twap60 at the start second as K). The Binance-based z / phi / mv1 fields are not used (R-D3 embargo).",
+  "eligible": "side ask <= 0.30 with >= 5 shares shown",
+  "fair_value": "fvcl of the side",
+  "cells": {
+    "gap_g_cents": "g = FV - ask - fee*ask*(1-ask)",
+    "g_buckets": [[5, 10], [10, 20], [20, null]],
+    "seconds_left": [[40, 60], [20, 40], [5, 20]],
+    "seconds_left_rule": "lo < tau <= hi",
+    "ask_buckets_cents": [[0, 5], [5, 15], [15, 30]],
+    "ask_rule": "lo < ask <= hi (0-5 includes ask <= 5)",
+    "per_market": 27,
+    "also": "the same grid split by strike-gap sign: kgap = 1e4 (K - Chainlink(start)) / Chainlink(start), signed so positive favours the side; toward = kgap > 0, against = kgap <= 0"
+  },
+  "trade": "one FAK per window per side per cell at the first sample in the cell; matched at t + 205 ms against the standing top of book (fills if that ask <= the limit with >= 5 shown, pays that ask); pessimistic fill = the paid price still shows >= 5 shares at t + 305 ms. Extra rows: match at t + 330 ms, pessimistic at t + 430 ms (separate sampler run with MATCH_MS=330, PESS_MS=430).",
+  "per_cell": ["windows", "fill rate", "mean ask", "mean FV", "win rate", "edge_net c/share = win - paid - fee p(1-p) over filled", "ROI per $ = sum(win) / sum(paid + fee) - 1", "SE by window floored at the binomial SE at the paid price", "both halves", "pessimistic edge", "smallest edge detectable at 2.5 SE"],
+  "freeze_rule": "at most 2 cells over all markets and both grids (unsplit and strike-gap split): >= 30 filled windows on the ten days, edge_net > 0 with t >= 2.5, edge_net > 0 in both halves, pessimistic edge_net > 0. If more than 2 qualify, take the 2 with the largest t. If none: M2 closed, no holdout.",
+  "holdout": {
+    "days": "the first 14 fully recorded days (24 act, pm and twap60/chainlink hour files) from 2026-11-29",
+    "read": "once, on or after 2026-12-13",
+    "pass": "edge_net >= +3 c/share with t >= 2, pessimistic edge_net > 0, >= 40 fills"
+  }
+}
