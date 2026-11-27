@@ -1,0 +1,25 @@
+{
+  "name": "PF1_holdout_rule",
+  "written_utc": "2026-11-27",
+  "decision": "operator: keep the frozen pick (frozen/PF1_pick.json, commit f4658ec) unchanged; conservative holdout amendment registered before 2026-12-05 and before any holdout data is opened",
+  "pick": "unchanged: th 6c, L 0, timing a, M 1c, Lighter view lag 120 ms, PM hold 320, unwind sell, q5, competitor term on",
+  "holdout_days": [
+    "2026-11-28",
+    "2026-11-29",
+    "2026-11-30",
+    "2026-12-01",
+    "2026-12-02",
+    "2026-12-03",
+    "2026-12-04"
+  ],
+  "criteria": "from frozen/PF1_plan.json holdout_pass_all: c/share per attempted share >= +2.0 including unwinds; 90% lower bound of $/day > 0; >= 100 attempts; >= 5 of 7 days positive",
+  "pass_requires_both": {
+    "as_is": "all attempts of the pick, as the frozen model scores them",
+    "clean_books": "only attempts whose Polymarket book in force at the entry match is <= 2000 ms old (match exchange time - exchange time of the last Dublin book row); other attempts are removed; windows, days and the window bootstrap (4000, seed 0) are unchanged, so windows with only stale attempts count as $0"
+  },
+  "PASS": "both as_is and clean_books meet every criterion; otherwise FAIL",
+  "report_alongside": "book-age diagnostic: p50/p90/p99 of book age at match; attempts and $ on books > 1 / 2 / 5 s old",
+  "book_age_scope": "entry match only (unwind sells are not filtered)",
+  "code": "pf1/holdout_eval.py (with pf1/stale_diag.ages, pf1/agg.table) in the commit adding this file; dry-run on validation days only reproduces the report (clean +0.37 c/sh)",
+  "usage": "python -I pf1/holdout_eval.py --days 2026-11-28 ... 2026-12-04 --out reports/dublin/pf1/holdout_verdict.json (after run_days.sh on the holdout days, on/after 2026-12-05, after the Lighter re-export)"
+}

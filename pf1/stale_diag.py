@@ -12,19 +12,15 @@ sys.path.insert(0, str(Path(__file__).parent))
 from engine import Static  # noqa: E402
 from sim import Lat, iter_windows  # noqa: E402
 
+PICK = "th=6,L=0,timing=a,M=1,lag=120,hold=320,unwind=sell,clip=q5"  # frozen/PF1_pick.json
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--days", nargs="+", required=True)
-    ap.add_argument("--res", type=Path, default=Path.home() / "pf1-cache" / "res")
-    ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--cell", default="th=6,L=0,timing=a,M=1,lag=120,hold=320,unwind=sell,clip=q5")
-    a = ap.parse_args()
-    cell = dict(kv.split("=") for kv in a.cell.split(","))
+
+def ages(days, res, cell):
+    """-> DataFrame (day, e, t, pnl, q, f_pm, age_ms) for the attempts of `cell` (dict of attempt-column -> str value)."""
     st = Static(str(Path(__file__).parent.parent / "reports" / "dublin" / "fees_by_window.csv"))
     out = []
-    for d in a.days:
-        A = pd.read_csv(a.res / f"attempts-{d}.csv.gz")
+    for d in days:
+        A = pd.read_csv(res / f"attempts-{d}.csv.gz")
         for k, v in cell.items():
             A = A[A[k].astype(str) == v]
         lat = Lat(pm_hold=float(cell["hold"]))
@@ -36,8 +32,17 @@ def main():
                 i = w.pm.at(m)
                 out.append(dict(day=d, e=w.e, t=r.t, pnl=r.pnl, q=r.q, f_pm=r.f_pm, age_ms=m - w.pm.tx[i] if i >= 0 else float("nan")))
         del A
-    pd.DataFrame(out).to_csv(a.out, index=False)
+    return pd.DataFrame(out, columns=["day", "e", "t", "pnl", "q", "f_pm", "age_ms"])
 
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--days", nargs="+", required=True)
+    ap.add_argument("--res", type=Path, default=Path.home() / "pf1-cache" / "res")
+    ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--cell", default=PICK)
+    a = ap.parse_args()
+    ages(a.days, a.res, dict(kv.split("=") for kv in a.cell.split(","))).to_csv(a.out, index=False)
 
 if __name__ == "__main__":
     main()
