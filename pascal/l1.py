@@ -649,6 +649,7 @@ def cmd_replay(days, rest):
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", required=True)
     ap.add_argument("--asset", default="both")
+    ap.add_argument("--pick", action="store_true", help="run only the frozen pick cell (implied by --tag holdout)")
     a = ap.parse_args(rest)
     if a.tag == "holdout":
         assert (REPO / "frozen" / "L1_pick.json").exists(), "push frozen/L1_pick.json first"
@@ -658,9 +659,10 @@ def cmd_replay(days, rest):
 
     census, outs = fz.load_census(), outcomes()
     cells = cell_list()
-    if a.tag == "holdout":
+    if a.tag == "holdout" or a.pick:
         pk = json.loads((REPO / "frozen" / "L1_pick.json").read_text())
         cells = [tuple(pk["cell_tuple"])]
+        a.asset = pk["asset"]
     allrows = []
     for ai in ((0, 1) if a.asset == "both" else (ASSETS.index(a.asset),)):
         eps, res = [], {}
@@ -955,11 +957,13 @@ def cmd_devsum(days, rest):
 
 
 def cmd_holdsum(days, rest):
-    df = _load_cells("holdout")
+    tags = [d for d in days if not d[:4].isdigit()] + list(rest)
+    days = [d for d in days if d[:4].isdigit()]
+    df = _load_cells(tags[0] if tags else "holdout")
     pk = json.loads((REPO / "frozen" / "L1_pick.json").read_text())
     ps = pk["pass"]
     r = df[(df.Q == 30.0) & (df.asset == pk["asset"]) & (df.cell == pk["cell"])].iloc[0]
-    n = len(HOLD)
+    n = len(days) if days else len(HOLD)
     checks = {
         "settle >= 1.0¢/share": bool(r.settle >= ps["c_per_share_settle_min"]),
         "90% lower bound > 0": bool(r.ci_lo > ps["lb90_gt"]),
