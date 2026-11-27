@@ -566,7 +566,12 @@ def build_windows(day, census=None, outs=None):
               np.where(buy, T["ba"], T["aa"]).astype(np.int64))
         W = outs.get((ai, int(e)), np.nan)
         rate, _ = fz.rate_for(ASSETS[ai], int(e), census)
-        ws.append(Win(ai, int(e), Lt, Pt, Tt, sigs[ai], W, rate))
+        lo, hi = int(e) * 1000.0 - 10_000, int(e) * 1000.0 + 900_000
+        sw = {}
+        for name, sg in sigs[ai].items():
+            a_, b_ = np.searchsorted(sg, [lo, hi])
+            sw[name] = sg[a_:b_].copy()
+        ws.append(Win(ai, int(e), Lt, Pt, Tt, sw, W, rate))
     return ws
 
 
@@ -851,6 +856,82 @@ def cmd_v2(days, rest):
     md = "\n".join(lines)
     print(md)
     (REPO / "reports" / "tokyo" / "l1" / "l1_v2.md").write_text(md + "\n")
+    return 0
+
+
+
+# ------------------------------------------------------------------ dev summary, pick, holdout verdict
+
+
+def _load_cells(tag):
+    import pandas as pd
+
+    return pd.read_csv(REPO / "reports" / "tokyo" / "l1" / f"l1_{tag}_cells.csv")
+
+
+def _fmt(df, cols):
+    lines = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
+    for _, r in df.iterrows():
+        vals = []
+        for c in cols:
+            v = r[c]
+            vals.append(f"{v:.2f}" if isinstance(v, float) else str(v))
+        lines.append("| " + " | ".join(vals) + " |")
+    return "\n".join(lines)
+
+
+COLS = ["asset", "cell", "fills_day", "shares_day", "vsfair", "mo1", "mo5", "mo30", "settle", "ci_lo", "ci_hi",
+        "usd_day", "days_pos", "msgs_per_s", "top3", "hedged"]
+
+
+def cmd_devsum(days, rest):
+    df = _load_cells("dev")
+    d30 = df[df.Q == 30.0].copy()
+    out = ["### L1 dev (11-11..11-20), 30-share quotes\n"]
+    d0 = d30[d30.D == 0]
+    stop = not (d0.mo5 > 0).any()
+    out.append(f"Cells: {len(d30)} (both assets). D = 0 cells with 5 s markout > 0: {(d0.mo5 > 0).sum()} of {len(d0)}. "
+               f"D = 300: {(d30[d30.D == 300].mo5 > 0).sum()} of {(d30.D == 300).sum()}.")
+    out.append(f"Stop-early rule (no D = 0 cell with 5 s markout > 0): **{'STOP — L1 closed' if stop else 'not triggered'}**.\n")
+    elig = d30[(d30.mo5 > 0) & (d30.shares_day >= 300)]
+    out.append(f"Eligible for the pick (5 s markout > 0 and >= 300 shares/day): {len(elig)} cells.\n")
+    out.append("Top 15 cells by 90% lower bound on ¢/share to settlement (all cells):\n")
+    out.append(_fmt(d30.sort_values("ci_lo", ascending=False).head(15), COLS))
+    out.append("\nBest cell per (asset, pull, D) by lower bound:\n")
+    g = d30.sort_values("ci_lo", ascending=False).groupby(["asset", "pull", "D"], as_index=False).head(1)
+    out.append(_fmt(g.sort_values(["asset", "D", "pull"]), COLS))
+    out.append("\nSame cells, no pull vs pull, settlement ¢/share (mean over fair, h, stop, repost) by asset and D:\n")
+    piv = d30.groupby(["asset", "D", "pull"]).agg(settle=("settle", "mean"), mo5=("mo5", "mean"),
+                                                  shares_day=("shares_day", "mean")).reset_index()
+    out.append(_fmt(piv, ["asset", "D", "pull", "settle", "mo5", "shares_day"]))
+    d5 = df[df.Q == 5.0]
+    out.append("\n5-share quotes: top 5 by lower bound:\n")
+    out.append(_fmt(d5.sort_values("ci_lo", ascending=False).head(5), COLS))
+    pick = None
+    if not stop and len(elig):
+        pick = elig.sort_values("ci_lo", ascending=False).iloc[0]
+        out.append(f"\n**Dev pick:** {pick['asset']} `{pick['cell']}` — settle {pick['settle']:.2f}¢/share "
+                   f"(90% CI {pick['ci_lo']:.2f} … {pick['ci_hi']:.2f}), 5 s markout {pick['mo5']:.2f}¢, "
+                   f"{pick['shares_day']:.0f} shares/day, ${pick['usd_day']:.2f}/day, days positive {pick['days_pos']}/10.")
+    else:
+        out.append("\n**Dev pick:** none (" + ("stop-early rule" if stop else "no eligible cell") + ").")
+    md = "\n".join(out)
+    (REPO / "reports" / "tokyo" / "l1" / "l1_dev_summary.md").write_text(md + "\n")
+    print(md)
+    if "--write-pick" in rest:
+        if pick is None:
+            obj = {"name": "L1_pick", "pick": None, "reason": "stop-early" if stop else "no eligible cell"}
+        else:
+            parts = pick["cell"].split("|")
+            rq = int(pick["repost"]) if pick["repost"] == pick["repost"] else None
+            ct = [pick["fair"], float(pick["h"]), pick["pull"], rq, int(pick["D"]), bool(pick["stop60"])]
+            obj = {"name": "L1_pick", "asset": pick["asset"], "cell": pick["cell"], "cell_tuple": ct,
+                   "dev": {k: (float(pick[k]) if isinstance(pick[k], (float, int, np.floating, np.integer)) else str(pick[k]))
+                           for k in COLS if k not in ("asset", "cell")},
+                   "rule": "frozen/L1_plan.json dev_pick", "holdout": HOLD, "parts": parts,
+                   "pass": json.loads((REPO / "frozen" / "L1_plan.json").read_text())["holdout_pass"]}
+        (REPO / "frozen" / "L1_pick.json").write_text(json.dumps(obj, indent=1) + "\n")
+        print("wrote frozen/L1_pick.json")
     return 0
 
 
