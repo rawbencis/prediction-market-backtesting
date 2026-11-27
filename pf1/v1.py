@@ -1,9 +1,9 @@
 """PF1 V1: synthetic window with a planted Polymarket lag. Lighter Up stays at 0.49/0.51 (100 shares). Every 30 s the
 Polymarket Up ask drops from 0.50 to 0.42 (50 shares) for CORRECT_MS, then returns. Side b (sell Up on Lighter at 0.49,
 buy Up on Polymarket at 0.42) clears > 4c after fees while it lasts.
-Expect: Polymarket-first from Dublin profits when the lag lasts 300 ms; the same order of legs from Tokyo does not
-(sees it 112 ms late and is ~110 ms further from London); Lighter-first from Tokyo (the probe) does not; nothing
-fills from Dublin if the lag lasts only 100 ms (taker hold 150 ms).
+Expect (amended latencies: Polymarket match = arrival + 320 ms): Polymarket-first from Dublin profits when the lag
+lasts 500 ms; the same order of legs from Tokyo does not (sees it 112 ms late and is ~110 ms further from London);
+Lighter-first from Tokyo (the probe) does not; nothing fills from Dublin if the lag lasts only 250 ms.
 Usage: python -I v1.py  (exit 1 if an expectation fails)"""
 import sys
 from pathlib import Path
@@ -35,6 +35,8 @@ def synth(correct_ms):
     as_ = np.c_[[r[3] for r in rows], np.zeros((m, 2))]
     bs = np.c_[np.full(m, 100.0), np.zeros((m, 2))]
     P = Side(x, bp, bs, ap, as_, view=x + 8)
+    from engine import Trades
+    P.trades = Trades(np.zeros((0, 7)))
     return Win(E, 0.05, P, L, True)
 
 
@@ -57,8 +59,8 @@ def run(correct_ms):
 
 def main():
     ok = True
-    for c, exp in ((300, dict(pf1_dublin=">0", pf1_tokyo="<=0", lighter_first_tokyo="<=0")),
-                   (100, dict(pf1_dublin="<=0", pf1_tokyo="<=0", lighter_first_tokyo="<=0"))):
+    for c, exp in ((500, dict(pf1_dublin=">0", pf1_tokyo="<=0", lighter_first_tokyo="<=0")),
+                   (250, dict(pf1_dublin="<=0", pf1_tokyo="<=0", lighter_first_tokyo="<=0"))):
         res = run(c)
         for k, (n, fills, pnl) in res.items():
             good = pnl > 0 if exp[k] == ">0" else pnl <= 1e-9

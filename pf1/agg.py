@@ -5,7 +5,7 @@ Per cell: attempts/day, Polymarket fill rate (attempts with any PM fill), Lighte
 pairs, unwinds (count, $), shares held to settlement, c/share per attempted share net of everything, $/day,
 90% CI of $/day by window bootstrap (4000 resamples of per-window $, windows with a known outcome, zero for windows
 without attempts; seed 0), days positive, share of $ from the last 2 minutes.
-Usage: python -I agg.py --days D1 D2 ... [--hold 150] [--unwind sell] [--clip q5] [--res ~/pf1-cache/res] [--csv out.csv]
+Usage: python -I agg.py --days D1 D2 ... [--hold 320] [--unwind sell] [--clip q5] [--res ~/pf1-cache/res] [--csv out.csv]
 """
 import argparse
 import sys
@@ -32,7 +32,7 @@ def boot(per_win, nwin, ndays, n=4000, seed=0):
     return float(np.percentile(s, 5)), float(np.percentile(s, 95))
 
 
-def table(A, W, days, hold=150, unwind="sell", clip="q5"):
+def table(A, W, days, hold=320, unwind="sell", clip="q5"):
     A = A[(A.hold == hold) & (A.unwind == unwind) & (A.clip == clip)]
     nd, nwin = len(days), len(W)
     rows = []
@@ -56,7 +56,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", nargs="+", required=True)
     ap.add_argument("--res", type=Path, default=Path.home() / "pf1-cache" / "res")
-    ap.add_argument("--hold", type=int, default=150)
+    ap.add_argument("--hold", type=int, default=320)
     ap.add_argument("--unwind", default="sell")
     ap.add_argument("--clip", default="q5")
     ap.add_argument("--csv", type=Path)

@@ -2,9 +2,12 @@
 
 For every live Lighter IOC the probe sent (status filled / nofill), start from the probe's own trigger (id, time, side,
 Lighter price, Polymarket price) and simulate: persistence at +250 ms and the +500 ms display check (Tokyo views:
-Lighter exchange + 2 ms, Polymarket exchange + 112 ms), Lighter IOC at +500 ms matched after the 300 ms taker hold,
-Polymarket FAK at the Lighter fill (+330 ms known, +1.6 ms) matched at send + 265 ms, limit ask + 3c, up to 4 attempts
-420 ms apart, then unwind on Lighter. Pass: per day, on live-paired triggers that the simulator also pairs,
+Lighter exchange + 2 ms, Polymarket exchange + 112 ms), Lighter IOC at +500 ms matched at send + 161 ms (measured
+send -> exchange tx), Polymarket FAK at the Lighter fill (+330 ms known, +1.6 ms) arriving in London at send + 115 ms
+and matched at arrival + 320 ms (live ack p50 ~435 ms - 115), with the competitor term (shares other takers took at our
+limit or better between arrival and match are removed first; the probe's own fills are excluded), limit ask + 3c,
+up to 4 attempts 420 ms apart, then unwind on Lighter. Latencies are fixed from measurement (amendment 2026-11-27),
+not fitted. Pass: per day, on live-paired triggers that the simulator also pairs,
 |sim - live| <= 1.5 c/share (pair P&L, share-weighted) and |median slippage sim - live| <= 2c.
 Usage: python -I v0.py [--probe ~/lighter-import/probe-1126-1127.jsonl.gz] [--out out.json]
 """
@@ -14,6 +17,8 @@ import gzip
 import json
 import statistics as st
 import sys
+
+import numpy as np
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,6 +44,29 @@ def load_probe(fp):
     return by, pmo
 
 
+def mark_own(wins, pmo):
+    """Mark the probe's own Polymarket fills in the Dublin trade feed (same token, taker BUY, price <= limit, exchange
+    time within [send, ack + 100 ms]) so they are not counted as competitors. -> shares excluded."""
+    n = 0.0
+    for orders in pmo.values():
+        for o in orders:
+            w = wins.get(o.get("window"))
+            if w is None or o.get("mode") != "live" or not o.get("shares"):
+                continue
+            T = w.pm.trades
+            tk = 1 if o["side"] == "a" else 0
+            left = float(o["shares"])
+            for j in np.flatnonzero((T.x >= o["t_send"] * 1000) & (T.x <= o["t_ack"] * 1000 + 100) & (T.tok == tk) & (T.side == 0)
+                                    & (T.p <= o["limit"] + 1e-9) & ~T.own):
+                if left <= 1e-6:
+                    break
+                if T.sz[j] <= left + 1e-3:
+                    T.own[j] = True
+                    left -= T.sz[j]
+                    n += T.sz[j]
+    return n
+
+
 def wmean(v, w):
     return sum(a * b for a, b in zip(v, w)) / sum(w) if v else float("nan")
 
@@ -48,12 +76,11 @@ def main():
     ap.add_argument("--probe", type=Path, default=Path.home() / "lighter-import" / "probe-1126-1127.jsonl.gz")
     ap.add_argument("--census", default=str(Path(__file__).parent.parent / "reports" / "dublin" / "fees_by_window.csv"))
     ap.add_argument("--out", type=Path)
-    ap.add_argument("--pm-match-ms", type=float, default=265.0, help="PM FAK matched at send + this (brief: 265)")
-    ap.add_argument("--l-match-ms", type=float, default=300.0, help="Lighter IOC matched at send + this (alt: 161 = exchange tx)")
     a = ap.parse_args()
     by, pmo = load_probe(a.probe)
     st_ = Static(a.census)
-    plat = ProbeLat(l_hold=a.l_match_ms, pm_match=a.pm_match_ms)
+    plat = ProbeLat()  # l_hold 161, pm_oneway 115, pm_hold 320, competitor term on
+    comp = collections.defaultdict(dict)
     jobs = collections.defaultdict(list)
     for i, g in by.items():
         lo, tr = g.get("l_order"), g.get("trigger")
@@ -65,6 +92,7 @@ def main():
     for day in sorted(jobs):
         eps = {g["trigger"]["window"] for _, g in jobs[day]}
         wins = {w.e: w for w in iter_windows(day, st_, only=eps)}
+        comp[day]["own_trades_excluded"] = mark_own(wins, pmo)
         for i, g in jobs[day]:
             tr, lo = g["trigger"], g["l_order"]
             w = wins.get(tr["window"])
@@ -72,7 +100,7 @@ def main():
                 rows.append(dict(id=i, day=day, missing=True))
                 continue
             q = float(lo["size"])
-            s = probe_replay(w, tr["t_local"] * 1000, tr["side"], tr["lighter_px"], tr["pm_px"], q, plat)
+            s = probe_replay(w, tr["t_local"] * 1000, tr["side"], tr["lighter_px"], tr["pm_px"], q, plat, comp[day])
             live_pair = g.get("pair")
             row = dict(id=i, day=day, side=tr["side"], q=q, live_l_filled=lo["status"] == "filled", sim_l_filled=s["f_l"] > 0,
                        live_persist=g.get("persist", {}).get("ok"), sim_persist=s["persist"], sim_disp500=s["disp500"],
@@ -110,6 +138,7 @@ def main():
             x["pass_cps"] = bool(both) and abs(x["sim_cps"] - x["target_cps"]) <= 1.5
             x["pass_slip"] = bool(both) and abs(x["sim_slip_median"] - x["target_slip"]) <= 2.0
             d[name] = x
+        d["competitor_term"] = {k: (round(v, 2) if isinstance(v, float) else v) for k, v in comp[day].items()}
         res[day] = d
     print(json.dumps(res, indent=1, default=str))
     if a.out:

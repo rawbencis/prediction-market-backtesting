@@ -105,7 +105,17 @@ def load_lighter(day, windows=None):
     if not fp.exists():
         return {}
     import pandas as pd
-    df = pd.read_csv(fp, dtype={"symbol": str})
+    cols = ["t_exch_ms", "t_recv_ms", "window_start"] + [f"{k}{j}" for j in (1, 2, 3) for k in ("bid", "bidsz", "ask", "asksz")]
+    parts = []
+    for ch in pd.read_csv(fp, usecols=cols, chunksize=500_000):  # chunked: only the wanted windows are kept
+        if windows is not None:
+            ch = ch[ch.window_start.isin(windows)]
+        if len(ch):
+            parts.append(ch)
+    if not parts:
+        return {}
+    df = pd.concat(parts, ignore_index=True)
+    del parts
     out = {}
     for e, g in df.groupby("window_start", sort=False):
         e = int(e)
@@ -153,14 +163,53 @@ def pm_side(chunks, e):
     x = np.maximum.accumulate(x)
     bs = np.nan_to_num(bs)
     as_ = np.nan_to_num(as_)
-    return Side(x, bp, bs, ap, as_, view=r)
+    sd = Side(x, bp, bs, ap, as_, view=r)
+    tr = np.concatenate([c["tr"][c["tr"][:, 2] == e] for c in chunks if c is not None and len(c["tr"])] or [np.zeros((0, 7))])
+    sd.trades = Trades(tr[np.argsort(tr[:, 1], kind="stable")])
+    return sd
+
+
+class Trades:
+    """Polymarket trades of one window (Dublin feed): exchange ms x, token (0 Up / 1 Down), taker side (0 BUY / 1 SELL),
+    price, size. `own` marks our own fills (V0 only), which are not competitors."""
+
+    def __init__(self, tr):
+        self.x, self.tok, self.side, self.p, self.sz = tr[:, 1], tr[:, 3], tr[:, 4], tr[:, 5], tr[:, 6]
+        self.own = np.zeros(len(self.x), dtype=bool)
+
+    def taken(self, token, buy, limit, t0, t1):
+        """Shares other takers took between exchange times (t0, t1] from the liquidity our order would take, priced in
+        our token: buying `token` at <= limit competes with takers buying it (p <= limit) and takers selling the other
+        token (1 - p <= limit), which hit the mirrored book; selling at >= limit, the reverse."""
+        if len(self.x) == 0 or t1 <= t0:
+            return 0.0
+        i0, i1 = np.searchsorted(self.x, t0, "right"), np.searchsorted(self.x, t1, "right")
+        if i1 <= i0:
+            return 0.0
+        sl = slice(i0, i1)
+        tk = 0 if token == "up" else 1
+        same, other = self.tok[sl] == tk, self.tok[sl] != tk
+        px = np.where(same, self.p[sl], 1 - self.p[sl])  # price in our token
+        if buy:
+            m = ((same & (self.side[sl] == 0)) | (other & (self.side[sl] == 1))) & (px <= limit + 1e-9)
+        else:
+            m = ((same & (self.side[sl] == 1)) | (other & (self.side[sl] == 0))) & (px >= limit - 1e-9)
+        m &= ~self.own[sl]
+        return float(self.sz[sl][m].sum())
+
+
+NO_TRADES = Trades(np.zeros((0, 7)))
 
 
 # ------------------------------------------------------------------ fills (strict: displayed size at <= limit)
-def walk(prices, sizes, q, ok):
-    """Fill up to q over levels where ok(price); -> (filled, [(px, sz), ...])."""
+def walk(prices, sizes, q, ok, taken=0.0):
+    """Fill up to q over levels where ok(price), after removing `taken` shares (other takers ahead of us) from the
+    best levels first; -> (filled, [(px, sz), ...])."""
     got, fills = 0.0, []
     for p, s in zip(prices, sizes):
+        if taken > 0 and not math.isnan(p) and s > 0 and ok(p):
+            cut = min(s, taken)
+            s, taken = s - cut, taken - cut
         if got >= q - 1e-9:
             break
         if math.isnan(p) or s <= 0 or not ok(p):
@@ -173,21 +222,57 @@ def walk(prices, sizes, q, ok):
     return got, fills
 
 
-def pm_buy(side, i, token, limit, q):
-    """Buy `token` ('up'|'down') on Polymarket at book index i, limit price, up to q."""
+def pm_buy(side, i, token, limit, q, taken=0.0):
+    """Buy `token` ('up'|'down') on Polymarket at book index i, limit price, up to q; `taken` = competitor shares
+    removed from the best levels (Trades.taken)."""
     if i < 0:
         return 0.0, []
     if token == "up":
-        return walk(side.ap[i], side.as_[i], q, lambda p: p <= limit + 1e-9)
-    return walk(1 - side.bp[i], side.bs[i], q, lambda p: p <= limit + 1e-9)
+        return walk(side.ap[i], side.as_[i], q, lambda p: p <= limit + 1e-9, taken)
+    return walk(1 - side.bp[i], side.bs[i], q, lambda p: p <= limit + 1e-9, taken)
 
 
-def pm_sell(side, i, token, q, floor=0.0):
+def pm_sell(side, i, token, q, floor=0.0, taken=0.0):
     if i < 0:
         return 0.0, []
     if token == "up":
-        return walk(side.bp[i], side.bs[i], q, lambda p: p >= floor - 1e-9)
-    return walk(1 - side.ap[i], side.as_[i], q, lambda p: p >= floor - 1e-9)
+        return walk(side.bp[i], side.bs[i], q, lambda p: p >= floor - 1e-9, taken)
+    return walk(1 - side.ap[i], side.as_[i], q, lambda p: p >= floor - 1e-9, taken)
+
+
+def pm_fill(side, token, buy, limit, q, t_arrive, t_match, comp=True, stats=None):
+    """Polymarket FAK arriving at exchange time t_arrive, matched at t_match on the book then in force, with the
+    competitor term: shares other takers took at our limit or better in (t_arrive, t_match] are removed first.
+    stats (dict, optional) accumulates 'taken' (removed) and 'book_drop' (size at our limit or better that the
+    displayed book itself lost between arrival and match, i.e. what the book already reflected)."""
+    i = side.at(t_match)
+    tr = getattr(side, "trades", NO_TRADES)
+    tk = tr.taken(token, buy, limit, t_arrive, t_match) if comp else 0.0
+    if stats is not None:
+        stats["taken"] = stats.get("taken", 0.0) + tk
+        stats["book_drop"] = stats.get("book_drop", 0.0) + max(0.0, avail(side, side.at(t_arrive), token, buy, limit)
+                                                                 - avail(side, i, token, buy, limit))
+        stats["orders"] = stats.get("orders", 0) + 1
+        stats["orders_hit"] = stats.get("orders_hit", 0) + (tk > 0)
+        if tk > 0:
+            f0 = (pm_buy(side, i, token, limit, q) if buy else pm_sell(side, i, token, q, limit))[0]
+            f1 = (pm_buy(side, i, token, limit, q, tk) if buy else pm_sell(side, i, token, q, limit, tk))[0]
+            stats["fill_lost"] = stats.get("fill_lost", 0.0) + f0 - f1
+            stats["orders_lost"] = stats.get("orders_lost", 0) + (f0 > 0 and f1 == 0)
+    if buy:
+        return pm_buy(side, i, token, limit, q, tk)
+    return pm_sell(side, i, token, q, limit, tk)
+
+
+def avail(side, i, token, buy, limit):
+    """Displayed size at `limit` or better over the top 3 levels for our order."""
+    if i < 0:
+        return 0.0
+    if buy:
+        px, sz = (side.ap[i], side.as_[i]) if token == "up" else (1 - side.bp[i], side.bs[i])
+        return walk(px, sz, 1e18, lambda p: p <= limit + 1e-9)[0]
+    px, sz = (side.bp[i], side.bs[i]) if token == "up" else (1 - side.ap[i], side.as_[i])
+    return walk(px, sz, 1e18, lambda p: p >= limit - 1e-9)[0]
 
 
 def l_trade(side, i, buy_up, limit, q):

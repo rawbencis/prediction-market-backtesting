@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
-from engine import (Book, MIN_SZ, Side, ViewIdx, fl, l_trade, load_lighter, load_pm_hour, pm_buy, pm_sell, pm_side, vwap)
+from engine import (Book, MIN_SZ, Side, ViewIdx, fl, l_trade, load_lighter, load_pm_hour, pm_fill, pm_side, vwap)
 
 START_OFFSET_MS = 5000.0
 END_GUARD_MS = 1250.0  # frozen: trigger + 1 s <= window end - 0.25 s
@@ -140,19 +140,23 @@ def triggers(w, pm_lag, l_lag, th, pause_ms=5000.0, strict=False):
 # ------------------------------------------------------------------ PF1 attempt
 @dataclass
 class Lat:
-    """Latencies (ms). Dublin defaults; the Tokyo variant is used only in the synthetic check."""
+    """Latencies (ms). Dublin defaults; the Tokyo variant is used only in the synthetic check.
+    Amendment 2026-11-27 (measured, not fitted): Polymarket matched at arrival in London + 320 ms (live ack p50 ~435 ms
+    from Tokyo - ~115 ms Tokyo->London); Lighter matched at arrival + 158 ms (Tokyo send -> exchange tx 161 ms, less
+    ~3 ms Tokyo->Lighter); competitor term on (engine.pm_fill)."""
     pm_send: float = 2.0  # trigger -> order leaves
     pm_oneway: float = 5.0  # box -> Polymarket matching engine
-    pm_hold: float = 150.0  # Polymarket taker hold ('live' scenario)
+    pm_hold: float = 320.0  # Polymarket: arrival -> match (primary; sensitivity 250, 400)
     pm_back: float = 5.0  # Polymarket -> box (fill known)
     l_oneway: float = 100.0  # box -> Lighter (Tokyo -> Dublin ~100 ms one way)
-    l_hold: float = 300.0  # Lighter standard taker hold
+    l_hold: float = 158.0  # Lighter: arrival -> match
+    comp: bool = True  # Polymarket competitor term
     l_back: float = 100.0
     after_pm_ms: float = 10.0  # (a): Lighter order sent at PM match + this
     unwind_gap: float = 50.0  # PM unwind sent at Lighter-no-fill known + this
 
 
-def pf1_attempt(w, tr, L, M, timing, q, lat, unwind="sell"):
+def pf1_attempt(w, tr, L, M, timing, q, lat, unwind="sell", stats=None):
     """One Polymarket-first attempt. -> dict with fills, unwinds and P&L (settled at the window's outcome)."""
     bk = Book(w.rate)
     a = tr.side == "a"
@@ -160,10 +164,11 @@ def pf1_attempt(w, tr, L, M, timing, q, lat, unwind="sell"):
     buy_up = a  # Lighter leg: side a buys Up at the ask, side b sells Up at the bid
     pm_lim = min(0.99, tr.ppx + L / 100)
     l_lim = tr.lpx + M / 100 if a else tr.lpx - M / 100
-    pm_match = tr.t + lat.pm_send + lat.pm_oneway + lat.pm_hold
+    pm_arr = tr.t + lat.pm_send + lat.pm_oneway
+    pm_match = pm_arr + lat.pm_hold
     f_pm, pf = (0.0, [])
     if pm_match <= w.end:
-        f_pm, pf = pm_buy(w.pm, w.pm.at(pm_match), token, pm_lim, q)
+        f_pm, pf = pm_fill(w.pm, token, True, pm_lim, q, pm_arr, pm_match, lat.comp, stats)
     bk.pm(token, pf)
     r = dict(e=w.e, t=tr.t, side=tr.side, edge=tr.edge, q=q, f_pm=f_pm, pm_px=vwap(pf), f_l=0.0, l_px=float("nan"), l_sent=False,
              unwind_usd=0.0, unwound=0.0, held=0.0, late=(w.end - tr.t) <= 120000)
@@ -185,9 +190,10 @@ def pf1_attempt(w, tr, L, M, timing, q, lat, unwind="sell"):
     if ex_pm > 1e-9:
         if unwind == "sell" and ex_pm >= MIN_SZ:
             known = (l_match + lat.l_back) if l_size > 0 else (pm_match + lat.pm_back)
-            um = known + lat.unwind_gap + lat.pm_oneway + lat.pm_hold
+            ua = known + lat.unwind_gap + lat.pm_oneway
+            um = ua + lat.pm_hold
             if um <= w.end:
-                got, sf = pm_sell(w.pm, w.pm.at(um), token, ex_pm)
+                got, sf = pm_fill(w.pm, token, False, 0.0, ex_pm, ua, um, lat.comp)
                 basis = sum(p * s for p, s in pf) / f_pm  # PM buy price per share; its fee per share below
                 fee_buy = w.rate * sum(p * (1 - p) * s for p, s in pf) / f_pm
                 cash0 = bk.cash
@@ -230,10 +236,12 @@ class ProbeLat:
     pm_view: float = 112.0
     persist_ms: float = 250.0
     l_send: float = 500.0
-    l_hold: float = 300.0
+    l_hold: float = 161.0  # Lighter matched at send + 161 (measured send -> exchange tx)
     l_known: float = 330.0  # Lighter fill known at Tokyo after send (measured median 330-335)
     pm_after_lfill: float = 1.6  # measured median 1.5-1.6
-    pm_match: float = 265.0  # matched at send + 265
+    pm_oneway: float = 115.0  # Tokyo -> London
+    pm_hold: float = 320.0  # arrival -> match (live ack p50 ~435 - 115)
+    comp: bool = True
     pm_retry: float = 420.0
     pm_attempts: int = 4  # live max: 4 attempts (1 + 3 retries)
     pm_over: float = 0.03
@@ -241,7 +249,7 @@ class ProbeLat:
     unwind_px: float = 0.05
 
 
-def probe_replay(w, t0, side, lpx, ppx_trig, q, plat):
+def probe_replay(w, t0, side, lpx, ppx_trig, q, plat, stats=None):
     """Simulate one probe execution from its trigger at t0 (Tokyo local ms): persistence, Lighter IOC, PM FAK with
     retries, unwind on Lighter. The trigger itself is the probe's (same id)."""
     a = side == "a"
@@ -278,12 +286,12 @@ def probe_replay(w, t0, side, lpx, ppx_trig, q, plat):
             continue
         ask = (1 - w.pm.bp[iv, 0]) if a else w.pm.ap[iv, 0]
         lim = min(0.99, ask + plat.pm_over)
-        m = s_k + plat.pm_match
+        m = s_k + plat.pm_oneway + plat.pm_hold
         r["attempts"] = k + 1
         last_send = s_k
         if m > w.end:
             break
-        got, f = pm_buy(w.pm, w.pm.at(m), token, lim, rem)
+        got, f = pm_fill(w.pm, token, True, lim, rem, s_k + plat.pm_oneway, m, plat.comp, stats)
         pf += f
         rem -= got
     r["f_pm"], r["pm_px"] = f_l - rem, vwap(pf)

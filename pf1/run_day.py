@@ -20,7 +20,7 @@ THS = (4, 5, 6)  # cents
 LS = (0, 1, 2)
 MS = (0, 1)
 TIMINGS = ("a", "b")
-HOLDS = (150, 250)  # Polymarket taker hold: 'live' scenario 150 ms; alt 250 ms
+HOLDS = (320, 250, 400)  # Polymarket arrival -> match (ms): primary 320 (measured, amendment 2026-11-27); sensitivity 250, 400
 UNWINDS = ("sell", "hold")
 CLIPS = ("q5", "cap200")
 FIELDS = ["day", "e", "lag", "th", "L", "M", "timing", "hold", "unwind", "clip", "t", "side", "edge", "q", "f_pm", "pm_px", "l_sent",
@@ -65,12 +65,12 @@ def main():
                         q = 5.0 if clip == "q5" else float(min(max(tr.lsz, 5.0), tr.psz, 200.0) // 1)
                         q = max(q, 5.0)
                         for hold in HOLDS:
-                            lat = Lat(pm_hold=float(hold))
+                            lat = Lat(pm_hold=float(hold))  # Lighter arrival + 158 ms, competitor term on (Lat defaults)
                             for L in LS:
                                 for M in MS:
                                     for tm in TIMINGS:
                                         for uw in UNWINDS:
-                                            if clip == "cap200" and (hold != 150 or uw != "sell"):
+                                            if clip == "cap200" and (hold != 320 or uw != "sell"):
                                                 continue  # capped size: primary hold and unwind only
                                             r = pf1_attempt(w, tr, L, M, tm, q, lat, uw)
                                             r.update(day=a.day, lag=lag, th=th, L=L, M=M, timing=tm, hold=hold, unwind=uw, clip=clip)

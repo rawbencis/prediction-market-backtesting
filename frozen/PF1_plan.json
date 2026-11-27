@@ -11,37 +11,143 @@
     "fees": "Polymarket rate * p(1-p) per share at each fill price, rate per window from reports/dublin/fees_by_window.csv (census), else 0.07 before 2026-11-21 00:00 UTC window start and 0.05 from then; Lighter 0.01 p(1-p)"
   },
   "splits": {
-    "dev": ["2026-11-14", "2026-11-15", "2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-21", "2026-11-22", "2026-11-23"],
+    "dev": [
+      "2026-11-14",
+      "2026-11-15",
+      "2026-11-16",
+      "2026-11-17",
+      "2026-11-18",
+      "2026-11-19",
+      "2026-11-20",
+      "2026-11-21",
+      "2026-11-22",
+      "2026-11-23"
+    ],
     "dev_note": "Dublin has no complete 11-24 (14 h): excluded",
-    "validation": ["2026-11-25", "2026-11-26", "2026-11-27"],
+    "validation": [
+      "2026-11-25",
+      "2026-11-26",
+      "2026-11-27"
+    ],
     "validation_note": "descriptive only, run after PF1_pick.json is pushed; 11-27 ends ~09:20 UTC",
-    "holdout": ["2026-11-28", "2026-11-29", "2026-11-30", "2026-12-01", "2026-12-02", "2026-12-03", "2026-12-04"],
+    "holdout": [
+      "2026-11-28",
+      "2026-11-29",
+      "2026-11-30",
+      "2026-12-01",
+      "2026-12-02",
+      "2026-12-03",
+      "2026-12-04"
+    ],
     "holdout_note": "read once on/after 2026-12-05, after the operator re-exports Lighter 11-28..12-04"
   },
   "execution_model": {
     "views_at_dublin": "Polymarket: Dublin's recorded receive time of each row (= exchange time + measured Dublin lag, per row); Lighter: exchange time + 2 ms + lag (lag 100 or 120 ms)",
     "trigger": "on every view update, pair cost after both fees >= threshold below $1 (side a: Lighter Up ask + PM Down ask (1 - Up bid); side b: Lighter Down (1 - Up bid) + PM Up ask), both books valid, min(Lighter top size, PM top size) >= 5, from window start + 5 s to window end - 1.25 s; 5 s pause after each attempt (either side); if both sides fire at once, the larger edge",
-    "pm_leg_first": "FAK buy of the PM token at seen ask + L c (<= 0.99), sent trigger + 2 ms, matched at send + 5 ms + PM taker hold (150 ms = 'live' scenario; also 250 ms) on the book in force at that exchange time; strict: fills only displayed size at <= limit over the top 3 levels",
-    "lighter_leg": "IOC at the trigger's Lighter price + M c (buy Up <= ask + M on side a; sell Up >= bid - M on side b); (a) sent at PM match + 10 ms with size = PM filled (no order if < 5), (b) sent with the PM order (trigger + 2 ms), size q; arrives +100 ms, matched after the 300 ms Lighter taker hold (send + 400 ms); strict fill over the top 3 levels",
-    "unwind_sell": "PM shares without a Lighter fill: taker sell at the PM bid, sent at Lighter-no-fill known at Dublin (Lighter match + 100 ms) + 50 ms, matched + 5 ms + hold, fee charged; (b) Lighter filled but PM not: close on Lighter at its bid/ask, sent when both results are known at Dublin, +100 ms, matched after its 300 ms hold, fee charged. Remainders < 5 shares (both venues' minimum) and anything the top 3 levels cannot absorb are held to settlement",
+    "pm_leg_first": "FAK buy of the PM token at seen ask + L c (<= 0.99), sent trigger + 2 ms, arrives at London + 5 ms, matched at arrival + PM hold (320 ms primary; 250 and 400 ms sensitivity) on the book in force at that exchange time, after the competitor term; strict: fills only displayed size at <= limit over the top 3 levels",
+    "lighter_leg": "IOC at the trigger's Lighter price + M c (buy Up <= ask + M on side a; sell Up >= bid - M on side b); (a) sent at PM match + 10 ms with size = PM filled (no order if < 5), (b) sent with the PM order (trigger + 2 ms), size q; arrives +100 ms, matched at arrival + 158 ms (Tokyo send -> exchange tx 161 ms, less ~3 ms Tokyo -> Lighter): send + 258 ms; strict fill over the top 3 levels",
+    "unwind_sell": "PM shares without a Lighter fill: taker sell at the PM bid, sent at Lighter-no-fill known at Dublin (Lighter match + 100 ms) + 50 ms, arrives + 5 ms, matched at arrival + the PM hold with the competitor term, fee charged; (b) Lighter filled but PM not: close on Lighter at its bid/ask, sent when both results are known at Dublin, +100 ms, matched at arrival + 158 ms, fee charged. Remainders < 5 shares (both venues' minimum) and anything the top 3 levels cannot absorb are held to settlement",
     "unwind_hold": "reported: unmatched shares held to settlement instead",
     "orders_after_window_end": "no fill",
-    "clip": "q = 5 shares (primary); also reported: q = min(Lighter top size, PM top size, 200) at the trigger (PM hold 150, unwind sell only)",
+    "clip": "q = 5 shares (primary); also reported: q = min(Lighter top size, PM top size, 200) at the trigger (PM hold 320, unwind sell only)",
     "pnl": "every leg booked as Up/Down shares with cash and fees; unwinds book proceeds; the window outcome settles the rest",
-    "per_attempted_share": "100 * sum(P&L) / sum(q over attempts), including unwinds and held residuals"
+    "per_attempted_share": "100 * sum(P&L) / sum(q over attempts), including unwinds and held residuals",
+    "pm_competitor_term": "at our match, shares that the Dublin trade feed shows other takers took at our limit or better between our arrival and our match (taker BUY of our token at <= limit, or taker SELL of the other token at 1 - p <= limit, which hits the mirrored book; the reverse for sells) are removed from the best levels first. Applied to every Polymarket fill (entries and unwind sells)"
   },
   "grid": {
-    "threshold_c": [4, 5, 6],
-    "L_c": [0, 1, 2],
-    "lighter_timing": ["a", "b"],
-    "M_c": [0, 1],
-    "lighter_view_lag_ms": [100, 120],
+    "threshold_c": [
+      4,
+      5,
+      6
+    ],
+    "L_c": [
+      0,
+      1,
+      2
+    ],
+    "lighter_timing": [
+      "a",
+      "b"
+    ],
+    "M_c": [
+      0,
+      1
+    ],
+    "lighter_view_lag_ms": [
+      100,
+      120
+    ],
     "cells": 72,
-    "primary_variant": {"pm_hold_ms": 150, "unwind": "sell", "clip": "q5"},
-    "also_reported": [{"pm_hold_ms": 250}, {"unwind": "hold"}, {"clip": "cap200"}]
+    "primary_variant": {
+      "pm_hold_ms": 320,
+      "unwind": "sell",
+      "clip": "q5",
+      "competitor_term": true,
+      "lighter_match_after_arrival_ms": 158
+    },
+    "also_reported": [
+      {
+        "pm_hold_ms": 250
+      },
+      {
+        "pm_hold_ms": 400
+      },
+      {
+        "unwind": "hold"
+      },
+      {
+        "clip": "cap200"
+      }
+    ]
   },
-  "report_per_cell": ["attempts/day", "PM fill rate", "Lighter fill rate", "pairs", "unwinds and their $", "c/share per attempted share net of everything", "$/day at 5 shares", "90% CI of $/day by window bootstrap (4000, seed 0)", "days positive", "share of $ from the last 2 minutes"],
+  "report_per_cell": [
+    "attempts/day",
+    "PM fill rate",
+    "Lighter fill rate",
+    "pairs",
+    "unwinds and their $",
+    "c/share per attempted share net of everything",
+    "$/day at 5 shares",
+    "90% CI of $/day by window bootstrap (4000, seed 0)",
+    "days positive",
+    "share of $ from the last 2 minutes"
+  ],
   "dev_pick": "among the 36 cells at Lighter view lag 120 ms (primary variant), the highest 90% lower bound of $/day among cells with >= 20 attempts/day; ties -> higher c/share. Written to frozen/PF1_pick.json with the code commit and pushed before the validation days are run",
   "stop_early": "if no dev cell (primary variant, either lag) has a positive c/share point estimate under (a) or (b): write PF1 up as closed, no pick",
-  "holdout_pass_all": ["frozen pick c/share per attempted share >= +2.0 including unwinds", "90% lower bound of $/day > 0", ">= 100 attempts", ">= 5 of 7 days positive"]
+  "holdout_pass_all": [
+    "frozen pick c/share per attempted share >= +2.0 including unwinds",
+    "90% lower bound of $/day > 0",
+    ">= 100 attempts",
+    ">= 5 of 7 days positive"
+  ],
+  "amendment_2026-11-27": {
+    "decision": "operator: option (B) plus measured latencies, not P&L-fitted ones",
+    "changes": [
+      "Polymarket fill: competitor term on (pm_competitor_term)",
+      "Polymarket match = arrival in London + 320 ms (live ack p50 ~435 ms from Tokyo - ~115 ms Tokyo->London); 250 and 400 ms as sensitivity rows (replaces 150 primary / 250 alt)",
+      "Lighter match = arrival + 158 ms (Tokyo send -> exchange tx 161 ms measured; replaces the 300 ms hold)"
+    ],
+    "v0_rerun_once": {
+      "2026-11-26": {
+        "sim_cps": -1.28,
+        "live_cps": -2.69,
+        "gap": 1.41,
+        "slip_median_sim": 9.0,
+        "slip_median_live": 9.0,
+        "pass": true
+      },
+      "2026-11-27": {
+        "sim_cps": -1.6,
+        "live_cps": -0.93,
+        "gap": 0.67,
+        "slip_median_sim": 8.0,
+        "slip_median_live": 7.5,
+        "pass": true
+      },
+      "outputs": "reports/dublin/pf1/v0_amended_summary.json, v0_amended_rows.json"
+    },
+    "v1": "rerun with planted lags 500 / 250 ms (was 300 / 100 for the 150 ms hold): all expectations OK (reports/dublin/pf1/v1.txt)",
+    "written_before": "any PF1 dev-day result was computed; committed and pushed before the dev run",
+    "unchanged": "triggers, grid (72 cells), views, unwind rules, fees, dev pick rule (lag 120, >= 20 attempts/day, highest 90% lower bound), stop-early rule, splits, holdout pass rules"
+  }
 }
