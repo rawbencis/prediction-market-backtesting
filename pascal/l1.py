@@ -231,6 +231,7 @@ def cmd_desc(days, rest):
             L = D.lb[D.lb["a"] == ai]
             for e in np.unique(L["e"]):
                 Le = L[L["e"] == e]
+                e = int(e)
                 Le = Le[np.argsort(Le["x"], kind="stable")]
                 x = Le["x"].astype(np.int64)
                 sel = t_on[(t_on >= e * 1000 - 7_200_000) & (t_on < e * 1000 + 898_000)]
@@ -747,6 +748,110 @@ def cmd_v1(days, rest):
     (REPO / "reports" / "tokyo" / "l1").mkdir(parents=True, exist_ok=True)
     (REPO / "reports" / "tokyo" / "l1" / "l1_v1.md").write_text(md + "\n\n" + json.dumps(checks) + "\n")
     return 0 if all(checks.values()) else 1
+
+
+
+# ------------------------------------------------------------------ V2: reproduce lighter_flips fair3
+
+
+def cmd_v2(days, rest):
+    import lighter_flips as lf
+
+    days = days or DEV
+    assert not set(days) & set(HOLD)
+    outs = outcomes()
+    ref, mine = [], []
+    from lp_arb import fees as fz
+
+    census = fz.load_census()
+    cont_ws = []
+    for day in days:
+        D = Day(day)
+        for ai, e in D.windows():
+            L = D.lb[(D.lb["a"] == ai) & (D.lb["e"] == e)]
+            L = L[np.argsort(L["l"], kind="stable")]
+            T = D.lt[(D.lt["a"] == ai) & (D.lt["e"] == e)]
+            T = T[np.argsort(T["l"], kind="stable")]
+            P = D.pm[(D.pm["a"] == ai) & (D.pm["e"] == e)]
+            P = P[np.argsort(P["l"], kind="stable")]
+            W = outs.get((ai, int(e)), np.nan)
+            # (1) the reference code itself
+            for r in lf.window(L, T, P, W, int(e)):
+                if r["rule"] == "fair3" and r["x"] == 0.70 and r["k"] == 1:
+                    ref.append(dict(r, asset=ASSETS[ai], e=int(e)))
+            # (2) the same one-shot orders through this engine (exchange clock, this engine's fill rule)
+            g = np.arange(int(e) * 1_000_000 + 5_000_000, (int(e) + 900) * 1_000_000, 250_000)
+            jp = np.searchsorted(P["l"], g, side="right") - 1
+            jpp = np.maximum(jp, 0)
+            pmid = (P["b"][jpp] + P["k"][jpp]) / 2e4 if len(P) else np.zeros(len(g))
+            pok = (jp >= 0) & (P["b"][jpp] > 0) & (P["k"][jpp] > P["b"][jpp]) if len(P) else np.zeros(len(g), bool)
+            Pv = P[(P["b"] > 0) & (P["k"] > P["b"])]
+            Pv = Pv[np.argsort(Pv["x"], kind="stable")]
+            px_, pm_ = Pv["x"].astype(np.float64), (Pv["b"] + Pv["k"]) / 2e4
+            Lx = L[np.argsort(L["x"], kind="stable")]
+            lx, lbb, lkk = Lx["x"].astype(np.float64), Lx["b1"] / 1e4, Lx["k1"] / 1e4
+            Ts = T[np.argsort(T["T"], kind="stable")]
+            tT, tp, tsz, tbuy = Ts["T"].astype(np.float64), Ts["p"] / 1e4, Ts["s"].astype(float), Ts["buy"].astype(bool)
+
+            def mid_x(t):
+                i = np.searchsorted(px_, t, side="right") - 1
+                return pm_[i] if i >= 0 else np.nan
+
+            for k, gi, fav in lf.flips(g, pmid, pok, 0.70):
+                if k != 1:
+                    continue
+                t0 = (int(g[gi]) + lf.PLACE_LAT) / 1000.0  # ms (their clock is local receive ~ our view)
+                if t0 >= (int(e) + 900) * 1000:
+                    continue
+                for who, side in (("fav", fav), ("dog", 1 - fav)):
+                    f0 = mid_x(t0 - LV_P)
+                    if f0 != f0:
+                        continue
+                    fair = f0 if side == 0 else 1 - f0
+                    q = math.floor((fair - 0.03) * 100 + 1e-9) / 100
+                    j = np.searchsorted(lx, t0, side="right") - 1
+                    if j < 0 or not (lkk[j] > lbb[j] > 0):
+                        continue
+                    bid_s, ask_s = (lbb[j], lkk[j]) if side == 0 else (1 - lkk[j], 1 - lbb[j])
+                    if q < 0.01 or q >= ask_s - 1e-9:
+                        continue
+                    first = q > bid_s + 1e-9
+                    for life in lf.LIVES:
+                        t_end = min(t0 + life * 1000, (int(e) + 900) * 1000.0)
+                        sells = ~tbuy if side == 0 else tbuy
+                        pside = tp if side == 0 else 1 - tp
+                        thru = (pside <= q + 1e-9) if first else (pside < q - 1e-9)
+                        left, mo5, filled = 10.0, 0.0, 0.0
+                        for ti in np.flatnonzero(sells & thru & (tT > t0) & (tT <= t_end)):
+                            f = min(tsz[ti], left)
+                            m5 = mid_x(tT[ti] + 5000)
+                            m5 = m5 if side == 0 else 1 - m5
+                            mo5 += f * (m5 - q)
+                            filled += f
+                            left -= f
+                            if left <= 1e-9:
+                                break
+                        mine.append(dict(asset=ASSETS[ai], e=int(e), who=who, life=life, filled=filled, mo5=mo5))
+            rate, _ = fz.rate_for(ASSETS[ai], int(e), census)
+        cont_ws += [w for w in build_windows(day, census, outs)]
+        print(f"[v2] {day}: ref {len(ref)} mine {len(mine)}", flush=True)
+    lines = ["| source | life s | orders | filled shares | mo5 ¢/share |", "|---|---:|---:|---:|---:|"]
+    for name, rows in (("lighter_flips.window (reference, rerun)", ref), ("this engine, same one-shot orders", mine)):
+        for life in (10, 60, 300, 900):
+            rs = [r for r in rows if r["life"] == life]
+            fs = sum(r["filled"] for r in rs)
+            mo = sum((r["mo5"] if r["mo5"] == r["mo5"] else 0) for r in rs)
+            lines.append(f"| {name} | {life} | {len(rs)} | {fs:,.0f} | {100 * mo / fs if fs else float('nan'):.2f} |")
+    cells = [("pm_mid", 0.03, "none", None, 300, False), ("pm_mid", 0.03, "none", None, 0, False)]
+    for ai in (0, 1):
+        ws = [w for w in cont_ws if w.ai == ai]
+        res = run_cells(ws, cells, sizes=(30.0,))
+        for r in cell_table(res, ws, cells, 30.0, len(days), days):
+            lines.append(f"| continuous two-sided {ASSETS[ai]} {r['cell']} | - | - | {r['shares_day'] * len(days):,.0f} | {r['mo5']:.2f} |")
+    md = "\n".join(lines)
+    print(md)
+    (REPO / "reports" / "tokyo" / "l1" / "l1_v2.md").write_text(md + "\n")
+    return 0
 
 
 
