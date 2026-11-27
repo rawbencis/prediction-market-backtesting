@@ -556,9 +556,15 @@ def build_windows(day, census=None, outs=None):
     for ai, e in D.windows():
         L = D.lb[(D.lb["a"] == ai) & (D.lb["e"] == e)]
         L = L[np.argsort(L["x"], kind="stable")]
+        if len(L):
+            keep = np.r_[True, (L["b1"][1:] != L["b1"][:-1]) | (L["k1"][1:] != L["k1"][:-1])]
+            L = L[keep]
         lb_, lk_ = L["b1"] / 1e4, L["k1"] / 1e4
         Lt = (L["x"].astype(np.float64), lb_, lk_)
         P = D.pm[(D.pm["a"] == ai) & (D.pm["e"] == e)]
+        if len(P):
+            keep = np.r_[True, (P["b"][1:] != P["b"][:-1]) | (P["k"][1:] != P["k"][:-1])]
+            P = P[keep]
         Pt = (P["x"].astype(np.float64), P["b"] / 1e4, P["k"] / 1e4)
         T = D.lt[(D.lt["a"] == ai) & (D.lt["e"] == e)]
         buy = T["buy"].astype(bool)
@@ -597,26 +603,27 @@ def run_cells(ws, cells, sizes=SIZES):
                     A[wi, METRICS.index(k)] = np.nansum(m[k])
                 # taker ids stored for the top-3 share below
                 A[wi, METRICS.index("top3")] = 0
-                out.setdefault(("takers", cell_name(c), Q), []).extend((f[4], f[3]) for f in fl)
+                agg = out.setdefault(("takers", cell_name(c), Q), defaultdict(float))
+                for f in fl:
+                    agg[f[4]] += f[3]
             out[(cell_name(c), Q)] = A
     return out
 
 
 def cell_table(res, ws, cells, Q, ndays, days):
+    """ws: the windows, or their epochs (ints)."""
     rows = []
-    wday = np.array([datetime.fromtimestamp(w.e, timezone.utc).strftime("%Y-%m-%d") for w in ws])
+    eps = [w if isinstance(w, (int, np.integer)) else w.e for w in ws]
+    wday = np.array([datetime.fromtimestamp(int(e), timezone.utc).strftime("%Y-%m-%d") for e in eps])
     rng = np.random.default_rng(11)
     nb = 1000
-    idx = rng.integers(0, len(ws), size=(nb, len(ws))) if len(ws) else None
+    idx = rng.integers(0, len(eps), size=(nb, len(eps))) if len(eps) else None
     for c in cells:
         nm = cell_name(c)
         A = res[(nm, Q)]
         S = A.sum(axis=0)
         s = S[1]
-        tk = res.get(("takers", nm, Q), [])
-        agg = defaultdict(float)
-        for a, f in tk:
-            agg[a] += f
+        agg = res.get(("takers", nm, Q), {})
         top3 = sum(sorted(agg.values(), reverse=True)[:3]) / max(sum(agg.values()), 1e-9) if agg else math.nan
         if s > 0 and idx is not None:
             bs = A[idx]  # nb x nw x m
@@ -654,13 +661,22 @@ def cmd_replay(days, rest):
         cells = [tuple(pk["cell_tuple"])]
     allrows = []
     for ai in ((0, 1) if a.asset == "both" else (ASSETS.index(a.asset),)):
-        ws = []
+        eps, res = [], {}
         for d in days:
-            ws += [w for w in build_windows(d, census, outs) if w.ai == ai]
-            print(f"[replay] {ASSETS[ai]} {d}: {len(ws)} windows", flush=True)
-        res = run_cells(ws, cells)
+            ws = [w for w in build_windows(d, census, outs) if w.ai == ai]
+            rd = run_cells(ws, cells)
+            for k, v in rd.items():
+                if k[0] == "takers":
+                    agg = res.setdefault(k, defaultdict(float))
+                    for a_, f_ in v.items():
+                        agg[a_] += f_
+                else:
+                    res[k] = np.vstack([res[k], v]) if k in res else v
+            eps += [w.e for w in ws]
+            del ws, rd
+            print(f"[replay] {ASSETS[ai]} {d}: {len(eps)} windows", flush=True)
         for Q in SIZES:
-            for r in cell_table(res, ws, cells, Q, len(days), days):
+            for r in cell_table(res, eps, cells, Q, len(days), days):
                 r["asset"] = ASSETS[ai]
                 allrows.append(r)
     outd = REPO / "reports" / "tokyo" / "l1"
@@ -932,6 +948,31 @@ def cmd_devsum(days, rest):
                    "pass": json.loads((REPO / "frozen" / "L1_plan.json").read_text())["holdout_pass"]}
         (REPO / "frozen" / "L1_pick.json").write_text(json.dumps(obj, indent=1) + "\n")
         print("wrote frozen/L1_pick.json")
+    return 0
+
+
+
+def cmd_holdsum(days, rest):
+    df = _load_cells("holdout")
+    pk = json.loads((REPO / "frozen" / "L1_pick.json").read_text())
+    ps = pk["pass"]
+    r = df[(df.Q == 30.0) & (df.asset == pk["asset"]) & (df.cell == pk["cell"])].iloc[0]
+    n = len(HOLD)
+    checks = {
+        "settle >= 1.0¢/share": bool(r.settle >= ps["c_per_share_settle_min"]),
+        "90% lower bound > 0": bool(r.ci_lo > ps["lb90_gt"]),
+        "5 s markout > 0": bool(r.mo5 > ps["markout_5s_gt"]),
+        ">= 2,000 filled shares": bool(r.shares_day * n >= ps["shares_min"]),
+        ">= 5 of 7 days positive": bool(r.days_pos >= ps["days_positive_min"]),
+        ">= $10/day": bool(r.usd_day >= ps["usd_per_day_min"]),
+    }
+    out = [f"### L1 holdout (11-21..11-27), frozen pick {pk['asset']} `{pk['cell']}`\n", _fmt(df[df.cell == pk["cell"]], COLS),
+           "", "| criterion | result |", "|---|---|"]
+    out += [f"| {k} | {'pass' if v else 'FAIL'} |" for k, v in checks.items()]
+    out.append(f"\n**Holdout: {'PASS' if all(checks.values()) else 'FAIL'}** (filled shares {r.shares_day * n:,.0f}).")
+    md = "\n".join(out)
+    (REPO / "reports" / "tokyo" / "l1" / "l1_holdout_summary.md").write_text(md + "\n")
+    print(md)
     return 0
 
 
