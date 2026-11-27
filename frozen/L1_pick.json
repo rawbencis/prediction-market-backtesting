@@ -1,0 +1,57 @@
+{
+ "name": "L1_pick",
+ "asset": "btc",
+ "cell": "pm_mid|h2|1bp/250ms|q5|D0|stop60",
+ "cell_tuple": [
+  "pm_mid",
+  0.02,
+  "1bp/250ms",
+  5,
+  0,
+  true
+ ],
+ "dev": {
+  "fills_day": 148.5,
+  "shares_day": 2866.937790709734,
+  "vsfair": 2.309679205991352,
+  "mo1": 0.730202437679178,
+  "mo5": 0.4845986789996402,
+  "mo30": 1.118831402574445,
+  "settle": 3.497507160078765,
+  "ci_lo": -0.5309588987408669,
+  "ci_hi": 7.390067077228139,
+  "usd_day": 100.2713545050769,
+  "days_pos": 6.0,
+  "msgs_per_s": 1.5121306537882329,
+  "top3": 0.205750313744593,
+  "hedged": -0.8760922066453709
+ },
+ "rule": "frozen/L1_plan.json dev_pick",
+ "holdout": [
+  "2026-11-21",
+  "2026-11-22",
+  "2026-11-23",
+  "2026-11-24",
+  "2026-11-25",
+  "2026-11-26",
+  "2026-11-27"
+ ],
+ "parts": [
+  "pm_mid",
+  "h2",
+  "1bp/250ms",
+  "q5",
+  "D0",
+  "stop60"
+ ],
+ "pass": {
+  "c_per_share_settle_min": 1.0,
+  "lb90_gt": 0.0,
+  "markout_5s_gt": 0.0,
+  "shares_min": 2000,
+  "days_positive_min": 5,
+  "days": 7,
+  "usd_per_day_min": 10.0,
+  "size": "30-share quotes"
+ }
+}
