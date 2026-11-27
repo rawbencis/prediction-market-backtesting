@@ -1,0 +1,48 @@
+{
+  "name": "L1_plan",
+  "frozen_utc": "2026-11-27T20:20Z",
+  "frozen_before": "any L1 dev run (no 11-11..11-27 Lighter/Binance/PM data read in this session before this file was pushed; the 11-25 lighter_flips outputs were read earlier by other sessions)",
+  "code": "pascal/l1.py on research/pascal-lighter (written after this file; the rules here bind it)",
+  "data": {
+    "lighter": "~/lighter-data/YYYY-MM-DD/{lb,lt,lc}-HH.bin (lighter_rec.py: BTC/ETH 15m, top 3 levels, trades with both account ids, Chainlink 1 s); outcomes ~/lighter-data/lighter_outcomes.csv, else Polymarket winner (pm_winners.csv)",
+    "binance": "shadow_rec.py bn rows, USD-M aggTrade (src 1), BTC/ETH: ~/shadow-rec/DAY or ~/archive/shadow-rec/DAY.tar.zst (extracted one day at a time to a scratch dir, deleted after compaction)",
+    "polymarket": "shadow_rec.py pm rows (15m UP token top of book) for the same asset and window",
+    "days": "2026-11-11 .. 2026-11-27 only; never 11-28 or later"
+  },
+  "clock": "join in exchange time; view lags at this box: Lighter exch_ms + 2 ms, Binance trade_ms + 4 ms, Polymarket exchange ms + 116 ms",
+  "splits": {"dev": ["2026-11-11", "2026-11-20"], "holdout": ["2026-11-21", "2026-11-27"],
+             "rule": "holdout opened once, after frozen/L1_pick.json is pushed; day = UTC day of the window start"},
+  "L1_D": {
+    "move": "Binance USD-M price change >= 2 bp over the trailing 250 ms (10 ms grid of last trade price, exchange time); onset = first grid time of a run",
+    "reprice": "time from move onset to the next change of Lighter best bid or best ask (exchange time): p10/p50/p90; also split by whether the dominant maker 712772 is at the touch (maker of the last trade at that price) — describe <50 ms vs ~300 ms",
+    "flow": "taker trades split into 'move' (within 500 ms after a Binance >= 2 bp/250 ms move, trade exchange time) and 'quiet' (all others): share of volume; maker-side markout vs Polymarket mid (exchange time) at 1 s, 5 s, 30 s, by taker account (top accounts by volume, others pooled)",
+    "stop": "if quiet-time fills (all makers) do not show a maker markout > 0 at 5 s, stop: L1 is closed and no P&L replay is run"
+  },
+  "replay": {
+    "quote": "both sides at fair -/+ h, 1¢ ticks (bid down, ask up), post-only (a side that would cross Lighter's book when it lands is not live until the next requote), 30 shares per side (5 shares reported beside)",
+    "fair": ["pm_mid (Polymarket UP mid as seen: exchange + 116 ms)", "lighter_mid (Lighter mid as seen: exchange + 2 ms)"],
+    "h": [0.02, 0.03, 0.04, 0.05],
+    "requote": "when fair seen moves >= 1¢ from the quoted fair: a modify that lands at decision + 2 ms + D",
+    "pull": ["none", "1bp/250ms", "2bp/250ms", "2bp/1s", "4bp/1s"],
+    "repost_quiet_s": [1, 5],
+    "pull_mechanics": "Binance signal seen at trade_ms + 4 ms; cancel of both sides lands at seen + 2 ms + D; re-post (at the then-current fair) lands 2 ms after `quiet` seconds without a further signal",
+    "D_ms": [0, 300],
+    "D_meaning": "0 = premium (maker/cancel latency 0 ms); 300 = standard (cancel/modify 300 ms); posts always land at + 2 ms",
+    "stop_60s_before_close": [true, false],
+    "fills": "only recorded Lighter taker trades at their match time while our quote is live: improving the displayed best -> a trade at our price or through it fills up to its size; joining (or behind) -> only trades through our price; fill at our price; a filled side is replenished to full size 4 ms after the fill (seen + 2 ms post)",
+    "inventory": "net position cap 150 shares per window (fills beyond are cut)",
+    "settlement": "held to settlement (Lighter outcome, else Polymarket winner); maker fee 0",
+    "hedge_descriptive": "Polymarket taker hedge of each fill at fill + 300 ms (buy the complement at the UP ask/bid then, fee from lp_arb/fees.py): reported, not used for pass",
+    "cells": "2 fair x 4 h x (1 'none' + 4 pull x 2 repost) x 2 D x 2 stop = 288 distinct cells per asset at 30 shares (the brief's ~320 counts repost for 'none' too); 5-share results reported beside",
+    "assets": "BTC and ETH separately"
+  },
+  "validation_before_dev": {
+    "V1": "synthetic: martingale mid with random takers -> P&L ~= spread captured; planted takers arriving 200 ms after Binance moves -> the pull is positive at D = 0 and negative at D = 300 (vs no pull)",
+    "V2": "no pull, D = 300, fair = pm_mid, h = 3¢, posted once per lighter_flips fair3 order (same posting times and lifetimes) reproduces the negative 5 s markout of lighter_flips' fair3 rows within noise; if not, find out why first"
+  },
+  "metrics_per_cell": ["fills/day", "shares/day", "¢/share vs fair at the fill", "markout vs Polymarket mid at 1/5/30 s", "¢/share to settlement", "$/day", "90% CI by window bootstrap", "days positive", "posts + cancels per second", "share of fills from the top 3 taker accounts"],
+  "stop_early": "if no dev cell at D = 0 has a 5 s markout > 0",
+  "dev_pick": "highest 90% lower bound (window bootstrap) on ¢/share to settlement among dev cells with 5 s markout > 0 and >= 300 shares/day (30-share quotes); per asset or pooled — one pick, the asset is part of the cell; written to frozen/L1_pick.json and pushed before the holdout is opened",
+  "holdout_pass": {"c_per_share_settle_min": 1.0, "lb90_gt": 0.0, "markout_5s_gt": 0.0, "shares_min": 2000, "days_positive_min": 5, "days": 7, "usd_per_day_min": 10.0, "size": "30-share quotes"},
+  "premium_note": "if only D = 0 cells pass, the result needs a premium account; P0 found its cost: no fee or stake to switch (binary fees are the bo schedule, maker 0), but each create/modify consumes 1 volume-quota unit earned at $1-2 of fill notional (single cancels are free); report quota needed vs earned"
+}
