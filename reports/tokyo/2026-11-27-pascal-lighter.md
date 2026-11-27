@@ -6,7 +6,7 @@ Branch `research/pascal-lighter` (from `research/lp-arb` @ df440e0). Paper resea
 
 <!-- VERDICT -->
 
-**Operator action needed: disk.** About 5–8 days of disk are left (59.3 GB free, 4.7–7.7 GB/day). The PX holdout needs the recorder running until 12-08 00:00 UTC, about 10 days, so 15–40 GB must be freed by ~12-02 or the recorder's 20 GB floor will stop it mid-holdout. See **Disk**.
+**Operator action needed: disk.** About **3 days** of disk are left: 57.5 GB free, about 12 GB/day measured box-wide. The recorder's 20 GB floor arrives around **12-01**, right as the PX dev days finish. The PX holdout needs recording until 12-08 00:00 UTC, so about 70 GB must be freed (or writers slowed) before ~12-01. See **Disk**.
 
 ---
 
@@ -408,17 +408,20 @@ A Pascal maker quoting Polymarket ± h (fills: trades at or through our price), 
 
 ## Disk
 
-Free at 21:07 UTC: **59.3 GB** (`df` Avail; the guards use 1e9-byte GB).
+Free at 23:28 UTC: **57.5 GB** (`df` Avail; the guards use 1e9-byte GB). **Measured box-wide burn: about 12 GB/day.** Free disk fell 60.5 → 57.5 GB from 19:36 to 23:28 UTC; take away this session's ~1.1 GB of caches and ~1.9 GB went in 3.9 h. Writers seen growing in the last hour:
 
-| writer | per day | source |
+| writer | rate seen | note |
 |---|---:|---|
-| `onetouch-shadow` (`~/onetouch-mm/research/onetouch_mm/data`, keeps 45 days) | 3.4–4.4 GB measured (11-26 3.44 GB; 11-27 3.74 GB by 20:00); brief: 6.4 GB | file sizes |
-| `shadow_rec.py` (`~/shadow-rec`) | ≈ 1.0 GB | 11-26 dir |
-| `lighter_rec.py` (`~/lighter-data`) | ≈ 0.05 GB | 11-26 dir |
-| `pascal_rec.py` (new) | ≈ 0.15–0.2 GB (cap 0.3) | first 90 min |
-| this session's caches | +0.6 GB once (`~/pascal-data/l1cache`, deletable after the L1 holdout read) | — |
+| `onetouch-shadow` (`~/onetouch-mm/research/onetouch_mm/data`, keeps 45 days) | ≈ 100 MB/h (4.0 GB on 11-27 by 23:30) | brief: 6.4 GB/day |
+| `dolphin-v2` WS capture (`~/dolphin-v2/data/research/ws/msgs_*.jsonl.gz`) | ≈ 160 MB/h at 22:00 (≈ 3.8 GB/day if sustained) | not in the brief |
+| `poly-smart-flow/data/run3.sqlite3` | 2.5 GB file, written in the last hour | growth rate not measured |
+| `shadow_rec.py` (`~/shadow-rec`) | ≈ 1.1 GB/day | |
+| `up_down_research/copypants/logs/tentacle_ws.log` | 122 MB, written in the last hour | |
+| `lighter_rec.py` | ≈ 0.05 GB/day | |
+| `pascal_rec.py` (new) | ≈ 0.15–0.2 GB/day (cap 0.3) | 26 MB on 11-27 by 23:28 |
+| this session's caches | 1.1 GB once (`~/pascal-data/l1cache`) | deleted at the end of the session, see below |
 
-At 4.7–7.7 GB/day the box has **5–8 days** of disk before `pascal_rec.py`'s own 20 GB floor (about 12-02 22:00 to 12-06 UTC) and **6–9 days** before `onetouch-shadow` stops at 15 GB. The PX holdout needs recording through **12-08 00:00 UTC**, about 10.1 days from now, which takes roughly 50–78 GB against the 39 GB available above the floor. **Unless 15–40 GB is freed (or onetouch's rate or retention is cut) by about 12-02, the recorder will stop partway through the holdout.** This session deleted nothing; whether to prune is the operator's call (candidates: `~/archive/shadow-rec/*.tar.zst` 4.0 GB, `~/shadow-rec` 18 GB of which 11-20..11-23 are also in the archive, onetouch retention 45 → fewer days).
+**Days of disk left: about 3** (37.5 GB above the recorder's 20 GB floor ÷ ~12 GB/day), so `pascal_rec.py` stops itself around **12-01 UTC**, and `onetouch-shadow` stops at 15 GB about half a day later. That is roughly when the PX dev days (11-28..11-30) finish recording. The **holdout (12-01..12-07) cannot be recorded unless ≥ 70 GB is freed, or the writers above slow down, before ~12-01.** This session deleted nothing of anyone else's; what to prune or stop is the operator's call. Candidates by size: `~/shadow-rec` (18 GB; 11-20..11-23 are also in `~/archive/shadow-rec`), `~/archive/shadow-rec` (4 GB), `poly-smart-flow` sqlite, `dolphin-v2` ws captures, onetouch retention (45 days).
 
 ## Deviations from the brief
 
