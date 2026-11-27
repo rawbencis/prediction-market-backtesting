@@ -486,6 +486,8 @@ def simulate(w, c, Q, stats=None):
         nd = int(((land >= w.t0) & (land < t_end)).sum())
         stats["msgs"] += 2 * nd + 4 * len(os_)  # a modify per side per requote; cancel+post per side per pull
         stats["secs"] += (t_end - w.t0) / 1000
+        # Lighter volume quota: creates and modifies consume 1 each, single cancels are free
+        stats["quota"] = stats.get("quota", 0) + 2 * nd + 2 * len(os_)
     out = []
     net = 0.0
     for i in np.flatnonzero(hit):
@@ -993,3 +995,24 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def quota_check(days, cell, ai=0, Q=30.0):
+    """Quota consumed vs earned for one cell (premium volume-quota program)."""
+    from lp_arb import fees as fz
+
+    census, outs = fz.load_census(), outcomes()
+    q = n = notional = secs = 0.0
+    for d in days:
+        for w in build_windows(d, census, outs):
+            if w.ai != ai:
+                continue
+            st = {"msgs": 0, "secs": 0.0}
+            fl = simulate(w, cell, Q, st)
+            q += st.get("quota", 0)
+            secs += st["secs"]
+            notional += sum(f[3] * (f[2] if f[1] > 0 else 1 - f[2]) for f in fl)
+            n += len(fl)
+    return dict(quota_day=q / len(days), fills_day=n / len(days), notional_day=notional / len(days),
+                earned_day=notional / len(days) / 2.0, free_day=86400 / 15, buy_usd_day=max(q / len(days) - notional / len(days) / 2.0 - 86400 / 15, 0) * 0.0005,
+                active_h_day=secs / 3600 / len(days))

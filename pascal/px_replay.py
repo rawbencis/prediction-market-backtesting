@@ -75,7 +75,14 @@ def build_cache(day, rec=REC, cache=CACHE):
     seen_tid = set()
     for f in day_files(rec, day):
         with gzip.open(f, "rt") as fh:
-            for ln in fh:
+            it = iter(fh)
+            while True:
+                try:
+                    ln = next(it)
+                except StopIteration:
+                    break
+                except (EOFError, OSError, gzip.BadGzipFile):
+                    break  # the hour still being written, or a member cut by a kill
                 try:
                     o = loads(ln)
                 except ValueError:
