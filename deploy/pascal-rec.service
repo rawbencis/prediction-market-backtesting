@@ -1,0 +1,24 @@
+# Pascal x Polymarket read-only recorder (public market data; no keys, no orders).
+# Install as a user unit (see reports/tokyo/2026-11-27-pascal-lighter.md, "Recorder"):
+#   install -m 644 deploy/pascal-rec.service ~/.config/systemd/user/pascal-rec.service
+#   systemctl --user daemon-reload && systemctl --user enable --now pascal-rec.service
+# Exit 0 = free disk below 20 GB (stays down: Restart=on-failure); exit 1 = RSS ceiling (restarts).
+[Unit]
+Description=Pascal x Polymarket market-data recorder (read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/pascal-lighter
+ExecStart=/home/ubuntu/shadow-venv/bin/python -I pascal/pascal_rec.py --out /home/ubuntu/pascal-data/rec --n 150 --refresh-h 6 --day-cap-mb 300 --min-free-gb 20 --max-rss-mb 300
+Restart=on-failure
+RestartSec=30
+MemoryMax=400M
+CPUQuota=25%
+Nice=10
+StandardOutput=append:/home/ubuntu/pascal-data/logs/rec.log
+StandardError=append:/home/ubuntu/pascal-data/logs/rec.log
+
+[Install]
+WantedBy=default.target
