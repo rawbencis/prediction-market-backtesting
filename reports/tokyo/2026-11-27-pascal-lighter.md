@@ -180,6 +180,10 @@ Synthetic checks (`pascal/tests/test_px_replay.py`, 5 tests, pass):
 
 PX-B fill rule checked separately (joining the best: a sell at our bid does not fill us, one through it does, at our price).
 
+**Smoke test on the partial 11-27 recording** (19:35–21:30 UTC; outside dev and holdout; run after the plan was frozen, to check the pipeline end to end). 150 markets cached, Pascal lag 7.9 ms, PM fee rate resolved for all 150, 46 in the primary set. **0 attempts in every cell.** The cheapest pair cost after both fees was $0.978 (ISR_AIRSPACE_CLSD_BY.26DEC31, which resolves 12-31, outside the 30-day primary set). Only ~7 new Pascal taker trades arrived in 2 h across the 150 markets, so PX-B has almost nothing to fill against.
+
+**How fast the Pascal mirror follows Polymarket** (same partial day, descriptive): over 10,598 Polymarket touch moves of ≥ 1¢, Pascal's same-side touch moved at least half as far within 10 s in 76% of cases, after **p10 82 / p25 149 / p50 492 / p75 1,694 / p90 4,027 ms** (PM exchange time → Pascal state time). We see Polymarket at +116 ms and reach Pascal in ≤ ~60 ms, so in about half of moves the stale Pascal quote is still up when we could act. Whether any of those gaps clears 2¢ after both taker fees with ≥ $25 on each side is the PX-A dev question.
+
 **Dates.** Recorder started 2026-11-27 19:35 UTC → dev = **11-28, 11-29, 11-30**; holdout = **12-01 … 12-07**.
 
 ```bash
@@ -198,7 +202,170 @@ systemd-run --user --scope -q -p MemoryMax=1500M -p CPUQuota=60% nice -n 19 ~/sh
 
 ## L1. Lighter fast-pull maker
 
-<!-- L1 -->
+Plan `frozen/L1_plan.json` pushed at **faa4c8f** (20:20 UTC) before any dev run; pick `frozen/L1_pick.json` pushed at **6025233** (21:26 UTC) before any holdout day was opened. Code: `pascal/l1.py`. Data: `~/lighter-data` (BTC/ETH 15m books top 3, trades with both accounts), Binance USD-M aggTrades and Polymarket 15m UP books from `~/shadow-rec` (11-20 on) and `~/archive/shadow-rec/*.tar.zst` (11-11..11-19; one day at a time extracted, compacted to `~/pascal-data/l1cache/DAY.npz`, deleted). Exchange-time join; views Lighter +2 ms, Binance +4 ms, Polymarket +116 ms.
+
+### Validation (before reading dev P&L)
+
+**V1, synthetic** (40 windows; martingale mid; Lighter at mid ± 3¢; uninformed takers at Lighter's touch; then informed takers 200 ms after each Binance jump, with Polymarket repricing 4¢ at +300 ms). Expected: P&L ≈ spread captured, and pull > none at D = 0 but < none at D = 300. **Pass:**
+
+| takers | cell | shares | ¢/share settle | ¢/share vs fair | $ total |
+|---|---|---:|---:|---:|---:|
+| uninformed | pm_mid|h2|none|D0|to_close | 194370 | 1.89 | 2.00 | 3673.20 |
+| uninformed | pm_mid|h2|none|D300|to_close | 188910 | 1.86 | 1.97 | 3510.60 |
+| uninformed | pm_mid|h2|2bp/250ms|q1|D0|to_close | 194370 | 1.89 | 2.00 | 3673.20 |
+| uninformed | pm_mid|h2|2bp/250ms|q1|D300|to_close | 188910 | 1.86 | 1.97 | 3510.60 |
+| uninformed + informed | pm_mid|h2|none|D0|to_close | 216090 | 1.69 | 2.00 | 3649.80 |
+| uninformed + informed | pm_mid|h2|none|D300|to_close | 209250 | 1.65 | 1.96 | 3452.10 |
+| uninformed + informed | pm_mid|h2|2bp/250ms|q1|D0|to_close | 189450 | 2.08 | 2.00 | 3937.50 |
+| uninformed + informed | pm_mid|h2|2bp/250ms|q1|D300|to_close | 206400 | 1.66 | 1.97 | 3418.80 |
+
+{"uninformed_pnl_close_to_spread": true, "pull_helps_at_D0": true, "pull_hurts_at_D300": true}
+
+**V2, reproduction of `lighter_flips.py` fair3** (dev 11-11..11-13; x = 0.70, first flip, Q = 10). The reference code rerun on the same recordings, then the same one-shot orders through this engine, then the brief's continuous cell. **Pass:** the one-shot orders reproduce the reference's negative 5 s markout within noise at every lifetime, and the continuous cell (no pull, D = 300, pm_mid, h = 3¢) is negative too. It is smaller than fair3 because it requotes on every 1¢ move instead of resting stale for the order's life.
+
+| source | life s | orders | filled shares | mo5 ¢/share |
+|---|---:|---:|---:|---:|
+| lighter_flips.window (reference, rerun) | 10 | 968 | 209 | -0.16 |
+| lighter_flips.window (reference, rerun) | 60 | 968 | 1,153 | -3.92 |
+| lighter_flips.window (reference, rerun) | 300 | 968 | 3,821 | -8.56 |
+| lighter_flips.window (reference, rerun) | 900 | 968 | 5,962 | -10.17 |
+| this engine, same one-shot orders | 10 | 977 | 193 | -0.08 |
+| this engine, same one-shot orders | 60 | 977 | 1,150 | -4.01 |
+| this engine, same one-shot orders | 300 | 977 | 3,834 | -8.64 |
+| this engine, same one-shot orders | 900 | 977 | 6,005 | -10.55 |
+| continuous two-sided btc pm_mid|h3|none|D300|to_close | - | - | 26,070 | -2.03 |
+| continuous two-sided btc pm_mid|h3|none|D0|to_close | - | - | 21,329 | -1.47 |
+| continuous two-sided eth pm_mid|h3|none|D300|to_close | - | - | 9,784 | -3.46 |
+| continuous two-sided eth pm_mid|h3|none|D0|to_close | - | - | 6,638 | -2.25 |
+
+### L1-D (dev 11-11..11-20, descriptive)
+
+Lighter reprice after a Binance USD-M move >= 2 bp / 250 ms (onset, exchange time) — time to the next change of Lighter's best bid or ask, ms (p10 / p50 / p90); NaN = no change within 5 s:
+
+| asset | onsets | changed within 5 s | p10 / p50 / p90 ms | share < 50 ms | share 250-400 ms |
+|---|---:|---:|---|---:|---:|
+| btc | 41551 | 40538 | 18 / 110 / 625 | 29% | 8% |
+| eth | 88088 | 85365 | 15 / 86 / 643 | 35% | 6% |
+
+Taker flow, move (within 500 ms after a Binance >= 2 bp / 250 ms move) vs quiet; maker markout vs Polymarket UP mid (exchange time), ¢/share, size-weighted:
+
+| asset | set | trades | shares | share of shares | maker mo 1 s | maker mo 5 s | maker mo 30 s | n with 5 s mid |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| btc | move | 3301 | 180,687 | 17% | -3.96 | -5.57 | -4.84 | 3301 |
+| btc | quiet | 20032 | 853,514 | 83% | 1.08 | 0.99 | 0.77 | 20025 |
+| eth | move | 2240 | 157,171 | 21% | -4.34 | -4.30 | -2.71 | 2240 |
+| eth | quiet | 13050 | 575,870 | 79% | 0.51 | 0.35 | 0.33 | 13048 |
+
+By taker account (top 6 by shares across both assets; maker markout 5 s, ¢/share):
+
+| taker | shares | share | quiet share of its volume | maker mo 5 s (quiet) | maker mo 5 s (move) | maker mo 30 s (all) |
+|---|---:|---:|---:|---:|---:|---:|
+| 768546 | 258,409 | 15% | 86% | -1.04 | -2.52 | -1.56 |
+| 735029 | 174,322 | 10% | 88% | 2.87 | 3.44 | 2.77 |
+| 281474976509656 | 147,545 | 8% | 51% | 2.12 | -8.25 | -2.73 |
+| 281474976467512 | 137,919 | 8% | 81% | -0.22 | -3.40 | -1.28 |
+| 281474976467463 | 79,205 | 4% | 82% | -0.10 | -4.02 | -0.61 |
+| 281474976415388 | 78,929 | 4% | 98% | -2.79 | -0.33 | -3.80 |
+| others | 890,914 | 50% | 81% | 1.27 | -5.49 | 0.44 |
+
+Top makers by shares: 712772 79%, 763239 17%, 281474976491417 2%, 281474976468907 1%, 762203 0%
+
+**Stop rule (quiet-time maker markout at 5 s > 0?):** btc +0.99¢, eth +0.35¢ -> at least one asset positive: continue to the replay.
+
+So Lighter's touch usually moves well inside 300 ms of a Binance move (median 86–110 ms, a third within 50 ms). The dominant maker, 712772, makes 79% of maker volume, which fits a premium (0 ms cancel) account; standard-account repricing would cluster at ~300 ms, and only 6–8% of changes do. Taker flow in the 500 ms after a ≥ 2 bp move is 17–21% of volume and costs makers 4–6¢/share at 5 s. Quiet flow pays makers +1.0¢ (BTC) / +0.35¢ (ETH) at 5 s, so the stop rule did not trigger.
+
+### Dev replay (288 cells × 2 assets, 30-share quotes; 5-share beside)
+
+Cells: 576 (both assets). D = 0 cells with 5 s markout > 0: 101 of 288. D = 300: 0 of 288.
+Stop-early rule (no D = 0 cell with 5 s markout > 0): **not triggered**.
+
+Eligible for the pick (5 s markout > 0 and >= 300 shares/day): 89 cells.
+
+Top 15 cells by 90% lower bound on ¢/share to settlement (all cells):
+
+| asset | cell | fills_day | shares_day | vsfair | mo1 | mo5 | mo30 | settle | ci_lo | ci_hi | usd_day | days_pos | msgs_per_s | top3 | hedged |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| btc | lighter_mid|h3|1bp/250ms|q5|D0|stop60 | 89.90 | 1650.21 | 3.08 | -2.67 | -2.49 | 0.15 | 5.11 | 0.76 | 9.68 | 84.37 | 7 | 2.97 | 0.25 | -4.65 |
+| btc | lighter_mid|h3|1bp/250ms|q5|D0|to_close | 101.30 | 1892.30 | 3.11 | -3.00 | -2.68 | -0.09 | 4.47 | 0.36 | 8.74 | 84.61 | 7 | 2.82 | 0.23 | -4.99 |
+| btc | pm_mid|h2|1bp/250ms|q5|D0|stop60 | 148.50 | 2866.94 | 2.31 | 0.73 | 0.48 | 1.12 | 3.50 | -0.53 | 7.39 | 100.27 | 6 | 1.51 | 0.21 | -0.88 |
+| eth | pm_mid|h5|1bp/250ms|q1|D0|stop60 | 10.00 | 173.11 | 5.45 | 4.36 | 4.79 | 8.86 | 8.10 | -0.87 | 16.35 | 14.03 | 7 | 2.76 | 0.34 | 2.82 |
+| btc | pm_mid|h2|1bp/250ms|q5|D0|to_close | 164.50 | 3197.82 | 2.31 | 0.86 | 0.83 | 0.79 | 3.04 | -0.88 | 6.69 | 97.11 | 5 | 1.48 | 0.19 | -0.76 |
+| btc | pm_mid|h2|1bp/250ms|q1|D0|stop60 | 241.00 | 4705.48 | 2.29 | 0.87 | 0.62 | 0.98 | 2.03 | -0.95 | 4.87 | 95.57 | 7 | 1.85 | 0.23 | -0.79 |
+| btc | pm_mid|h2|1bp/250ms|q1|D0|to_close | 267.10 | 5235.98 | 2.30 | 0.99 | 0.85 | 0.95 | 1.82 | -1.01 | 4.53 | 95.45 | 6 | 1.80 | 0.21 | -0.70 |
+| btc | pm_mid|h3|2bp/250ms|q1|D0|to_close | 219.60 | 4303.03 | 3.26 | 0.78 | 0.42 | 0.95 | 1.57 | -1.14 | 4.38 | 67.68 | 6 | 1.44 | 0.20 | -0.73 |
+| btc | pm_mid|h2|2bp/250ms|q1|D0|stop60 | 366.60 | 7094.64 | 2.26 | 0.21 | -0.11 | 0.07 | 1.13 | -1.18 | 3.44 | 80.45 | 6 | 1.47 | 0.26 | -1.32 |
+| btc | pm_mid|h3|2bp/1s|q1|D0|to_close | 194.40 | 3797.20 | 3.28 | 0.91 | 0.59 | 1.37 | 1.81 | -1.19 | 4.81 | 68.62 | 6 | 1.53 | 0.19 | -0.66 |
+| btc | pm_mid|h2|2bp/250ms|q1|D0|to_close | 396.20 | 7694.32 | 2.27 | 0.32 | 0.11 | -0.03 | 0.88 | -1.29 | 3.11 | 67.83 | 7 | 1.44 | 0.25 | -1.26 |
+| btc | pm_mid|h3|2bp/250ms|q1|D0|stop60 | 197.10 | 3850.62 | 3.24 | 0.63 | 0.21 | 1.05 | 1.69 | -1.40 | 4.86 | 64.99 | 7 | 1.47 | 0.23 | -0.83 |
+| btc | pm_mid|h2|2bp/1s|q1|D0|to_close | 347.30 | 6739.25 | 2.29 | 0.43 | 0.24 | 0.22 | 0.95 | -1.40 | 3.27 | 64.26 | 6 | 1.53 | 0.23 | -1.19 |
+| btc | pm_mid|h2|2bp/250ms|q5|D0|stop60 | 316.90 | 6091.73 | 2.27 | 0.20 | -0.08 | 0.36 | 1.05 | -1.41 | 3.64 | 64.17 | 6 | 1.40 | 0.26 | -1.37 |
+| btc | pm_mid|h2|2bp/1s|q1|D0|stop60 | 320.00 | 6184.24 | 2.28 | 0.30 | -0.02 | 0.15 | 1.03 | -1.53 | 3.45 | 63.82 | 6 | 1.56 | 0.25 | -1.29 |
+
+Best cell per (asset, pull, D) by lower bound:
+
+| asset | cell | fills_day | shares_day | vsfair | mo1 | mo5 | mo30 | settle | ci_lo | ci_hi | usd_day | days_pos | msgs_per_s | top3 | hedged |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| btc | lighter_mid|h3|1bp/250ms|q5|D0|stop60 | 89.90 | 1650.21 | 3.08 | -2.67 | -2.49 | 0.15 | 5.11 | 0.76 | 9.68 | 84.37 | 7 | 2.97 | 0.25 | -4.65 |
+| btc | pm_mid|h3|2bp/1s|q1|D0|to_close | 194.40 | 3797.20 | 3.28 | 0.91 | 0.59 | 1.37 | 1.81 | -1.19 | 4.81 | 68.62 | 6 | 1.53 | 0.19 | -0.66 |
+| btc | pm_mid|h3|2bp/250ms|q1|D0|to_close | 219.60 | 4303.03 | 3.26 | 0.78 | 0.42 | 0.95 | 1.57 | -1.14 | 4.38 | 67.68 | 6 | 1.44 | 0.20 | -0.73 |
+| btc | pm_mid|h2|4bp/1s|q1|D0|stop60 | 425.00 | 8266.67 | 2.26 | -0.26 | -0.61 | -0.47 | 0.44 | -1.68 | 2.50 | 36.29 | 5 | 1.36 | 0.28 | -1.62 |
+| btc | pm_mid|h2|none|D0|stop60 | 524.90 | 10383.57 | 2.27 | -1.39 | -2.02 | -1.76 | -0.46 | -2.19 | 1.26 | -47.29 | 3 | 1.30 | 0.27 | -2.17 |
+| btc | lighter_mid|h3|1bp/250ms|q5|D300|stop60 | 166.90 | 3165.11 | 0.42 | -2.48 | -3.15 | -2.42 | 1.10 | -2.29 | 4.55 | 34.87 | 5 | 2.97 | 0.26 | -3.19 |
+| btc | pm_mid|h2|2bp/1s|q5|D300|to_close | 367.90 | 7089.13 | 1.79 | -1.23 | -1.54 | -0.83 | -0.72 | -2.90 | 1.31 | -50.92 | 3 | 1.41 | 0.28 | -2.39 |
+| btc | lighter_mid|h3|2bp/250ms|q1|D300|stop60 | 347.40 | 6556.40 | 0.68 | -2.83 | -3.08 | -2.85 | -0.68 | -2.80 | 1.72 | -44.29 | 6 | 2.93 | 0.29 | -4.02 |
+| btc | lighter_mid|h3|4bp/1s|q1|D300|stop60 | 374.60 | 7113.39 | 0.60 | -3.04 | -3.24 | -2.82 | -0.37 | -2.46 | 1.86 | -26.46 | 5 | 2.82 | 0.29 | -4.22 |
+| btc | lighter_mid|h3|none|D300|stop60 | 413.00 | 7894.65 | 0.60 | -3.40 | -3.71 | -3.21 | -0.81 | -2.79 | 1.24 | -63.86 | 5 | 2.76 | 0.29 | -4.37 |
+| eth | pm_mid|h5|1bp/250ms|q1|D0|stop60 | 10.00 | 173.11 | 5.45 | 4.36 | 4.79 | 8.86 | 8.10 | -0.87 | 16.35 | 14.03 | 7 | 2.76 | 0.34 | 2.82 |
+| eth | pm_mid|h3|2bp/1s|q1|D0|stop60 | 55.50 | 1141.28 | 3.26 | 0.63 | 0.41 | 1.16 | 1.80 | -2.36 | 5.91 | 20.58 | 4 | 2.42 | 0.47 | -1.12 |
+| eth | pm_mid|h2|2bp/250ms|q5|D0|stop60 | 115.10 | 2458.65 | 2.26 | 0.23 | 0.18 | 0.13 | 0.57 | -2.49 | 3.58 | 14.05 | 5 | 2.17 | 0.54 | -1.63 |
+| eth | pm_mid|h2|4bp/1s|q5|D0|stop60 | 165.40 | 3535.56 | 2.23 | -0.56 | -0.80 | -0.53 | 0.25 | -2.35 | 2.64 | 8.74 | 6 | 2.10 | 0.56 | -2.30 |
+| eth | pm_mid|h2|none|D0|stop60 | 242.00 | 5365.04 | 2.22 | -1.25 | -1.66 | -1.35 | -2.01 | -4.21 | 0.13 | -108.01 | 1 | 2.04 | 0.52 | -2.77 |
+| eth | lighter_mid|h2|1bp/250ms|q1|D300|stop60 | 203.00 | 4454.71 | -0.12 | -3.40 | -3.57 | -3.44 | -2.32 | -4.60 | 0.08 | -103.26 | 3 | 5.08 | 0.53 | -5.38 |
+| eth | lighter_mid|h2|2bp/1s|q5|D300|stop60 | 155.30 | 3392.25 | -0.46 | -3.91 | -4.01 | -2.95 | -1.27 | -3.87 | 1.46 | -42.97 | 5 | 4.52 | 0.57 | -5.85 |
+| eth | lighter_mid|h2|2bp/250ms|q5|D300|stop60 | 215.70 | 4730.99 | -0.47 | -3.60 | -3.74 | -3.51 | -1.67 | -3.75 | 0.58 | -78.89 | 3 | 4.49 | 0.56 | -5.57 |
+| eth | lighter_mid|h2|4bp/1s|q1|D300|stop60 | 304.60 | 6727.54 | -0.35 | -3.46 | -3.64 | -3.46 | -1.96 | -3.64 | -0.03 | -131.94 | 3 | 4.48 | 0.55 | -5.30 |
+| eth | pm_mid|h2|none|D300|to_close | 308.60 | 6966.34 | 1.23 | -2.32 | -2.74 | -2.40 | -2.68 | -4.64 | -0.83 | -186.57 | 1 | 1.99 | 0.55 | -3.74 |
+
+Same cells, no pull vs pull, settlement ¢/share (mean over fair, h, stop, repost) by asset and D:
+
+| asset | D | pull | settle | mo5 | shares_day |
+|---|---|---|---|---|---|
+| btc | 0 | 1bp/250ms | 0.40 | -0.59 | 2222.98 |
+| btc | 0 | 2bp/1s | -0.67 | -1.82 | 3447.43 |
+| btc | 0 | 2bp/250ms | -0.97 | -2.07 | 4148.31 |
+| btc | 0 | 4bp/1s | -1.36 | -2.58 | 4986.61 |
+| btc | 0 | none | -1.83 | -3.34 | 6307.06 |
+| btc | 300 | 1bp/250ms | -0.46 | -2.13 | 3710.33 |
+| btc | 300 | 2bp/1s | -1.64 | -2.15 | 4637.63 |
+| btc | 300 | 2bp/250ms | -1.98 | -2.23 | 5378.87 |
+| btc | 300 | 4bp/1s | -1.75 | -2.36 | 6034.14 |
+| btc | 300 | none | -1.60 | -2.76 | 7062.16 |
+| eth | 0 | 1bp/250ms | -2.30 | -1.55 | 1085.59 |
+| eth | 0 | 2bp/1s | -3.31 | -3.10 | 1975.06 |
+| eth | 0 | 2bp/250ms | -3.65 | -2.90 | 2479.83 |
+| eth | 0 | 4bp/1s | -4.25 | -3.67 | 3117.16 |
+| eth | 0 | none | -4.80 | -3.95 | 4020.66 |
+| eth | 300 | 1bp/250ms | -3.40 | -3.73 | 1594.84 |
+| eth | 300 | 2bp/1s | -3.18 | -3.71 | 2230.31 |
+| eth | 300 | 2bp/250ms | -3.38 | -3.51 | 2786.29 |
+| eth | 300 | 4bp/1s | -3.74 | -3.65 | 3276.40 |
+| eth | 300 | none | -3.84 | -3.62 | 4019.41 |
+
+5-share quotes: top 5 by lower bound:
+
+| asset | cell | fills_day | shares_day | vsfair | mo1 | mo5 | mo30 | settle | ci_lo | ci_hi | usd_day | days_pos | msgs_per_s | top3 | hedged |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| btc | lighter_mid|h3|1bp/250ms|q5|D0|to_close | 104.60 | 514.67 | 3.10 | -3.33 | -2.81 | 0.01 | 4.54 | 0.18 | 9.13 | 23.36 | 7 | 2.82 | 0.21 | -5.28 |
+| btc | pm_mid|h2|1bp/250ms|q5|D0|stop60 | 157.10 | 764.92 | 2.30 | 0.76 | 0.68 | 1.55 | 4.57 | 0.15 | 8.77 | 34.92 | 7 | 1.51 | 0.19 | -0.90 |
+| btc | pm_mid|h2|1bp/250ms|q5|D0|to_close | 174.80 | 853.39 | 2.31 | 0.89 | 1.06 | 1.25 | 4.05 | 0.02 | 7.92 | 34.54 | 7 | 1.48 | 0.18 | -0.78 |
+| btc | pm_mid|h2|1bp/250ms|q1|D0|stop60 | 259.50 | 1262.32 | 2.29 | 0.88 | 0.78 | 1.40 | 3.30 | -0.08 | 6.34 | 41.63 | 8 | 1.85 | 0.20 | -0.79 |
+| btc | lighter_mid|h3|1bp/250ms|q5|D0|stop60 | 91.60 | 449.98 | 3.07 | -2.81 | -2.63 | -0.36 | 4.47 | -0.12 | 9.33 | 20.13 | 8 | 2.97 | 0.23 | -4.76 |
+
+**Dev pick:** btc `pm_mid|h2|1bp/250ms|q5|D0|stop60` — settle 3.50¢/share (90% CI -0.53 … 7.39), 5 s markout 0.48¢, 2867 shares/day, $100.27/day, days positive 6/10.
+
+**Reading the dev table.** Pulling on Binance is the only thing that turns the 5 s markout positive, and only at D = 0: 101 of 288 D = 0 cells mark out above zero, against 0 of 288 at D = 300. On BTC at D = 0 the mean settlement goes −1.83¢ (no pull) → −1.36 (4 bp/1 s) → −0.97 (2 bp/250 ms) → +0.40¢ (1 bp/250 ms). At D = 300 every pull rule stays at −0.5 to −2.0¢. ETH is negative almost everywhere: its quiet-flow edge is a third of BTC's, and 50%+ of its fills come from three takers. Settlement ¢/share is much noisier than markout (each window is one coin flip on ~30–150 shares), which is why even the best cells have dev lower bounds near or below zero. The Polymarket hedge column is negative in every top cell: the edge exists only held to settlement or marked on Polymarket's mid, not after paying Polymarket's taker fee plus spread 300 ms later.
+
+<!-- L1HOLD -->
 
 ---
 
