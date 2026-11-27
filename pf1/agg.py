@@ -33,7 +33,7 @@ def boot(per_win, nwin, ndays, n=4000, seed=0):
 
 
 def table(A, W, days, hold=320, unwind="sell", clip="q5"):
-    A = A[(A.hold == hold) & (A.unwind == unwind) & (A.clip == clip)]
+    A = A[(A.hold == hold) & (A.unwind == unwind) & (A["clip"] == clip)]
     nd, nwin = len(days), len(W)
     rows = []
     for key, g in A.groupby(CELL):

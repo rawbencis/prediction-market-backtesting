@@ -1,0 +1,46 @@
+{
+  "name": "PF1_pick",
+  "written_utc": "2026-11-27",
+  "plan": "frozen/PF1_plan.json as amended in commit 006df9a (pushed before the dev run)",
+  "code_commit_of_dev_run": "006df9a8c226df9508863238af0b8bdeb15c1d35",
+  "code_note": "the commit adding this file also fixes pf1/agg.py's clip filter (A.clip resolved to DataFrame.clip; the first aggregation returned an empty table); no model code changed",
+  "rule": "lag 120 ms, primary variant (PM hold 320, unwind sell, q5, competitor term on), >= 20 attempts/day, highest 90% lower bound of $/day; ties -> higher c/share",
+  "dev_days": [
+    "2026-11-14",
+    "2026-11-15",
+    "2026-11-16",
+    "2026-11-17",
+    "2026-11-18",
+    "2026-11-19",
+    "2026-11-20",
+    "2026-11-21",
+    "2026-11-22",
+    "2026-11-23"
+  ],
+  "pick": {
+    "threshold_c": 6,
+    "L_c": 0,
+    "lighter_timing": "a",
+    "M_c": 1,
+    "lighter_view_lag_ms": 120,
+    "pm_hold_ms": 320,
+    "unwind": "sell",
+    "clip": "q5"
+  },
+  "dev_result": {
+    "attempts": 540,
+    "att_per_day": 54.0,
+    "pm_fill": 0.4611,
+    "l_fill": 0.4395,
+    "pairs": 109,
+    "unwinds": 128,
+    "unwind_usd": -18.0769,
+    "cps": 1.3635,
+    "usd_day": 3.6814,
+    "lo90": 0.162,
+    "hi90": 8.5169,
+    "days_pos": 7
+  },
+  "runner_up": "th 6, L 2, a, M 1: lo90 -0.05 (c/share +1.35)",
+  "note": "dev c/share +1.36 is below the holdout pass bar of +2.0 c/share"
+}
