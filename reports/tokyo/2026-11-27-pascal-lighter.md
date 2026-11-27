@@ -6,7 +6,7 @@ Branch `research/pascal-lighter` (from `research/lp-arb` @ df440e0). Paper resea
 
 <!-- VERDICT -->
 
-**Operator action needed: disk.** <!-- DISK -->
+**Operator action needed: disk.** About 5–8 days of disk are left (59.3 GB free, 4.7–7.7 GB/day). The PX holdout needs the recorder running until 12-08 00:00 UTC, about 10 days, so 15–40 GB must be freed by ~12-02 or the recorder's 20 GB floor will stop it mid-holdout. See **Disk**.
 
 ---
 
@@ -241,8 +241,28 @@ A Pascal maker quoting Polymarket ± h (fills: trades at or through our price), 
 
 ## Disk
 
-<!-- DISKDETAIL -->
+Free at 21:07 UTC: **59.3 GB** (`df` Avail; the guards use 1e9-byte GB).
+
+| writer | per day | source |
+|---|---:|---|
+| `onetouch-shadow` (`~/onetouch-mm/research/onetouch_mm/data`, keeps 45 days) | 3.4–4.4 GB measured (11-26 3.44 GB; 11-27 3.74 GB by 20:00); brief: 6.4 GB | file sizes |
+| `shadow_rec.py` (`~/shadow-rec`) | ≈ 1.0 GB | 11-26 dir |
+| `lighter_rec.py` (`~/lighter-data`) | ≈ 0.05 GB | 11-26 dir |
+| `pascal_rec.py` (new) | ≈ 0.15–0.2 GB (cap 0.3) | first 90 min |
+| this session's caches | +0.6 GB once (`~/pascal-data/l1cache`, deletable after the L1 holdout read) | — |
+
+At 4.7–7.7 GB/day the box has **5–8 days** of disk before `pascal_rec.py`'s own 20 GB floor (about 12-02 22:00 to 12-06 UTC) and **6–9 days** before `onetouch-shadow` stops at 15 GB. The PX holdout needs recording through **12-08 00:00 UTC**, about 10.1 days from now, which takes roughly 50–78 GB against the 39 GB available above the floor. **Unless 15–40 GB is freed (or onetouch's rate or retention is cut) by about 12-02, the recorder will stop partway through the holdout.** This session deleted nothing; whether to prune is the operator's call (candidates: `~/archive/shadow-rec/*.tar.zst` 4.0 GB, `~/shadow-rec` 18 GB of which 11-20..11-23 are also in the archive, onetouch retention 45 → fewer days).
 
 ## Deviations from the brief
 
-<!-- DEVIATIONS -->
+1. **Session launch (rule 3).** The operator started this session; I didn't run `claude --settings …` myself. I used the existing `tmux -L research` session `pascal` and added a window `rec` for the recorder.
+2. **Restricted-jurisdiction list (P0)** not copied: the only terms document is on `app.pascal.trade`, which rule 1 forbids opening.
+3. **Lighter premium terms on binaries:** the docs give the account-tier fee figures for perps/spot only and say so; binary fees come from the `bo` schedule. I took the latencies (0 ms maker/cancel, 140 ms taker premium; 300 ms standard) as account-wide, because the docs don't restrict them.
+4. **PX conventions the brief left open** (frozen in `PX_plan.json` before any data): Pascal rounds on multiples of 50 ms, matched against the book published after the round; the Polymarket reverse-token ask is taken as 1 − long bid (only the long book is replayed); fills walk the recorded top 3 levels (a PX-A unwind remainder beyond them is priced at the 3rd level − 5¢, an unfilled PX-B hedge remainder at the 3rd level + 1¢); PX-B has no re-post within a quote epoch after a fill; PM 1 s latency is a sensitivity, not a cell.
+5. **PX dev/holdout not run:** no full recorded day exists yet (by design). Commands and earliest dates are in P4.
+6. **L1 cells:** 288 distinct cells per asset at 30 shares (the brief's ~320 counts "re-post after 1/5 s" for the no-pull cells too, where it changes nothing), plus 5-share results beside them. Quoting is limited to each window's own 15 minutes (Lighter lists windows 2 h early; Polymarket's 15m book is recorded only from 45 s before the start). A requote is a modify that lands at decision + 2 ms + D. The re-post price after a pull is the tracked quoted fair (within 1¢ of the current fair). A filled side is replenished 4 ms later.
+7. **L1 data:** Binance = USD-M aggTrades only (`src 1`; measured receive lag 4.9 ms, the brief's 4 ms used); 11-11 starts at ~10:00 UTC (first Lighter file), so dev has 9.6 days of windows, counted as 10 in per-day figures.
+8. **L1-D "does 712772 reprice < 50 ms":** answered from book changes (Lighter's book does not show owners) plus maker shares from trades, not from order-level data.
+9. **V2** run on 3 of the 10 dev days (11-11..11-13), because the reference code (`lighter_flips.window`, every rule and lifetime) takes ~9 min per day; the one-shot comparison is order-for-order on those days.
+10. **Python:** `~/shadow-venv/bin/python` without `-I` for the numpy scripts (numpy is in the user site); scripts live in the repo, and data directories are only read through paths.
+11. **First dev replay attempt died** (cgroup memory cap, no traceback) after holding all 10 days of windows. Rewritten to one day at a time with deduped top-of-book rows; results identical on a check day; V1 re-run passes.
