@@ -4,7 +4,15 @@ Branch `research/pascal-lighter` (from `research/lp-arb` @ df440e0). Paper resea
 
 ## Verdict
 
-<!-- VERDICT -->
+| study | verdict | deciding number |
+|---|---|---|
+| **P1** Pascal census | **closed on capacity** (gate fails) | 4 mapped markets with ≥ $1K Pascal 24 h volume (gate 10); all of Pascal did **$12.3K** taker notional in 24 h; 20 markets = 96% of it. Pascal's books mirror Polymarket's (same prices, ~0.94× size), so gaps sit at about minus both fees: 0 pairs > 1¢ after fees except one 16-share print. |
+| **P3** recorder | **running** | since 11-27 19:35 UTC, 0 drops, ≈ 150–200 MB/day; user unit written, not installed (operator commands below). |
+| **P4** PX-A/B frozen | **waiting on data** | `frozen/PX_plan.json` @ 51f2bf5. Dev = 11-28..11-30 (run after 12-01 00:05 UTC), holdout = 12-01..12-07. Smoke test on the partial 11-27 recording: **0 attempts** in all 18 cells; the Pascal mirror trails Polymarket touch moves by p50 492 ms. **The holdout is at risk from disk (below).** |
+| **P4** PX-C MECE | **closed in practice** | 1 MECE event on Pascal (FED_DECISION_26DEC): buy-all $1.028 Pascal, $1.010 Polymarket. |
+| **L1** Lighter fast-pull maker | **closed** (holdout FAIL) | frozen pick (BTC, h 2¢, pull ≥ 1 bp/250 ms, premium D = 0): holdout **−1.96¢/share to settlement**, 90% CI −7.9 … +4.0, 3/7 days positive, −$27.7/day; 5 s markout +1.98¢ but 30 s −0.74¢. Only premium-latency cells ever showed a positive 5 s markout on dev (101/288 at D = 0 vs 0/288 at D = 300), and premium quota for this rule would cost ≈ $51/day on top. |
+| **P2** Pascal history | descriptive | 5,065 trades ($496K) since 2026-06-23 in the top 30 markets. Takers pay 0.66¢ vs Polymarket at the trade, +0.37¢ in their favour at 60 min; a maker at PM ± 3¢ marks +0.51¢/share at 10 min on ~210 shares/day (≈ $1/day). |
+| **P0** venue facts | done | Pascal: 50 ms rounds, cancels first, no taker hold, feed 6.8 ms behind engine time, ping 5–6 ms, no crypto up/down. Lighter: binary maker 0 / taker 1%·p(1−p); premium 0 ms cancel, 140 ms taker, quota $0.0005; 1h series live but settles end-vs-start (Polymarket 1h uses TWAP), and it isn't recorded here. Restricted-jurisdiction list not fetched (rule 1). |
 
 **Operator action needed: disk.** About **3 days** of disk are left: 57.5 GB free, about 12 GB/day measured box-wide. The recorder's 20 GB floor arrives around **12-01**, right as the PX dev days finish. The PX holdout needs recording until 12-08 00:00 UTC, so about 70 GB must be freed (or writers slowed) before ~12-01. See **Disk**.
 
@@ -365,7 +373,32 @@ Same cells, no pull vs pull, settlement ¢/share (mean over fair, h, stop, repos
 
 **Reading the dev table.** Pulling on Binance is the only thing that turns the 5 s markout positive, and only at D = 0: 101 of 288 D = 0 cells mark out above zero, against 0 of 288 at D = 300. On BTC at D = 0 the mean settlement goes −1.83¢ (no pull) → −1.36 (4 bp/1 s) → −0.97 (2 bp/250 ms) → +0.40¢ (1 bp/250 ms). At D = 300 every pull rule stays at −0.5 to −2.0¢. ETH is negative almost everywhere: its quiet-flow edge is a third of BTC's, and 50%+ of its fills come from three takers. Settlement ¢/share is much noisier than markout (each window is one coin flip on ~30–150 shares), which is why even the best cells have dev lower bounds near or below zero. The Polymarket hedge column is negative in every top cell: the edge exists only held to settlement or marked on Polymarket's mid, not after paying Polymarket's taker fee plus spread 300 ms later.
 
-<!-- L1HOLD -->
+### Frozen pick
+
+`frozen/L1_pick.json` (6025233): **BTC, fair = Polymarket mid as seen, h = 2¢, pull both sides on a Binance move ≥ 1 bp / 250 ms, re-post after 5 s quiet, D = 0 (premium), stop 60 s before the close, 30-share quotes.** Dev: +3.50¢/share to settlement (90% CI −0.53 … +7.39), 5 s markout +0.48¢, 2,867 shares/day, $100/day, 6 of 10 days positive. It was the highest dev lower bound among the 89 eligible cells. The cell with the highest lower bound overall, `lighter_mid|h3|…`, was ineligible because its 5 s markout is −2.5¢.
+
+**Premium cost of the pick** (dev, BTC, from the simulator's message counts): it consumes **≈ 108K volume quota/day** (creates and modifies; single cancels are free) but earns only ≈ 820 from fills (≈ $1,630/day notional at $2 per quota) plus 5,760 free transactions. The remaining ≈ 102K/day would have to be bought at $0.0005 each: **≈ $51/day**, about half the dev P&L. Batching both sides as grouped orders would roughly halve the posts but not the modifies.
+
+### Holdout (11-21..11-27, read once, 00:05 UTC 11-28)
+
+
+| asset | cell | fills_day | shares_day | vsfair | mo1 | mo5 | mo30 | settle | ci_lo | ci_hi | usd_day | days_pos | msgs_per_s | top3 | hedged |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| btc | pm_mid|h2|1bp/250ms|q5|D0|stop60 | 91.57 | 1413.40 | 2.19 | 0.64 | 1.98 | -0.74 | -1.96 | -7.91 | 4.02 | -27.68 | 3 | 1.71 | 0.35 | -0.64 |
+| btc | pm_mid|h2|1bp/250ms|q5|D0|stop60 | 92.71 | 434.60 | 2.21 | 0.89 | 2.11 | 0.15 | -2.71 | -7.99 | 2.72 | -11.78 | 2 | 1.71 | 0.31 | -0.45 |
+
+| criterion | result |
+|---|---|
+| settle >= 1.0¢/share | FAIL |
+| 90% lower bound > 0 | FAIL |
+| 5 s markout > 0 | pass |
+| >= 2,000 filled shares | pass |
+| >= 5 of 7 days positive | FAIL |
+| >= $10/day | FAIL |
+
+**Holdout: FAIL** (filled shares 9,894).
+
+Per-share terms: the 5 s markout stayed positive (+1.98¢) but went negative by 30 s (−0.74¢), and settlement was −1.96¢/share with 3 of 7 days positive. The top-3 taker share rose from 21% on dev to 35%. **L1 is closed.** Even with a premium account and before its quota cost, quoting around Polymarket's mid and pulling on Binance doesn't keep the edge to settlement in this market.
 
 ---
 
@@ -419,7 +452,7 @@ Free at 23:28 UTC: **57.5 GB** (`df` Avail; the guards use 1e9-byte GB). **Measu
 | `up_down_research/copypants/logs/tentacle_ws.log` | 122 MB, written in the last hour | |
 | `lighter_rec.py` | ≈ 0.05 GB/day | |
 | `pascal_rec.py` (new) | ≈ 0.15–0.2 GB/day (cap 0.3) | 26 MB on 11-27 by 23:28 |
-| this session's caches | 1.1 GB once (`~/pascal-data/l1cache`) | deleted at the end of the session, see below |
+| this session's caches | 1.1 GB once (`~/pascal-data/l1cache`) | deleted at the end of the session (00:10 UTC 11-28); rebuild with `pascal/l1.py prep DAY` |
 
 **Days of disk left: about 3** (37.5 GB above the recorder's 20 GB floor ÷ ~12 GB/day), so `pascal_rec.py` stops itself around **12-01 UTC**, and `onetouch-shadow` stops at 15 GB about half a day later. That is roughly when the PX dev days (11-28..11-30) finish recording. The **holdout (12-01..12-07) cannot be recorded unless ≥ 70 GB is freed, or the writers above slow down, before ~12-01.** This session deleted nothing of anyone else's; what to prune or stop is the operator's call. Candidates by size: `~/shadow-rec` (18 GB; 11-20..11-23 are also in `~/archive/shadow-rec`), `~/archive/shadow-rec` (4 GB), `poly-smart-flow` sqlite, `dolphin-v2` ws captures, onetouch retention (45 days).
 
